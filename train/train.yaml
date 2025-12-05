@@ -1,0 +1,33 @@
+# PDE Training Configuration
+
+# Dataset Configuration
+dataset: "/path/to/your/data"  # Directory containing .h5 files
+temporal_length: 16  # Number of temporal steps per sample
+train_ratio: 0.9  # 90% train, 10% validation
+seed: 42  # Random seed for reproducibility
+
+# DataLoader Configuration
+dataloader:
+  batch_size: 4
+  num_workers: 4
+  pin_memory: true
+  shuffle: true  # Shuffle for training
+
+# Model Configuration (placeholder)
+model:
+  input_channels: 1  # Adjust based on your data
+  hidden_channels: 64
+  output_channels: 1
+
+# Training Configuration
+training:
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  
+# Logging Configuration
+logging:
+  project: "PDE-Solver"  # WandB project name
+  entity: null  # WandB entity (username/team)
+  log_interval: 10  # Log every N batches
+  save_dir: "./checkpoints"
