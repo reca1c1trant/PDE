@@ -3,10 +3,16 @@ PDE Pipeline: Encoder + Llama Transformer + Decoder
 For causal autoregressive prediction of PDE dynamics.
 """
 
+import os
 import torch
 import torch.nn as nn
 from transformers import LlamaConfig, LlamaModel
 from encoder import PDE1DEncoder, PDE2DEncoder, PDE1DDecoder, PDE2DDecoder
+
+
+def _is_main_process():
+    """Check if current process is main (rank 0)."""
+    return os.environ.get('LOCAL_RANK', '0') == '0'
 
 
 class PDECausalModel(nn.Module):
@@ -78,12 +84,8 @@ class PDECausalModel(nn.Module):
 
     def _log_info(self, llama_config, use_flash_attn):
         """Log model info (only on main process)."""
-        # Only print on rank 0
-        try:
-            if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
-                return
-        except RuntimeError:
-            pass  # Distributed not initialized yet
+        if not _is_main_process():
+            return
 
         encoder_params = sum(p.numel() for p in self.encoder_1d.parameters()) + \
                         sum(p.numel() for p in self.encoder_2d.parameters())

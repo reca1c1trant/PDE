@@ -13,6 +13,34 @@ Usage:
     python train.py
 """
 
+import os
+import sys
+import warnings
+
+# ============================================================
+# 主进程通信控制（必须在所有其他 import 之前）
+# ============================================================
+def _is_main_process():
+    """Check if current process is main (rank 0)."""
+    return os.environ.get('LOCAL_RANK', '0') == '0'
+
+IS_MAIN_PROCESS = _is_main_process()
+
+if not IS_MAIN_PROCESS:
+    # 非主进程：禁用所有 warnings
+    warnings.filterwarnings('ignore')
+else:
+    # 主进程：过滤特定 warnings
+    warnings.filterwarnings('ignore', message='.*FSDP upcast.*')
+
+# 设置 Triton cache 到用户目录（确保存在）
+triton_cache = os.path.expanduser('~/.cache/triton')
+os.makedirs(triton_cache, exist_ok=True)
+os.environ.setdefault('TRITON_CACHE_DIR', triton_cache)
+
+# ============================================================
+# 正常 imports
+# ============================================================
 import yaml
 import torch
 from pathlib import Path
@@ -26,10 +54,18 @@ from rich.panel import Panel
 from rich.table import Table
 import logging
 
+# TF32 精度优化
+torch.set_float32_matmul_precision('high')
+
+# Logging 配置（只在主进程生效）
+if IS_MAIN_PROCESS:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+else:
+    logging.disable(logging.CRITICAL)
+
 from dataset import PDEDataset, DimensionGroupedSampler, collate_fn
 from pipeline import PDECausalModel, compute_masked_loss
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
