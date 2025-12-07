@@ -63,14 +63,16 @@ class PDECausalModel(nn.Module):
             torch_dtype=torch.bfloat16,  # Fix FlashAttention dtype warning
         )
 
-        # Initialize Llama from scratch with bf16
+        # Initialize Llama from scratch
         self.transformer = LlamaModel(llama_config)
         self.transformer.embed_tokens = None
-        self.transformer = self.transformer.to(torch.bfloat16)
 
         # Gradient checkpointing
         if config['model'].get('gradient_checkpointing', True):
             self.transformer.gradient_checkpointing_enable()
+
+        # Convert entire model to bf16 for FSDP compatibility
+        self.to(torch.bfloat16)
 
         self._log_info(llama_config, use_flash_attn)
 

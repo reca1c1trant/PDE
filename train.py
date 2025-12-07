@@ -20,7 +20,10 @@ from torch.utils.data import DataLoader
 from accelerate import Accelerator, FullyShardedDataParallelPlugin
 from accelerate.utils import set_seed
 from torch.distributed.fsdp import ShardingStrategy, CPUOffload
-from tqdm import tqdm
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
+from rich.panel import Panel
+from rich.table import Table
 import logging
 
 from dataset import PDEDataset, DimensionGroupedSampler, collate_fn
@@ -120,7 +123,8 @@ def validate(model, val_loader, accelerator):
     num_batches = 0
 
     for batch in val_loader:
-        data = batch['data']
+        # Convert data to bf16
+        data = batch['data'].to(torch.bfloat16)
         channel_mask = batch['channel_mask']
 
         input_data = data[:, :-1]
@@ -252,84 +256,94 @@ def main():
     global_step = 0
     best_val_loss = float('inf')
     train_iter = infinite_dataloader(train_loader)
+    console = Console()
 
-    # Progress bar
-    pbar = tqdm(total=max_steps, desc="Training", disable=not accelerator.is_main_process)
-
-    # Training loop
+    # Training loop with Rich progress
     model.train()
-    while global_step < max_steps:
-        batch = next(train_iter)
-        data = batch['data']
-        channel_mask = batch['channel_mask']
 
-        # Causal AR split
-        input_data = data[:, :-1]
-        target_data = data[:, 1:]
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=40),
+        TaskProgressColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        disable=not accelerator.is_main_process,
+    ) as progress:
+        train_task = progress.add_task("Training", total=max_steps)
 
-        # Forward & Backward
-        with accelerator.accumulate(model):
-            output = model(input_data)
-            loss = compute_masked_loss(output, target_data, channel_mask)
+        while global_step < max_steps:
+            batch = next(train_iter)
+            # Convert data to bf16
+            data = batch['data'].to(torch.bfloat16)
+            channel_mask = batch['channel_mask']
 
-            accelerator.backward(loss)
+            # Causal AR split
+            input_data = data[:, :-1]
+            target_data = data[:, 1:]
 
-            if config['training'].get('grad_clip'):
-                accelerator.clip_grad_norm_(model.parameters(), config['training']['grad_clip'])
+            # Forward & Backward
+            with accelerator.accumulate(model):
+                output = model(input_data)
+                loss = compute_masked_loss(output, target_data, channel_mask)
 
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
+                accelerator.backward(loss)
 
-        global_step += 1
-        pbar.update(1)
-        pbar.set_postfix({'loss': f"{loss.item():.4f}", 'lr': f"{scheduler.get_last_lr()[0]:.2e}"})
+                if config['training'].get('grad_clip'):
+                    accelerator.clip_grad_norm_(model.parameters(), config['training']['grad_clip'])
 
-        # Log
-        if global_step % log_interval == 0:
-            accelerator.log({
-                'train/loss': loss.item(),
-                'train/global_step': global_step,
-                'train/lr': scheduler.get_last_lr()[0],
-                'gpu/memory_gb': torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0,
-            }, step=global_step)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
 
-        # Evaluate
-        if global_step % eval_every_steps == 0:
-            val_loss = validate(model, val_loader, accelerator)
+            global_step += 1
+            progress.update(train_task, advance=1, description=f"Training [loss={loss.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}]")
 
-            accelerator.log({
-                'val/loss': val_loss,
-                'val/global_step': global_step,
-            }, step=global_step)
+            # Log
+            if global_step % log_interval == 0:
+                accelerator.log({
+                    'train/loss': loss.item(),
+                    'train/global_step': global_step,
+                    'train/lr': scheduler.get_last_lr()[0],
+                    'gpu/memory_gb': torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0,
+                }, step=global_step)
 
-            if accelerator.is_main_process:
-                logger.info(f"\nStep {global_step}: val_loss = {val_loss:.6f}")
+            # Evaluate
+            if global_step % eval_every_steps == 0:
+                val_loss = validate(model, val_loader, accelerator)
 
-                # Save best
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, 'best.pt')
-                    logger.info(f"Saved best model (val_loss: {val_loss:.6f})")
+                accelerator.log({
+                    'val/loss': val_loss,
+                    'val/global_step': global_step,
+                }, step=global_step)
 
-        # Save checkpoint
-        if global_step % save_every_steps == 0:
-            save_checkpoint(model, optimizer, scheduler, global_step, best_val_loss, config, save_dir, accelerator, f'checkpoint-step-{global_step}.pt')
-            save_checkpoint(model, optimizer, scheduler, global_step, best_val_loss, config, save_dir, accelerator, 'latest.pt')
+                if accelerator.is_main_process:
+                    console.print(f"[green]Step {global_step}:[/green] val_loss = {val_loss:.6f}")
 
-            if accelerator.is_main_process:
-                cleanup_checkpoints(save_dir, keep_n=keep_last_n)
-                logger.info(f"Saved checkpoint at step {global_step}")
+                    # Save best
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, 'best.pt')
+                        console.print(f"[yellow]Saved best model[/yellow] (val_loss: {val_loss:.6f})")
 
-    pbar.close()
+            # Save checkpoint
+            if global_step % save_every_steps == 0:
+                save_checkpoint(model, optimizer, scheduler, global_step, best_val_loss, config, save_dir, accelerator, f'checkpoint-step-{global_step}.pt')
+                save_checkpoint(model, optimizer, scheduler, global_step, best_val_loss, config, save_dir, accelerator, 'latest.pt')
+
+                if accelerator.is_main_process:
+                    cleanup_checkpoints(save_dir, keep_n=keep_last_n)
+                    console.print(f"[cyan]Saved checkpoint[/cyan] at step {global_step}")
+
     accelerator.end_training()
 
     if accelerator.is_main_process:
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Training completed!")
-        logger.info(f"Total steps: {global_step}")
-        logger.info(f"Best val loss: {best_val_loss:.6f}")
-        logger.info(f"{'='*60}")
+        # Final summary with Rich
+        table = Table(title="Training Complete", show_header=False, border_style="green")
+        table.add_row("Total Steps", str(global_step))
+        table.add_row("Best Val Loss", f"{best_val_loss:.6f}")
+        console.print(table)
 
 
 if __name__ == "__main__":
