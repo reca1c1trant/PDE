@@ -19,7 +19,9 @@ model:
   encoder_hidden_dim: 4096
 
   # Acceleration
-  use_flash_attention: true  # Requires flash-attn installed
+  # NOTE: FlashAttention-2 does not support custom 4D attention masks (block causal)
+  # Set to false to use eager attention which supports custom masks
+  use_flash_attention: false
   gradient_checkpointing: true  # Trade speed for memory
 
   # Llama Transformer (8B config)
