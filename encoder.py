@@ -10,32 +10,34 @@ from typing import Tuple, Optional
 
 class PDE1DEncoder(nn.Module):
     """
-    Encoder for 1D PDE data.
+    Encoder for 1D PDE data with multi-stage downsampling.
     Input: [B, T, H, C] where T=16, H=1024, C=6
     Output: [B, seq_len, D] where seq_len=4096, D=hidden_dim
-    
+
     Processing:
-        1. Downsample: 1024 → 256 (4x)
+        1. Downsample: 1024 → 512 → 256 (2 stages, stride=2 each)
         2. Flatten: T*H = 16*256 = 4096 tokens
         3. Project to hidden_dim
     """
-    
+
     def __init__(self, in_channels: int = 6, hidden_dim: int = 768):
         super().__init__()
         self.in_channels = in_channels
         self.hidden_dim = hidden_dim
-        
-        # Spatial downsampling: 1024 → 256
+
+        # Multi-stage spatial downsampling: 1024 → 512 → 256
         self.conv_down = nn.Sequential(
-            nn.Conv1d(in_channels, 64, kernel_size=4, stride=4, padding=0),  # 1024 → 256
+            # Stage 1: 1024 → 512
+            nn.Conv1d(in_channels, 64, kernel_size=3, stride=2, padding=1),
             nn.GELU(),
-            nn.Conv1d(64, 128, kernel_size=1),
+            # Stage 2: 512 → 256
+            nn.Conv1d(64, 128, kernel_size=3, stride=2, padding=1),
             nn.GELU(),
         )
-        
+
         # Project to hidden dimension
         self.proj = nn.Linear(128, hidden_dim)
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -46,52 +48,57 @@ class PDE1DEncoder(nn.Module):
         B, T, H, C = x.shape
         assert H == 1024, f"Expected H=1024, got {H}"
         assert C == self.in_channels, f"Expected C={self.in_channels}, got {C}"
-        
+
         # Process each timestep
         x = x.permute(0, 1, 3, 2)  # [B, T, C, H]
         x = x.reshape(B * T, C, H)  # [B*T, C, H]
-        
-        # Downsample
+
+        # Multi-stage downsample: 1024 → 512 → 256
         x = self.conv_down(x)  # [B*T, 128, 256]
-        
+
         # Reshape and flatten
         x = x.permute(0, 2, 1)  # [B*T, 256, 128]
         x = x.reshape(B, T * 256, 128)  # [B, 4096, 128]
-        
+
         # Project
         x = self.proj(x)  # [B, 4096, D]
-        
+
         return x
 
 
 class PDE2DEncoder(nn.Module):
     """
-    Encoder for 2D PDE data.
+    Encoder for 2D PDE data with multi-stage downsampling.
     Input: [B, T, H, W, C] where T=16, H=W=128, C=6
     Output: [B, seq_len, D] where seq_len=4096, D=hidden_dim
-    
+
     Processing:
-        1. Downsample: 128x128 → 16x16 (8x)
+        1. Downsample: 128 → 64 → 32 → 16 (3 stages, stride=2 each)
         2. Flatten: T*H*W = 16*16*16 = 4096 tokens
         3. Project to hidden_dim
     """
-    
+
     def __init__(self, in_channels: int = 6, hidden_dim: int = 768):
         super().__init__()
         self.in_channels = in_channels
         self.hidden_dim = hidden_dim
-        
-        # Spatial downsampling: 128x128 → 16x16
+
+        # Multi-stage spatial downsampling: 128 → 64 → 32 → 16
         self.conv_down = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=8, stride=8, padding=0),  # 128 → 16
+            # Stage 1: 128 → 64
+            nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1),
             nn.GELU(),
-            nn.Conv2d(64, 128, kernel_size=1),
+            # Stage 2: 64 → 32
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            # Stage 3: 32 → 16
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
             nn.GELU(),
         )
-        
+
         # Project to hidden dimension
         self.proj = nn.Linear(128, hidden_dim)
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -102,21 +109,21 @@ class PDE2DEncoder(nn.Module):
         B, T, H, W, C = x.shape
         assert H == 128 and W == 128, f"Expected H=W=128, got {H}x{W}"
         assert C == self.in_channels, f"Expected C={self.in_channels}, got {C}"
-        
+
         # Process each timestep
         x = x.permute(0, 1, 4, 2, 3)  # [B, T, C, H, W]
         x = x.reshape(B * T, C, H, W)  # [B*T, C, H, W]
-        
-        # Downsample
+
+        # Multi-stage downsample: 128 → 64 → 32 → 16
         x = self.conv_down(x)  # [B*T, 128, 16, 16]
-        
+
         # Reshape and flatten
         x = x.permute(0, 2, 3, 1)  # [B*T, 16, 16, 128]
         x = x.reshape(B, T * 16 * 16, 128)  # [B, 4096, 128]
-        
+
         # Project
         x = self.proj(x)  # [B, 4096, D]
-        
+
         return x
 
 
@@ -178,26 +185,32 @@ class PDE3DEncoder(nn.Module):
 
 class PDE1DDecoder(nn.Module):
     """
-    Decoder for 1D PDE data (mirrors encoder).
+    Decoder for 1D PDE data with multi-stage upsampling (mirrors encoder).
     Input: [B, seq_len, D] where seq_len=4096, D=hidden_dim
     Output: [B, T, H, C] where T=16, H=1024, C=6
+
+    Processing:
+        1. Project from hidden_dim
+        2. Upsample: 256 → 512 → 1024 (2 stages, stride=2 each)
     """
-    
+
     def __init__(self, out_channels: int = 6, hidden_dim: int = 768):
         super().__init__()
         self.out_channels = out_channels
         self.hidden_dim = hidden_dim
-        
+
         # Project from hidden dimension
         self.proj = nn.Linear(hidden_dim, 128)
-        
-        # Spatial upsampling: 256 → 1024
+
+        # Multi-stage spatial upsampling: 256 → 512 → 1024
         self.conv_up = nn.Sequential(
-            nn.Conv1d(128, 64, kernel_size=1),
+            # Stage 1: 256 → 512
+            nn.ConvTranspose1d(128, 64, kernel_size=4, stride=2, padding=1),
             nn.GELU(),
-            nn.ConvTranspose1d(64, out_channels, kernel_size=4, stride=4, padding=0),  # 256 → 1024
+            # Stage 2: 512 → 1024
+            nn.ConvTranspose1d(64, out_channels, kernel_size=4, stride=2, padding=1),
         )
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -207,46 +220,55 @@ class PDE1DDecoder(nn.Module):
         """
         B, seq_len, D = x.shape
         assert seq_len == 4096, f"Expected seq_len=4096, got {seq_len}"
-        
+
         # Project
         x = self.proj(x)  # [B, 4096, 128]
-        
+
         # Reshape
         x = x.reshape(B * 16, 256, 128)  # [B*T, 256, 128]
         x = x.permute(0, 2, 1)  # [B*T, 128, 256]
-        
-        # Upsample
+
+        # Multi-stage upsample: 256 → 512 → 1024
         x = self.conv_up(x)  # [B*T, C, 1024]
-        
+
         # Reshape back
         x = x.permute(0, 2, 1)  # [B*T, 1024, C]
         x = x.reshape(B, 16, 1024, self.out_channels)  # [B, T, H, C]
-        
+
         return x
 
 
 class PDE2DDecoder(nn.Module):
     """
-    Decoder for 2D PDE data (mirrors encoder).
+    Decoder for 2D PDE data with multi-stage upsampling (mirrors encoder).
     Input: [B, seq_len, D] where seq_len=4096, D=hidden_dim
     Output: [B, T, H, W, C] where T=16, H=W=128, C=6
+
+    Processing:
+        1. Project from hidden_dim
+        2. Upsample: 16 → 32 → 64 → 128 (3 stages, stride=2 each)
     """
-    
+
     def __init__(self, out_channels: int = 6, hidden_dim: int = 768):
         super().__init__()
         self.out_channels = out_channels
         self.hidden_dim = hidden_dim
-        
+
         # Project from hidden dimension
         self.proj = nn.Linear(hidden_dim, 128)
-        
-        # Spatial upsampling: 16x16 → 128x128
+
+        # Multi-stage spatial upsampling: 16 → 32 → 64 → 128
         self.conv_up = nn.Sequential(
-            nn.Conv2d(128, 64, kernel_size=1),
+            # Stage 1: 16 → 32
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
             nn.GELU(),
-            nn.ConvTranspose2d(64, out_channels, kernel_size=8, stride=8, padding=0),  # 16 → 128
+            # Stage 2: 32 → 64
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            # Stage 3: 64 → 128
+            nn.ConvTranspose2d(32, out_channels, kernel_size=4, stride=2, padding=1),
         )
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -256,21 +278,21 @@ class PDE2DDecoder(nn.Module):
         """
         B, seq_len, D = x.shape
         assert seq_len == 4096, f"Expected seq_len=4096, got {seq_len}"
-        
+
         # Project
         x = self.proj(x)  # [B, 4096, 128]
-        
+
         # Reshape
         x = x.reshape(B * 16, 16, 16, 128)  # [B*T, 16, 16, 128]
         x = x.permute(0, 3, 1, 2)  # [B*T, 128, 16, 16]
-        
-        # Upsample
+
+        # Multi-stage upsample: 16 → 32 → 64 → 128
         x = self.conv_up(x)  # [B*T, C, 128, 128]
-        
+
         # Reshape back
         x = x.permute(0, 2, 3, 1)  # [B*T, 128, 128, C]
         x = x.reshape(B, 16, 128, 128, self.out_channels)  # [B, T, H, W, C]
-        
+
         return x
 
 

@@ -1,335 +1,185 @@
 """
-Training pipeline for PDE Causal Autoregressive Model.
-Predicts future timesteps given past timesteps.
+PDE Pipeline: Encoder + Llama Transformer + Decoder
+For causal autoregressive prediction of PDE dynamics.
 """
 
-import yaml
 import torch
 import torch.nn as nn
-import wandb
-from pathlib import Path
-from torch.utils.data import DataLoader
-import logging
-from tqdm import tqdm
-
-from pde_dataset import PDEDataset, DimensionGroupedSampler, collate_fn
-from model import PDECausalModel
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from transformers import LlamaConfig, LlamaModel
+from encoder import PDE1DEncoder, PDE2DEncoder, PDE1DDecoder, PDE2DDecoder
 
 
-def load_config(config_path: str) -> dict:
-    """Load configuration from YAML file."""
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    return config
+class PDECausalModel(nn.Module):
+    """
+    Complete model for PDE causal prediction.
+
+    Architecture:
+        Input [B, T, *spatial, 6]
+          ↓
+        Encoder → Tokens [B, seq_len, hidden_dim]
+          ↓
+        Llama Transformer [B, seq_len, hidden_dim]
+          ↓
+        Decoder → Output [B, T, *spatial, 6]
+
+    Args:
+        config (dict): Model configuration from yaml
+    """
+
+    def __init__(self, config: dict):
+        super().__init__()
+
+        self.in_channels = config['model']['in_channels']
+        self.hidden_dim = config['model']['encoder_hidden_dim']
+
+        # Causal mask constants
+        self.num_timesteps = 16
+        self.tokens_per_timestep = 256  # 4096 / 16
+        self._causal_mask = None
+
+        # Create encoders and decoders
+        self.encoder_1d = PDE1DEncoder(self.in_channels, self.hidden_dim)
+        self.encoder_2d = PDE2DEncoder(self.in_channels, self.hidden_dim)
+        self.decoder_1d = PDE1DDecoder(self.in_channels, self.hidden_dim)
+        self.decoder_2d = PDE2DDecoder(self.in_channels, self.hidden_dim)
+
+        # Llama config with FlashAttention-2 support
+        use_flash_attn = config['model'].get('use_flash_attention', True)
+        attn_impl = "flash_attention_2" if use_flash_attn else "eager"
+
+        llama_config = LlamaConfig(
+            hidden_size=config['model']['transformer']['hidden_size'],
+            num_hidden_layers=config['model']['transformer']['num_hidden_layers'],
+            num_attention_heads=config['model']['transformer']['num_attention_heads'],
+            num_key_value_heads=config['model']['transformer']['num_key_value_heads'],
+            intermediate_size=config['model']['transformer']['intermediate_size'],
+            hidden_act=config['model']['transformer']['hidden_act'],
+            max_position_embeddings=config['model']['transformer']['max_position_embeddings'],
+            rms_norm_eps=config['model']['transformer']['rms_norm_eps'],
+            rope_theta=config['model']['transformer']['rope_theta'],
+            attention_dropout=config['model']['transformer']['attention_dropout'],
+            use_cache=False,
+            attn_implementation=attn_impl,
+        )
+
+        # Initialize Llama from scratch
+        self.transformer = LlamaModel(llama_config)
+        self.transformer.embed_tokens = None
+
+        # Gradient checkpointing
+        if config['model'].get('gradient_checkpointing', True):
+            self.transformer.gradient_checkpointing_enable()
+
+        self._log_info(llama_config, use_flash_attn)
+
+    def _log_info(self, llama_config, use_flash_attn):
+        """Log model info."""
+        encoder_params = sum(p.numel() for p in self.encoder_1d.parameters()) + \
+                        sum(p.numel() for p in self.encoder_2d.parameters())
+        decoder_params = sum(p.numel() for p in self.decoder_1d.parameters()) + \
+                        sum(p.numel() for p in self.decoder_2d.parameters())
+        transformer_params = sum(p.numel() for p in self.transformer.parameters())
+        total_params = encoder_params + decoder_params + transformer_params
+
+        print(f"\n{'='*60}")
+        print(f"PDECausalModel Initialized")
+        print(f"{'='*60}")
+        print(f"Transformer: {llama_config.num_hidden_layers} layers, "
+              f"{llama_config.hidden_size} hidden, "
+              f"{llama_config.num_attention_heads} heads")
+        print(f"FlashAttention-2: {'Enabled' if use_flash_attn else 'Disabled'}")
+        print(f"Gradient Checkpointing: {self.transformer.is_gradient_checkpointing}")
+        print(f"\nParameters:")
+        print(f"  Encoders:    {encoder_params:,}")
+        print(f"  Transformer: {transformer_params:,}")
+        print(f"  Decoders:    {decoder_params:,}")
+        print(f"  Total:       {total_params:,}")
+        print(f"{'='*60}\n")
+
+    def _get_causal_mask(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """Get or create block causal mask (cached)."""
+        if self._causal_mask is None or self._causal_mask.device != device:
+            self._causal_mask = create_block_causal_mask(
+                self.num_timesteps,
+                self.tokens_per_timestep,
+                device,
+                dtype
+            )
+        return self._causal_mask
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass with block causal mask.
+
+        Args:
+            x: [B, T, H, 6] (1D) or [B, T, H, W, 6] (2D)
+
+        Returns:
+            Output tensor with same shape as input
+        """
+        ndim = x.ndim - 3
+        B = x.shape[0]
+
+        causal_mask = self._get_causal_mask(x.device, x.dtype)
+        attention_mask = causal_mask.expand(B, -1, -1, -1)
+
+        if ndim == 1:
+            tokens = self.encoder_1d(x)
+            hidden = self.transformer(inputs_embeds=tokens, attention_mask=attention_mask).last_hidden_state
+            output = self.decoder_1d(hidden)
+        elif ndim == 2:
+            tokens = self.encoder_2d(x)
+            hidden = self.transformer(inputs_embeds=tokens, attention_mask=attention_mask).last_hidden_state
+            output = self.decoder_2d(hidden)
+        else:
+            raise ValueError(f"Unsupported input dimension: {x.shape}")
+
+        return output
 
 
-def create_dataloaders(config: dict):
-    """Create train and validation dataloaders."""
-    # Create datasets (temporal_length=17 for causal AR)
-    train_dataset = PDEDataset(
-        data_dir=config['dataset']['path'],
-        temporal_length=config['dataset']['temporal_length'],
-        split='train',
-        train_ratio=config['dataset']['train_ratio'],
-        seed=config['dataset']['seed']
-    )
-    
-    val_dataset = PDEDataset(
-        data_dir=config['dataset']['path'],
-        temporal_length=config['dataset']['temporal_length'],
-        split='val',
-        train_ratio=config['dataset']['train_ratio'],
-        seed=config['dataset']['seed']
-    )
-    
-    # Create samplers
-    batch_size = config['dataloader']['batch_size']
-    
-    train_sampler = DimensionGroupedSampler(
-        dataset=train_dataset,
-        batch_size=batch_size,
-        shuffle=config['dataloader']['shuffle']
-    )
-    
-    val_sampler = DimensionGroupedSampler(
-        dataset=val_dataset,
-        batch_size=batch_size,
-        shuffle=False
-    )
-    
-    # Create dataloaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_sampler=train_sampler,
-        collate_fn=collate_fn,
-        num_workers=config['dataloader']['num_workers'],
-        pin_memory=config['dataloader']['pin_memory']
-    )
-    
-    val_loader = DataLoader(
-        val_dataset,
-        batch_sampler=val_sampler,
-        collate_fn=collate_fn,
-        num_workers=config['dataloader']['num_workers'],
-        pin_memory=config['dataloader']['pin_memory']
-    )
-    
-    return train_loader, val_loader
+def create_block_causal_mask(
+    num_timesteps: int,
+    tokens_per_timestep: int,
+    device: torch.device,
+    dtype: torch.dtype = torch.float32
+) -> torch.Tensor:
+    """
+    Create Timestep-Level Block Causal Mask.
+
+    Args:
+        num_timesteps: Number of timesteps (16)
+        tokens_per_timestep: Tokens per timestep (256)
+        device: Device
+        dtype: Data type
+
+    Returns:
+        mask: [1, 1, seq_len, seq_len], 0.0=attend, -inf=mask
+    """
+    block_mask = torch.tril(torch.ones(num_timesteps, num_timesteps, device=device))
+    mask = block_mask.repeat_interleave(tokens_per_timestep, dim=0)
+    mask = mask.repeat_interleave(tokens_per_timestep, dim=1)
+    mask = mask.masked_fill(mask == 0, float('-inf'))
+    mask = mask.masked_fill(mask == 1, 0.0)
+    mask = mask.unsqueeze(0).unsqueeze(0)
+    return mask.to(dtype=dtype)
 
 
 def compute_masked_loss(pred, target, channel_mask):
     """
     Compute MSE loss with channel masking.
-    Only compute loss on real channels (not padded ones).
-    
+
     Args:
         pred: [B, T, *spatial, 6]
         target: [B, T, *spatial, 6]
-        channel_mask: [B, 6] - 1 for real channels, 0 for padded
-    
+        channel_mask: [B, 6]
+
     Returns:
         loss: scalar
     """
-    # Compute per-element squared error
-    squared_error = (pred - target) ** 2  # [B, T, *spatial, 6]
-    
-    # Expand mask to match spatial dimensions
-    # [B, 6] → [B, 1, ..., 1, 6]
+    squared_error = (pred - target) ** 2
     ndim = pred.ndim
     mask_shape = [pred.shape[0]] + [1] * (ndim - 2) + [pred.shape[-1]]
-    mask = channel_mask.view(*mask_shape)  # [B, 1, ..., 1, 6]
-    
-    # Apply mask
-    masked_error = squared_error * mask  # [B, T, *spatial, 6]
-    
-    # Compute mean over valid elements
+    mask = channel_mask.view(*mask_shape)
+    masked_error = squared_error * mask
     num_valid = mask.sum()
-    if num_valid > 0:
-        loss = masked_error.sum() / num_valid
-    else:
-        loss = masked_error.sum()  # Fallback (shouldn't happen)
-    
-    return loss
-
-
-def train_epoch(model, train_loader, optimizer, device, epoch, config):
-    """Train for one epoch with causal AR."""
-    model.train()
-    total_loss = 0.0
-    num_batches = 0
-    
-    pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
-    
-    for batch_idx, batch in enumerate(pbar):
-        data = batch['data'].to(device)  # [B, 17, *spatial, 6]
-        channel_mask = batch['channel_mask'].to(device)  # [B, 6]
-        
-        # Causal AR: input = t[0:16], target = t[1:17]
-        input_data = data[:, :-1]    # [B, 16, *spatial, 6]
-        target_data = data[:, 1:]    # [B, 16, *spatial, 6]
-        
-        # Forward pass
-        # Note: Causal masking is handled inside Transformer by default
-        # when using autoregressive position encodings
-        output = model(input_data)  # [B, 16, *spatial, 6]
-        
-        # Compute loss
-        loss = compute_masked_loss(output, target_data, channel_mask)
-        
-        # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
-        
-        # Gradient clipping (important for stability)
-        if config['training'].get('grad_clip', None):
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
-                config['training']['grad_clip']
-            )
-        
-        optimizer.step()
-        
-        # Update statistics
-        total_loss += loss.item()
-        num_batches += 1
-        
-        # Update progress bar
-        pbar.set_postfix({'loss': f"{loss.item():.6f}"})
-        
-        # Log to WandB
-        if batch_idx % config['logging']['log_interval'] == 0:
-            wandb.log({
-                'train/loss': loss.item(),
-                'train/epoch': epoch,
-                'train/batch': batch_idx,
-                'train/lr': optimizer.param_groups[0]['lr']
-            })
-    
-    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-    return avg_loss
-
-
-@torch.no_grad()
-def validate(model, val_loader, device):
-    """Validate the model."""
-    model.eval()
-    total_loss = 0.0
-    num_batches = 0
-    
-    for batch in tqdm(val_loader, desc="Validation"):
-        data = batch['data'].to(device)
-        channel_mask = batch['channel_mask'].to(device)
-        
-        # Causal AR: input = t[0:16], target = t[1:17]
-        input_data = data[:, :-1]
-        target_data = data[:, 1:]
-        
-        # Forward pass
-        output = model(input_data)
-        
-        # Compute loss
-        loss = compute_masked_loss(output, target_data, channel_mask)
-        
-        total_loss += loss.item()
-        num_batches += 1
-    
-    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-    return avg_loss
-
-
-def main():
-    """Main training function."""
-    # Load configuration
-    config = load_config('config.yaml')
-    
-    # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logger.info(f"Using device: {device}")
-    
-    # Initialize WandB
-    wandb.init(
-        project=config['logging']['project'],
-        entity=config['logging'].get('entity', None),
-        config=config,
-        name=f"causal-ar-{config['dataset']['seed']}"
-    )
-    
-    # Create dataloaders
-    logger.info("Creating dataloaders...")
-    train_loader, val_loader = create_dataloaders(config)
-    logger.info(f"Train batches: {len(train_loader)}")
-    logger.info(f"Val batches: {len(val_loader)}")
-    
-    # Create model
-    logger.info("Creating model...")
-    model = PDECausalModel(config).to(device)
-    
-    # Count parameters
-    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"Total trainable parameters: {num_params:,}")
-    wandb.config.update({'num_parameters': num_params})
-    
-    # Setup optimizer
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config['training']['learning_rate'],
-        weight_decay=config['training']['weight_decay'],
-        betas=config['training'].get('betas', (0.9, 0.999))
-    )
-    
-    # Setup learning rate scheduler
-    if config['training'].get('use_scheduler', False):
-        if config['training'].get('scheduler_type') == 'cosine':
-            from torch.optim.lr_scheduler import CosineAnnealingLR
-            scheduler = CosineAnnealingLR(
-                optimizer,
-                T_max=config['training']['epochs'] - config['training'].get('warmup_epochs', 0),
-                eta_min=config['training'].get('min_lr', 1e-6)
-            )
-        else:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer,
-                T_max=config['training']['epochs'],
-                eta_min=config['training'].get('min_lr', 1e-6)
-            )
-    else:
-        scheduler = None
-    
-    # Watch model with WandB
-    wandb.watch(model, log='all', log_freq=100)
-    
-    # Create checkpoint directory
-    save_dir = Path(config['logging']['save_dir'])
-    save_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Training loop
-    best_val_loss = float('inf')
-    
-    for epoch in range(1, config['training']['epochs'] + 1):
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Epoch {epoch}/{config['training']['epochs']}")
-        logger.info(f"{'='*60}")
-        
-        # Train
-        train_loss = train_epoch(
-            model, train_loader, optimizer, device, epoch, config
-        )
-        
-        # Validate
-        val_loss = validate(model, val_loader, device)
-        
-        # Update scheduler
-        if scheduler is not None:
-            scheduler.step()
-        
-        # Log epoch metrics
-        wandb.log({
-            'epoch': epoch,
-            'train/epoch_loss': train_loss,
-            'val/epoch_loss': val_loss
-        })
-        
-        logger.info(f"\nEpoch {epoch} Summary:")
-        logger.info(f"  Train Loss: {train_loss:.6f}")
-        logger.info(f"  Val Loss:   {val_loss:.6f}")
-        
-        # Save checkpoint
-        checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': train_loss,
-            'val_loss': val_loss,
-            'config': config
-        }
-        
-        # Save latest
-        latest_path = save_dir / 'latest_checkpoint.pt'
-        torch.save(checkpoint, latest_path)
-        
-        # Save best model
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_path = save_dir / 'best_model.pt'
-            torch.save(checkpoint, best_path)
-            logger.info(f"  ✓ Saved best model (val_loss: {val_loss:.6f})")
-        
-        # Save periodic checkpoints
-        if epoch % config['logging'].get('save_interval', 10) == 0:
-            periodic_path = save_dir / f'checkpoint_epoch_{epoch}.pt'
-            torch.save(checkpoint, periodic_path)
-            logger.info(f"  ✓ Saved checkpoint at epoch {epoch}")
-    
-    # Finish WandB run
-    wandb.finish()
-    logger.info("\n" + "="*60)
-    logger.info("Training completed!")
-    logger.info(f"Best validation loss: {best_val_loss:.6f}")
-    logger.info("="*60)
-
-
-if __name__ == "__main__":
-    main()
+    return masked_error.sum() / num_valid if num_valid > 0 else masked_error.sum()

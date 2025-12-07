@@ -211,3 +211,8 @@ wandb/
 *.hdf5
 
 *ptwandb/
+CLAUDE.md
+PROJECT_SPEC.md
+REFACTOR_PLAN.md
+output.txt
+.claude/

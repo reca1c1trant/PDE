@@ -1,63 +1,64 @@
 """
-Main training script for PDE solver.
-Demonstrates usage of PDEDataset with WandB logging.
+Training script for PDE Causal Autoregressive Model.
+Uses Accelerate for distributed training and WandB for logging.
+
+Usage:
+    # First time setup (choose options interactively)
+    accelerate config
+
+    # Launch training
+    accelerate launch train.py
+
+    # Or single GPU
+    python train.py
 """
 
 import yaml
 import torch
-import wandb
 from pathlib import Path
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from accelerate import Accelerator
+from accelerate.utils import set_seed
+from tqdm import tqdm
 import logging
 
-from pde_dataset import PDEDataset, DimensionGroupedSampler, collate_fn
+from dataset import PDEDataset, DimensionGroupedSampler, collate_fn
+from pipeline import PDECausalModel, compute_masked_loss
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
-def load_config(config_path: str) -> dict:
+def load_config(config_path: str = "config.yaml") -> dict:
     """Load configuration from YAML file."""
     with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    return config
+        return yaml.safe_load(f)
 
 
 def create_dataloaders(config: dict):
     """Create train and validation dataloaders."""
-    # Create datasets
     train_dataset = PDEDataset(
-        data_dir=config['dataset'],
-        temporal_length=config['temporal_length'],
+        data_dir=config['dataset']['path'],
+        temporal_length=config['dataset']['temporal_length'],
         split='train',
-        train_ratio=config['train_ratio'],
-        seed=config['seed']
+        train_ratio=config['dataset']['train_ratio'],
+        seed=config['dataset']['seed']
     )
-    
+
     val_dataset = PDEDataset(
-        data_dir=config['dataset'],
-        temporal_length=config['temporal_length'],
+        data_dir=config['dataset']['path'],
+        temporal_length=config['dataset']['temporal_length'],
         split='val',
-        train_ratio=config['train_ratio'],
-        seed=config['seed']
+        train_ratio=config['dataset']['train_ratio'],
+        seed=config['dataset']['seed']
     )
-    
-    # Create samplers with batch_size
+
     batch_size = config['dataloader']['batch_size']
-    
-    train_sampler = DimensionGroupedSampler(
-        dataset=train_dataset,
-        batch_size=batch_size,
-        shuffle=config['dataloader']['shuffle']
-    )
-    
-    val_sampler = DimensionGroupedSampler(
-        dataset=val_dataset,
-        batch_size=batch_size,
-        shuffle=False
-    )
-    
-    # Create dataloaders using batch_sampler
+
+    train_sampler = DimensionGroupedSampler(train_dataset, batch_size, shuffle=True)
+    val_sampler = DimensionGroupedSampler(val_dataset, batch_size, shuffle=False)
+
     train_loader = DataLoader(
         train_dataset,
         batch_sampler=train_sampler,
@@ -65,7 +66,7 @@ def create_dataloaders(config: dict):
         num_workers=config['dataloader']['num_workers'],
         pin_memory=config['dataloader']['pin_memory']
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_sampler=val_sampler,
@@ -73,145 +74,200 @@ def create_dataloaders(config: dict):
         num_workers=config['dataloader']['num_workers'],
         pin_memory=config['dataloader']['pin_memory']
     )
-    
+
     return train_loader, val_loader
 
 
-def train_epoch(model, train_loader, optimizer, criterion, device, epoch, config):
+def train_one_epoch(model, train_loader, optimizer, accelerator, epoch, config):
     """Train for one epoch."""
     model.train()
     total_loss = 0.0
-    
-    for batch_idx, data in enumerate(train_loader):
-        data = data.to(device)
-        
-        # TODO: Implement your forward pass
-        # For now, just compute a dummy loss
-        loss = torch.mean(data)  # Placeholder
-        
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
+    num_batches = 0
+
+    pbar = tqdm(train_loader, desc=f"Epoch {epoch}", disable=not accelerator.is_main_process)
+
+    for batch_idx, batch in enumerate(pbar):
+        data = batch['data']  # [B, 17, *spatial, 6]
+        channel_mask = batch['channel_mask']  # [B, 6]
+
+        # Causal AR split
+        input_data = data[:, :-1]   # [B, 16, ...]
+        target_data = data[:, 1:]   # [B, 16, ...]
+
+        # Forward
+        with accelerator.accumulate(model):
+            output = model(input_data)
+            loss = compute_masked_loss(output, target_data, channel_mask)
+
+            accelerator.backward(loss)
+
+            # Gradient clipping
+            if config['training'].get('grad_clip'):
+                accelerator.clip_grad_norm_(model.parameters(), config['training']['grad_clip'])
+
+            optimizer.step()
+            optimizer.zero_grad()
+
         total_loss += loss.item()
-        
+        num_batches += 1
+
+        pbar.set_postfix({'loss': f"{loss.item():.6f}"})
+
         # Log to WandB
         if batch_idx % config['logging']['log_interval'] == 0:
-            wandb.log({
+            accelerator.log({
                 'train/loss': loss.item(),
                 'train/epoch': epoch,
-                'train/batch': batch_idx
+                'train/lr': optimizer.param_groups[0]['lr'],
+                'gpu/memory_gb': torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0,
             })
-            
-            logger.info(
-                f"Epoch {epoch} [{batch_idx}/{len(train_loader)}] "
-                f"Loss: {loss.item():.6f}"
-            )
-    
-    avg_loss = total_loss / len(train_loader)
-    return avg_loss
+
+    return total_loss / num_batches if num_batches > 0 else 0.0
 
 
-def validate(model, val_loader, criterion, device):
+@torch.no_grad()
+def validate(model, val_loader, accelerator):
     """Validate the model."""
     model.eval()
     total_loss = 0.0
-    
-    with torch.no_grad():
-        for data in val_loader:
-            data = data.to(device)
-            
-            # TODO: Implement your forward pass
-            loss = torch.mean(data)  # Placeholder
-            
-            total_loss += loss.item()
-    
-    avg_loss = total_loss / len(val_loader)
-    return avg_loss
+    num_batches = 0
+
+    for batch in tqdm(val_loader, desc="Validation", disable=not accelerator.is_main_process):
+        data = batch['data']
+        channel_mask = batch['channel_mask']
+
+        input_data = data[:, :-1]
+        target_data = data[:, 1:]
+
+        output = model(input_data)
+        loss = compute_masked_loss(output, target_data, channel_mask)
+
+        total_loss += loss.item()
+        num_batches += 1
+
+    return total_loss / num_batches if num_batches > 0 else 0.0
 
 
 def main():
-    """Main training function."""
-    # Load configuration
-    config = load_config('config.yaml')
-    
-    # Initialize WandB
-    wandb.init(
-        project=config['logging']['project'],
-        entity=config['logging']['entity'],
-        config=config,
-        name=f"pde-solver-{config['seed']}"
+    # Load config
+    config = load_config()
+    set_seed(config['dataset']['seed'])
+
+    # Initialize Accelerator
+    mixed_precision = config['training'].get('mixed_precision', 'bf16')
+    grad_accum = config['training'].get('gradient_accumulation_steps', 1)
+
+    accelerator = Accelerator(
+        mixed_precision=mixed_precision,
+        gradient_accumulation_steps=grad_accum,
+        log_with="wandb"
     )
-    
-    # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logger.info(f"Using device: {device}")
-    
+
+    # Logging
+    if accelerator.is_main_process:
+        logger.info(f"Mixed Precision: {mixed_precision}")
+        logger.info(f"Gradient Accumulation: {grad_accum}")
+        logger.info(f"Num Processes: {accelerator.num_processes}")
+
     # Create dataloaders
-    logger.info("Creating dataloaders...")
     train_loader, val_loader = create_dataloaders(config)
-    logger.info(f"Train batches: {len(train_loader)}")
-    logger.info(f"Val batches: {len(val_loader)}")
-    
-    # TODO: Initialize your model
-    # model = YourModel(config['model']).to(device)
-    # For now, create a dummy model
-    model = torch.nn.Linear(10, 10).to(device)
-    
-    # Setup optimizer and criterion
-    optimizer = torch.optim.Adam(
+
+    if accelerator.is_main_process:
+        logger.info(f"Train batches: {len(train_loader)}")
+        logger.info(f"Val batches: {len(val_loader)}")
+
+    # Create model
+    model = PDECausalModel(config)
+
+    # Optimizer
+    optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config['training']['learning_rate'],
-        weight_decay=config['training']['weight_decay']
+        weight_decay=config['training']['weight_decay'],
+        betas=config['training'].get('betas', (0.9, 0.999))
     )
-    criterion = torch.nn.MSELoss()
-    
-    # Watch model with WandB
-    wandb.watch(model, log='all', log_freq=100)
-    
-    # Create checkpoint directory
+
+    # Scheduler
+    scheduler = None
+    if config['training'].get('use_scheduler', True):
+        scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=config['training']['epochs'],
+            eta_min=config['training'].get('min_lr', 1e-6)
+        )
+
+    # Prepare with Accelerator
+    model, optimizer, train_loader, val_loader = accelerator.prepare(
+        model, optimizer, train_loader, val_loader
+    )
+    if scheduler:
+        scheduler = accelerator.prepare(scheduler)
+
+    # Init WandB tracker
+    if accelerator.is_main_process:
+        accelerator.init_trackers(
+            project_name=config['logging']['project'],
+            config=config,
+            init_kwargs={"wandb": {"name": f"pde-{config['dataset']['seed']}"}}
+        )
+
+    # Checkpoint directory
     save_dir = Path(config['logging']['save_dir'])
-    save_dir.mkdir(parents=True, exist_ok=True)
-    
+    if accelerator.is_main_process:
+        save_dir.mkdir(parents=True, exist_ok=True)
+
     # Training loop
     best_val_loss = float('inf')
-    
+
     for epoch in range(1, config['training']['epochs'] + 1):
-        logger.info(f"\nEpoch {epoch}/{config['training']['epochs']}")
-        
-        # Train
-        train_loss = train_epoch(
-            model, train_loader, optimizer, criterion, device, epoch, config
-        )
-        
-        # Validate
-        val_loss = validate(model, val_loader, criterion, device)
-        
+        if accelerator.is_main_process:
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Epoch {epoch}/{config['training']['epochs']}")
+
+        train_loss = train_one_epoch(model, train_loader, optimizer, accelerator, epoch, config)
+        val_loss = validate(model, val_loader, accelerator)
+
+        if scheduler:
+            scheduler.step()
+
         # Log epoch metrics
-        wandb.log({
+        accelerator.log({
             'epoch': epoch,
             'train/epoch_loss': train_loss,
             'val/epoch_loss': val_loss
         })
-        
-        logger.info(f"Epoch {epoch} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
-        
-        # Save best model
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            checkpoint_path = save_dir / 'best_model.pt'
-            torch.save({
+
+        if accelerator.is_main_process:
+            logger.info(f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+
+            # Save checkpoints
+            unwrapped_model = accelerator.unwrap_model(model)
+            checkpoint = {
                 'epoch': epoch,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': unwrapped_model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'train_loss': train_loss,
                 'val_loss': val_loss,
                 'config': config
-            }, checkpoint_path)
-            logger.info(f"Saved best model to {checkpoint_path}")
-    
-    # Finish WandB run
-    wandb.finish()
-    logger.info("Training completed!")
+            }
+
+            # Latest
+            torch.save(checkpoint, save_dir / 'latest_checkpoint.pt')
+
+            # Best
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                torch.save(checkpoint, save_dir / 'best_model.pt')
+                logger.info(f"Saved best model (val_loss: {val_loss:.6f})")
+
+            # Periodic
+            if epoch % config['logging'].get('save_interval', 10) == 0:
+                torch.save(checkpoint, save_dir / f'checkpoint_epoch_{epoch}.pt')
+
+    accelerator.end_training()
+
+    if accelerator.is_main_process:
+        logger.info(f"\nTraining completed! Best val loss: {best_val_loss:.6f}")
 
 
 if __name__ == "__main__":

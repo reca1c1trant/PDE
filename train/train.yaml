@@ -3,7 +3,7 @@
 # Dataset Configuration
 dataset:
   path: "/home/msai/song0304/code/PDE/data"  # Directory containing converted .h5/.hdf5 files
-  temporal_length: 16  # 17 steps for causal AR (input: 0-15, target: 1-16)
+  temporal_length: 16  # 16 steps for causal AR (input: 0-16, target: 1-17)
   train_ratio: 0.9  # 90% train, 10% validation
   seed: 42  # Random seed for reproducibility
 

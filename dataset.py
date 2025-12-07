@@ -58,7 +58,7 @@ class PDEDataset(Dataset):
     ):
         super().__init__()
         self.data_dir = Path(data_dir)
-        self.temporal_length = temporal_length
+        self.temporal_length = temporal_length+1
         self.split = split
         self.train_ratio = train_ratio
         self.seed = seed
