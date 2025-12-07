@@ -214,5 +214,6 @@ wandb/
 CLAUDE.md
 PROJECT_SPEC.md
 REFACTOR_PLAN.md
+SAMPLING_PLAN.md
 output.txt
 .claude/

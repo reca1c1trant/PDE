@@ -17,7 +17,6 @@ import yaml
 import torch
 from pathlib import Path
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import CosineAnnealingLR
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 from tqdm import tqdm
@@ -78,51 +77,38 @@ def create_dataloaders(config: dict):
     return train_loader, val_loader
 
 
-def train_one_epoch(model, train_loader, optimizer, accelerator, epoch, config):
-    """Train for one epoch."""
-    model.train()
-    total_loss = 0.0
-    num_batches = 0
+def infinite_dataloader(dataloader):
+    """Yields batches infinitely, reshuffling when exhausted."""
+    while True:
+        for batch in dataloader:
+            yield batch
 
-    pbar = tqdm(train_loader, desc=f"Epoch {epoch}", disable=not accelerator.is_main_process)
 
-    for batch_idx, batch in enumerate(pbar):
-        data = batch['data']  # [B, 17, *spatial, 6]
-        channel_mask = batch['channel_mask']  # [B, 6]
+def get_lr_scheduler(optimizer, config):
+    """Create learning rate scheduler with warmup."""
+    from torch.optim.lr_scheduler import LambdaLR
 
-        # Causal AR split
-        input_data = data[:, :-1]   # [B, 16, ...]
-        target_data = data[:, 1:]   # [B, 16, ...]
+    warmup_steps = config['training'].get('warmup_steps', 1000)
+    max_steps = config['training']['max_steps']
+    min_lr_ratio = config['training'].get('min_lr', 1e-6) / config['training']['learning_rate']
 
-        # Forward
-        with accelerator.accumulate(model):
-            output = model(input_data)
-            loss = compute_masked_loss(output, target_data, channel_mask)
+    def lr_lambda(step):
+        if step < warmup_steps:
+            # Linear warmup
+            return step / warmup_steps
+        else:
+            # Cosine decay
+            progress = (step - warmup_steps) / (max_steps - warmup_steps)
+            return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + torch.cos(torch.tensor(progress * 3.14159)).item())
 
-            accelerator.backward(loss)
+    return LambdaLR(optimizer, lr_lambda)
 
-            # Gradient clipping
-            if config['training'].get('grad_clip'):
-                accelerator.clip_grad_norm_(model.parameters(), config['training']['grad_clip'])
 
-            optimizer.step()
-            optimizer.zero_grad()
-
-        total_loss += loss.item()
-        num_batches += 1
-
-        pbar.set_postfix({'loss': f"{loss.item():.6f}"})
-
-        # Log to WandB
-        if batch_idx % config['logging']['log_interval'] == 0:
-            accelerator.log({
-                'train/loss': loss.item(),
-                'train/epoch': epoch,
-                'train/lr': optimizer.param_groups[0]['lr'],
-                'gpu/memory_gb': torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0,
-            })
-
-    return total_loss / num_batches if num_batches > 0 else 0.0
+def cleanup_checkpoints(save_dir: Path, keep_n: int = 3):
+    """Keep only the last N checkpoints (excluding best.pt and latest.pt)."""
+    checkpoints = sorted(save_dir.glob("checkpoint-step-*.pt"), key=lambda x: int(x.stem.split("-")[-1]))
+    for ckpt in checkpoints[:-keep_n]:
+        ckpt.unlink()
 
 
 @torch.no_grad()
@@ -132,7 +118,7 @@ def validate(model, val_loader, accelerator):
     total_loss = 0.0
     num_batches = 0
 
-    for batch in tqdm(val_loader, desc="Validation", disable=not accelerator.is_main_process):
+    for batch in val_loader:
         data = batch['data']
         channel_mask = batch['channel_mask']
 
@@ -145,7 +131,23 @@ def validate(model, val_loader, accelerator):
         total_loss += loss.item()
         num_batches += 1
 
+    model.train()
     return total_loss / num_batches if num_batches > 0 else 0.0
+
+
+def save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, filename):
+    """Save checkpoint."""
+    if accelerator.is_main_process:
+        unwrapped_model = accelerator.unwrap_model(model)
+        checkpoint = {
+            'global_step': global_step,
+            'model_state_dict': unwrapped_model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+            'val_loss': val_loss,
+            'config': config
+        }
+        torch.save(checkpoint, save_dir / filename)
 
 
 def main():
@@ -163,17 +165,30 @@ def main():
         log_with="wandb"
     )
 
-    # Logging
+    # Training config
+    max_steps = config['training']['max_steps']
+    save_every_steps = config['training']['save_every_steps']
+    eval_every_steps = config['training']['eval_every_steps']
+    keep_last_n = config['training']['keep_last_n_checkpoints']
+    log_interval = config['logging']['log_interval']
+
     if accelerator.is_main_process:
+        logger.info(f"{'='*60}")
+        logger.info(f"Training Configuration")
+        logger.info(f"{'='*60}")
+        logger.info(f"Max Steps: {max_steps}")
+        logger.info(f"Save Every: {save_every_steps} steps")
+        logger.info(f"Eval Every: {eval_every_steps} steps")
         logger.info(f"Mixed Precision: {mixed_precision}")
         logger.info(f"Gradient Accumulation: {grad_accum}")
         logger.info(f"Num Processes: {accelerator.num_processes}")
+        logger.info(f"{'='*60}")
 
     # Create dataloaders
     train_loader, val_loader = create_dataloaders(config)
 
     if accelerator.is_main_process:
-        logger.info(f"Train batches: {len(train_loader)}")
+        logger.info(f"Train batches per epoch: {len(train_loader)}")
         logger.info(f"Val batches: {len(val_loader)}")
 
     # Create model
@@ -184,24 +199,16 @@ def main():
         model.parameters(),
         lr=config['training']['learning_rate'],
         weight_decay=config['training']['weight_decay'],
-        betas=config['training'].get('betas', (0.9, 0.999))
+        betas=tuple(config['training'].get('betas', [0.9, 0.999]))
     )
 
-    # Scheduler
-    scheduler = None
-    if config['training'].get('use_scheduler', True):
-        scheduler = CosineAnnealingLR(
-            optimizer,
-            T_max=config['training']['epochs'],
-            eta_min=config['training'].get('min_lr', 1e-6)
-        )
+    # Scheduler with warmup
+    scheduler = get_lr_scheduler(optimizer, config)
 
     # Prepare with Accelerator
-    model, optimizer, train_loader, val_loader = accelerator.prepare(
-        model, optimizer, train_loader, val_loader
+    model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
+        model, optimizer, train_loader, val_loader, scheduler
     )
-    if scheduler:
-        scheduler = accelerator.prepare(scheduler)
 
     # Init WandB tracker
     if accelerator.is_main_process:
@@ -216,58 +223,88 @@ def main():
     if accelerator.is_main_process:
         save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Training loop
+    # Training state
+    global_step = 0
     best_val_loss = float('inf')
+    train_iter = infinite_dataloader(train_loader)
 
-    for epoch in range(1, config['training']['epochs'] + 1):
-        if accelerator.is_main_process:
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Epoch {epoch}/{config['training']['epochs']}")
+    # Progress bar
+    pbar = tqdm(total=max_steps, desc="Training", disable=not accelerator.is_main_process)
 
-        train_loss = train_one_epoch(model, train_loader, optimizer, accelerator, epoch, config)
-        val_loss = validate(model, val_loader, accelerator)
+    # Training loop
+    model.train()
+    while global_step < max_steps:
+        batch = next(train_iter)
+        data = batch['data']
+        channel_mask = batch['channel_mask']
 
-        if scheduler:
+        # Causal AR split
+        input_data = data[:, :-1]
+        target_data = data[:, 1:]
+
+        # Forward & Backward
+        with accelerator.accumulate(model):
+            output = model(input_data)
+            loss = compute_masked_loss(output, target_data, channel_mask)
+
+            accelerator.backward(loss)
+
+            if config['training'].get('grad_clip'):
+                accelerator.clip_grad_norm_(model.parameters(), config['training']['grad_clip'])
+
+            optimizer.step()
             scheduler.step()
+            optimizer.zero_grad()
 
-        # Log epoch metrics
-        accelerator.log({
-            'epoch': epoch,
-            'train/epoch_loss': train_loss,
-            'val/epoch_loss': val_loss
-        })
+        global_step += 1
+        pbar.update(1)
+        pbar.set_postfix({'loss': f"{loss.item():.4f}", 'lr': f"{scheduler.get_last_lr()[0]:.2e}"})
 
-        if accelerator.is_main_process:
-            logger.info(f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        # Log
+        if global_step % log_interval == 0:
+            accelerator.log({
+                'train/loss': loss.item(),
+                'train/global_step': global_step,
+                'train/lr': scheduler.get_last_lr()[0],
+                'gpu/memory_gb': torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0,
+            }, step=global_step)
 
-            # Save checkpoints
-            unwrapped_model = accelerator.unwrap_model(model)
-            checkpoint = {
-                'epoch': epoch,
-                'model_state_dict': unwrapped_model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'train_loss': train_loss,
-                'val_loss': val_loss,
-                'config': config
-            }
+        # Evaluate
+        if global_step % eval_every_steps == 0:
+            val_loss = validate(model, val_loader, accelerator)
 
-            # Latest
-            torch.save(checkpoint, save_dir / 'latest_checkpoint.pt')
+            accelerator.log({
+                'val/loss': val_loss,
+                'val/global_step': global_step,
+            }, step=global_step)
 
-            # Best
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                torch.save(checkpoint, save_dir / 'best_model.pt')
-                logger.info(f"Saved best model (val_loss: {val_loss:.6f})")
+            if accelerator.is_main_process:
+                logger.info(f"\nStep {global_step}: val_loss = {val_loss:.6f}")
 
-            # Periodic
-            if epoch % config['logging'].get('save_interval', 10) == 0:
-                torch.save(checkpoint, save_dir / f'checkpoint_epoch_{epoch}.pt')
+                # Save best
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, 'best.pt')
+                    logger.info(f"Saved best model (val_loss: {val_loss:.6f})")
 
+        # Save checkpoint
+        if global_step % save_every_steps == 0:
+            save_checkpoint(model, optimizer, scheduler, global_step, best_val_loss, config, save_dir, accelerator, f'checkpoint-step-{global_step}.pt')
+            save_checkpoint(model, optimizer, scheduler, global_step, best_val_loss, config, save_dir, accelerator, 'latest.pt')
+
+            if accelerator.is_main_process:
+                cleanup_checkpoints(save_dir, keep_n=keep_last_n)
+                logger.info(f"Saved checkpoint at step {global_step}")
+
+    pbar.close()
     accelerator.end_training()
 
     if accelerator.is_main_process:
-        logger.info(f"\nTraining completed! Best val loss: {best_val_loss:.6f}")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Training completed!")
+        logger.info(f"Total steps: {global_step}")
+        logger.info(f"Best val loss: {best_val_loss:.6f}")
+        logger.info(f"{'='*60}")
 
 
 if __name__ == "__main__":
