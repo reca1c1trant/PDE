@@ -19,7 +19,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 from accelerate import Accelerator, FullyShardedDataParallelPlugin
 from accelerate.utils import set_seed
-from torch.distributed.fsdp import ShardingStrategy, CPUOffload
+from torch.distributed.fsdp import ShardingStrategy
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
 from rich.panel import Panel
@@ -175,10 +175,9 @@ def main():
     # FSDP Plugin for large model training
     fsdp_plugin = None
     if use_fsdp:
-        cpu_offload = config['training'].get('fsdp_cpu_offload', False)
         fsdp_plugin = FullyShardedDataParallelPlugin(
             sharding_strategy=ShardingStrategy.FULL_SHARD,
-            cpu_offload=CPUOffload(offload_params=cpu_offload),
+            reshard_after_forward=True,
         )
 
     accelerator = Accelerator(

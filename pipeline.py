@@ -79,8 +79,11 @@ class PDECausalModel(nn.Module):
     def _log_info(self, llama_config, use_flash_attn):
         """Log model info (only on main process)."""
         # Only print on rank 0
-        if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
-            return
+        try:
+            if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
+                return
+        except RuntimeError:
+            pass  # Distributed not initialized yet
 
         encoder_params = sum(p.numel() for p in self.encoder_1d.parameters()) + \
                         sum(p.numel() for p in self.encoder_2d.parameters())
