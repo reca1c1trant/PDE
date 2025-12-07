@@ -2,8 +2,8 @@
 
 # Dataset
 dataset:
-  path: "/path/to/your/data"  # Change this
-  temporal_length: 17  # Must be 17 for causal AR (input 16, predict 16)
+  path: "/home/msai/song0304/code/PDE/data" 
+  temporal_length: 16
   train_ratio: 0.9
   seed: 42
 
@@ -45,6 +45,10 @@ training:
   min_lr: 1.0e-6
   use_scheduler: true
   warmup_steps: 1000
+
+  # Distributed Training
+  use_fsdp: true  # Use FSDP instead of DDP for large models
+  fsdp_cpu_offload: false  # Offload optimizer states to CPU (saves memory, slower)
 
   # Acceleration
   mixed_precision: "bf16"  # bf16 / fp16 / no

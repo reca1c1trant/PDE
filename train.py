@@ -17,8 +17,9 @@ import yaml
 import torch
 from pathlib import Path
 from torch.utils.data import DataLoader
-from accelerate import Accelerator
+from accelerate import Accelerator, FullyShardedDataParallelPlugin
 from accelerate.utils import set_seed
+from torch.distributed.fsdp import ShardingStrategy, CPUOffload
 from tqdm import tqdm
 import logging
 
@@ -128,15 +129,21 @@ def validate(model, val_loader, accelerator):
         output = model(input_data)
         loss = compute_masked_loss(output, target_data, channel_mask)
 
-        total_loss += loss.item()
+        # Gather loss across all processes
+        gathered_loss = accelerator.gather(loss.unsqueeze(0)).mean()
+        total_loss += gathered_loss.item()
         num_batches += 1
 
+    # Sync before returning
+    accelerator.wait_for_everyone()
     model.train()
     return total_loss / num_batches if num_batches > 0 else 0.0
 
 
 def save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, filename):
     """Save checkpoint."""
+    # Sync all processes before saving
+    accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         unwrapped_model = accelerator.unwrap_model(model)
         checkpoint = {
@@ -148,6 +155,7 @@ def save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, 
             'config': config
         }
         torch.save(checkpoint, save_dir / filename)
+    accelerator.wait_for_everyone()
 
 
 def main():
@@ -158,10 +166,21 @@ def main():
     # Initialize Accelerator
     mixed_precision = config['training'].get('mixed_precision', 'bf16')
     grad_accum = config['training'].get('gradient_accumulation_steps', 1)
+    use_fsdp = config['training'].get('use_fsdp', False)
+
+    # FSDP Plugin for large model training
+    fsdp_plugin = None
+    if use_fsdp:
+        cpu_offload = config['training'].get('fsdp_cpu_offload', False)
+        fsdp_plugin = FullyShardedDataParallelPlugin(
+            sharding_strategy=ShardingStrategy.FULL_SHARD,
+            cpu_offload=CPUOffload(offload_params=cpu_offload),
+        )
 
     accelerator = Accelerator(
         mixed_precision=mixed_precision,
         gradient_accumulation_steps=grad_accum,
+        fsdp_plugin=fsdp_plugin,
         log_with="wandb"
     )
 
@@ -181,6 +200,9 @@ def main():
         logger.info(f"Eval Every: {eval_every_steps} steps")
         logger.info(f"Mixed Precision: {mixed_precision}")
         logger.info(f"Gradient Accumulation: {grad_accum}")
+        logger.info(f"FSDP: {'Enabled' if use_fsdp else 'Disabled'}")
+        if use_fsdp:
+            logger.info(f"FSDP CPU Offload: {config['training'].get('fsdp_cpu_offload', False)}")
         logger.info(f"Num Processes: {accelerator.num_processes}")
         logger.info(f"{'='*60}")
 

@@ -60,11 +60,13 @@ class PDECausalModel(nn.Module):
             attention_dropout=config['model']['transformer']['attention_dropout'],
             use_cache=False,
             attn_implementation=attn_impl,
+            torch_dtype=torch.bfloat16,  # Fix FlashAttention dtype warning
         )
 
-        # Initialize Llama from scratch
+        # Initialize Llama from scratch with bf16
         self.transformer = LlamaModel(llama_config)
         self.transformer.embed_tokens = None
+        self.transformer = self.transformer.to(torch.bfloat16)
 
         # Gradient checkpointing
         if config['model'].get('gradient_checkpointing', True):
@@ -73,7 +75,11 @@ class PDECausalModel(nn.Module):
         self._log_info(llama_config, use_flash_attn)
 
     def _log_info(self, llama_config, use_flash_attn):
-        """Log model info."""
+        """Log model info (only on main process)."""
+        # Only print on rank 0
+        if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
+            return
+
         encoder_params = sum(p.numel() for p in self.encoder_1d.parameters()) + \
                         sum(p.numel() for p in self.encoder_2d.parameters())
         decoder_params = sum(p.numel() for p in self.decoder_1d.parameters()) + \
@@ -89,6 +95,7 @@ class PDECausalModel(nn.Module):
               f"{llama_config.num_attention_heads} heads")
         print(f"FlashAttention-2: {'Enabled' if use_flash_attn else 'Disabled'}")
         print(f"Gradient Checkpointing: {self.transformer.is_gradient_checkpointing}")
+        print(f"Dtype: {llama_config.torch_dtype}")
         print(f"\nParameters:")
         print(f"  Encoders:    {encoder_params:,}")
         print(f"  Transformer: {transformer_params:,}")
