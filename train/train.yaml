@@ -1,33 +1,64 @@
-# PDE Training Configuration
+# PDE Causal AR Training Configuration
 
 # Dataset Configuration
-dataset: "/path/to/your/data"  # Directory containing .h5 files
-temporal_length: 16  # Number of temporal steps per sample
-train_ratio: 0.9  # 90% train, 10% validation
-seed: 42  # Random seed for reproducibility
+dataset:
+  path: "/home/msai/song0304/code/PDE/data"  # Directory containing converted .h5/.hdf5 files
+  temporal_length: 16  # 17 steps for causal AR (input: 0-15, target: 1-16)
+  train_ratio: 0.9  # 90% train, 10% validation
+  seed: 42  # Random seed for reproducibility
 
 # DataLoader Configuration
 dataloader:
-  batch_size: 4
+  batch_size: 2  # Start small for memory safety
   num_workers: 4
   pin_memory: true
   shuffle: true  # Shuffle for training
 
-# Model Configuration (placeholder)
+# Model Configuration
 model:
-  input_channels: 1  # Adjust based on your data
-  hidden_channels: 64
-  output_channels: 1
+  in_channels: 6  # 3 vector + 3 scalar channels
+  encoder_hidden_dim: 4096  # Encoder output dimension (must match Llama)
+  
+  # Llama Transformer Configuration (8B from scratch)
+  transformer:
+    hidden_size: 4096           # Hidden dimension
+    num_hidden_layers: 32       # Number of transformer layers
+    num_attention_heads: 32     # Number of attention heads
+    num_key_value_heads: 8      # GQA: grouped query attention
+    intermediate_size: 14336    # FFN intermediate size (~3.5x hidden_size)
+    hidden_act: "silu"          # Activation function (SwiGLU uses SiLU)
+    max_position_embeddings: 4096  # Maximum sequence length
+    rms_norm_eps: 1.0e-5        # RMSNorm epsilon
+    rope_theta: 500000.0        # RoPE theta parameter
+    attention_dropout: 0.0      # No dropout (Llama default)
+    use_cache: false            # Don't use KV cache during training
+    
+  # Encoder downsampling (automatic)
+  # 1D: 1024 → 256 (4x) → 16*256 = 4096 tokens
+  # 2D: 128² → 16² (8x) → 16*16*16 = 4096 tokens
 
 # Training Configuration
 training:
+  task: "causal_ar"  # Causal autoregressive prediction
   epochs: 100
-  learning_rate: 0.001
-  weight_decay: 0.0001
+  learning_rate: 1.0e-4  # Conservative LR for large model
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]  # Adam betas
+  grad_clip: 1.0  # Gradient clipping (important for stability)
+  
+  # Learning rate scheduler
+  use_scheduler: true
+  scheduler_type: "cosine"  # cosine annealing
+  warmup_epochs: 5  # Warmup for first 5 epochs
+  min_lr: 1.0e-6
+  
+  # Mixed precision training (optional, for memory efficiency)
+  use_amp: false  # Set to true if needed
   
 # Logging Configuration
 logging:
-  project: "PDE-Solver"  # WandB project name
-  entity: null  # WandB entity (username/team)
+  project: "PDE-CausalAR"  # WandB project name
+  entity: reca1c1trant-ntu  # WandB entity (username/team), set to your username
   log_interval: 10  # Log every N batches
   save_dir: "./checkpoints"
+  save_interval: 10  # Save checkpoint every N epochs

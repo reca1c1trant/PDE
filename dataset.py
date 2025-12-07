@@ -1,5 +1,5 @@
 """
-PDE Dataset Implementation with Dimension Grouping
+PDE Dataset Implementation with Dimension Grouping and Scalar/Vector Separation
 Supports 1D, 2D, and 3D PDE data with efficient lazy loading.
 """
 
@@ -17,12 +17,22 @@ logger = logging.getLogger(__name__)
 
 class PDEDataset(Dataset):
     """
-    Dataset for PDE data with mixed dimensions (1D/2D/3D).
+    Dataset for PDE data with mixed dimensions (1D/2D/3D) and scalar/vector separation.
     
     Data format:
-        - 1D: [T, H, C] where H=1024
-        - 2D: [T, H, W, C] where H=W=128
-        - 3D: [T, H, W, D, C] where H=W=D=128
+        - scalar: [T, *spatial, C_s] where C_s ∈ [0, 3] (pressure, density, temperature, etc.)
+        - vector: [T, *spatial, C_v] where C_v ∈ [1, 3] (velocity components)
+        
+    Spatial dimensions:
+        - 1D: H=1024
+        - 2D: H=W=128
+        - 3D: H=W=D=128
+    
+    Output:
+        - data: [T, *spatial, 6] where channels are [vx, vy, vz, p, ρ, T]
+                First 3 channels: vector (padded to 3)
+                Last 3 channels: scalar (padded to 3)
+        - channel_mask: [6] indicating which channels are real (1) vs padded (0)
     
     Args:
         data_dir (str): Directory containing .h5 files
@@ -65,21 +75,31 @@ class PDEDataset(Dataset):
     
     def _build_index(self):
         """Build index of all samples across all h5 files."""
-        h5_files = sorted(self.data_dir.glob("*.h5"))
+        h5_files = sorted(self.data_dir.glob("*.hdf5"))
+        
+
         
         if not h5_files:
-            raise ValueError(f"No .h5 files found in {self.data_dir}")
+            raise ValueError(f"No .hdf5 files found in {self.data_dir}")
         
-        logger.info(f"Found {len(h5_files)} .h5 files")
+        logger.info(f"Found {len(h5_files)} hdf5 files")
         
         for file_path in h5_files:
             with h5py.File(file_path, 'r') as f:
                 for sample_key in f.keys():
-                    data_shape = f[sample_key]['data'].shape
+                    # Use vector to infer dimension (vector is guaranteed non-empty)
+                    vector_shape = f[sample_key]['vector'].shape
+                    scalar_shape = f[sample_key]['scalar'].shape
                     
-                    # Determine dimension type
-                    dim_type = self._infer_dim_type(data_shape)
-                    total_timesteps = data_shape[0]
+                    # Verify spatial dimensions match (if scalar not empty)
+                    if scalar_shape[-1] > 0:
+                        assert scalar_shape[:-1] == vector_shape[:-1], \
+                            f"Spatial dims mismatch in {file_path}:{sample_key} - " \
+                            f"scalar {scalar_shape[:-1]} vs vector {vector_shape[:-1]}"
+                    
+                    # Infer dimension type from vector
+                    dim_type = self._infer_dim_type(vector_shape)
+                    total_timesteps = vector_shape[0]
                     
                     # Only add if enough temporal steps
                     if total_timesteps >= self.temporal_length:
@@ -96,7 +116,10 @@ class PDEDataset(Dataset):
                         )
     
     def _infer_dim_type(self, shape: Tuple[int, ...]) -> str:
-        """Infer dimension type from data shape."""
+        """
+        Infer dimension type from data shape.
+        Shape format: [T, *spatial, C]
+        """
         ndim = len(shape) - 2  # Exclude T and C
         
         if ndim == 1:
@@ -139,12 +162,48 @@ class PDEDataset(Dataset):
         for dim_type, count in dim_counts.items():
             logger.info(f"  {dim_type}: {count} samples")
     
+    def _pad_to_3_channels(self, data: np.ndarray) -> Tuple[np.ndarray, int]:
+        """
+        Pad data to 3 channels along last dimension.
+        
+        Args:
+            data: Array with shape [..., C] where C ∈ [0, 3]
+        
+        Returns:
+            padded: Array with shape [..., 3]
+            n_real: Number of real channels (before padding)
+        
+        Examples:
+            - [..., 2] → [..., 3] by padding [0] at the end
+            - [..., 0] → [..., 3] by creating full zeros
+            - [..., 3] → [..., 3] unchanged
+        """
+        C = data.shape[-1]
+        
+        if C == 0:  # Empty array
+            # Create full zeros with same shape but C=3
+            padded = np.zeros((*data.shape[:-1], 3), dtype=np.float32)
+            n_real = 0
+        elif C < 3:
+            # Pad at the end of last dimension
+            pad_width = [(0, 0)] * (data.ndim - 1) + [(0, 3 - C)]
+            padded = np.pad(data, pad_width, mode='constant', constant_values=0)
+            n_real = C
+        else:  # C == 3
+            padded = data.astype(np.float32)
+            n_real = 3
+        
+        return padded, n_real
+    
     def __len__(self) -> int:
         return len(self.samples)
     
-    def __getitem__(self, idx: int) -> torch.Tensor:
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
-        Returns a tensor of shape [temporal_length, *spatial_dims, channels].
+        Returns a dictionary containing:
+            - data: [T, *spatial, 6] with channels [vx, vy, vz, p, ρ, T]
+            - channel_mask: [6] indicating real (1) vs padded (0) channels
+        
         Randomly samples consecutive temporal steps.
         """
         file_path, sample_key, dim_type, total_timesteps = self.samples[idx]
@@ -156,13 +215,29 @@ class PDEDataset(Dataset):
         
         # Load data lazily
         with h5py.File(file_path, 'r') as f:
-            data = f[sample_key]['data'][start_t:end_t]
-            data = np.array(data, dtype=np.float32)
+            scalar = np.array(f[sample_key]['scalar'][start_t:end_t], dtype=np.float32)
+            vector = np.array(f[sample_key]['vector'][start_t:end_t], dtype=np.float32)
+        
+        # Pad to 3 channels each
+        scalar_padded, n_scalar = self._pad_to_3_channels(scalar)
+        vector_padded, n_vector = self._pad_to_3_channels(vector)
+        
+        # Concatenate: [vector (3), scalar (3)]
+        # Channels: [vx, vy, vz, p, ρ, T]
+        data = np.concatenate([vector_padded, scalar_padded], axis=-1)
         
         # Convert to torch tensor
-        tensor = torch.from_numpy(data)
+        data_tensor = torch.from_numpy(data)
         
-        return tensor
+        # Create channel mask
+        channel_mask = torch.zeros(6, dtype=torch.float32)
+        channel_mask[:n_vector] = 1.0  # First 3 channels for vector
+        channel_mask[3:3+n_scalar] = 1.0  # Last 3 channels for scalar
+        
+        return {
+            'data': data_tensor,
+            'channel_mask': channel_mask
+        }
     
     def get_dim_type(self, idx: int) -> str:
         """Get dimension type for a sample."""
@@ -201,27 +276,29 @@ class DimensionGroupedSampler(Sampler):
             logger.info(f"  {dim_type}: {len(indices)} samples")
     
     def __iter__(self):
-        """Generate batches grouped by dimension."""
+        """Generate batches grouped by dimension, dropping last incomplete batch."""
         batches = []
         
-        for dim_type, indices in self.dim_groups.items():
-            if len(indices) == 0:
-                continue
+        for _, indices in self.dim_groups.items():
+            if len(indices) < self.batch_size:
+                continue 
             
             # Shuffle within dimension group
             if self.shuffle:
                 indices = np.random.permutation(indices).tolist()
             
-            # Create batches for this dimension
-            for i in range(0, len(indices), self.batch_size):
-                batch = indices[i:i + self.batch_size]
+            num_full_batches = len(indices) // self.batch_size
+            
+            for i in range(num_full_batches):
+                start = i * self.batch_size
+                end = start + self.batch_size
+                batch = indices[start:end]
                 batches.append(batch)
         
-        # Shuffle batch order
         if self.shuffle:
             np.random.shuffle(batches)
         
-        # Flatten and yield
+        # Yield complete batches
         for batch in batches:
             yield batch
     
@@ -229,19 +306,27 @@ class DimensionGroupedSampler(Sampler):
         return len(self.dataset)
 
 
-def collate_fn(batch: List[torch.Tensor]) -> torch.Tensor:
+def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     """
-    Simple collate function that stacks tensors.
-    Since DimensionGroupedSampler ensures same dimensions in batch,
-    we can safely stack.
+    Collate function that stacks batch of dicts.
     
     Args:
-        batch: List of tensors with shape [T, *spatial_dims, C]
+        batch: List of dicts with keys ['data', 'channel_mask']
+               - data: [T, *spatial, 6]
+               - channel_mask: [6]
     
     Returns:
-        Stacked tensor of shape [B, T, *spatial_dims, C]
+        Dict with:
+            - data: [B, T, *spatial, 6]
+            - channel_mask: [B, 6]
     """
-    return torch.stack(batch, dim=0)
+    data = torch.stack([item['data'] for item in batch], dim=0)
+    channel_mask = torch.stack([item['channel_mask'] for item in batch], dim=0)
+    
+    return {
+        'data': data,
+        'channel_mask': channel_mask
+    }
 
 
 if __name__ == "__main__":
@@ -271,13 +356,13 @@ if __name__ == "__main__":
     # Create samplers
     train_sampler = DimensionGroupedSampler(
         dataset=train_dataset,
-        batch_size=4,
+        batch_size=16,
         shuffle=True
     )
     
     val_sampler = DimensionGroupedSampler(
         dataset=val_dataset,
-        batch_size=4,
+        batch_size=16,
         shuffle=False
     )
     
@@ -307,10 +392,20 @@ if __name__ == "__main__":
     
     for i, batch in enumerate(train_loader):
         logger.info(f"\nBatch {i+1}:")
-        logger.info(f"  Shape: {batch.shape}")
-        logger.info(f"  Dtype: {batch.dtype}")
-        logger.info(f"  Device: {batch.device}")
-        logger.info(f"  Min: {batch.min():.4f}, Max: {batch.max():.4f}")
+        logger.info(f"  Data shape: {batch['data'].shape}")
+        logger.info(f"  Data dtype: {batch['data'].dtype}")
+        logger.info(f"  Data device: {batch['data'].device}")
+        logger.info(f"  Channel mask shape: {batch['channel_mask'].shape}")
+        # logger.info(f"  Channel mask:\n{batch['channel_mask']}")
+        
+        # Show channel-wise statistics
+        data = batch['data']
+        logger.info(f"\n  Channel-wise statistics:")
+        channel_names = ['vx', 'vy', 'vz', 'scalar_1', 'scalar_2', 'scalar_3']
+        for ch_idx, ch_name in enumerate(channel_names):
+            ch_data = data[..., ch_idx]
+            logger.info(f"    {ch_name}: min={ch_data.min():.4f}, max={ch_data.max():.4f}, "
+                       f"mean={ch_data.mean():.4f}, std={ch_data.std():.4f}")
         
         if i >= 2:  # Only show first 3 batches
             break
