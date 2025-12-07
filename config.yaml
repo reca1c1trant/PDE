@@ -62,5 +62,6 @@ training:
 # Logging
 logging:
   project: "pde-solver"
+  entity: "reca1c1trant-ntu"
   save_dir: "./checkpoints"
   log_interval: 10

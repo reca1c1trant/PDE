@@ -237,7 +237,10 @@ def main():
         accelerator.init_trackers(
             project_name=config['logging']['project'],
             config=config,
-            init_kwargs={"wandb": {"name": f"pde-{config['dataset']['seed']}"}}
+            init_kwargs={"wandb": {
+                "entity": config['logging'].get('entity'),
+                "name": f"pde-{config['dataset']['seed']}"
+            }}
         )
 
     # Checkpoint directory
