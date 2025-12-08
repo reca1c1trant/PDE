@@ -141,10 +141,12 @@ class PDECausalModel(nn.Module):
             tokens = self.encoder_1d(x)
             hidden = self.transformer(inputs_embeds=tokens, attention_mask=attention_mask).last_hidden_state
             output = self.decoder_1d(hidden)
+
         elif ndim == 2:
             tokens = self.encoder_2d(x)
             hidden = self.transformer(inputs_embeds=tokens, attention_mask=attention_mask).last_hidden_state
             output = self.decoder_2d(hidden)
+
         else:
             raise ValueError(f"Unsupported input dimension: {x.shape}")
 

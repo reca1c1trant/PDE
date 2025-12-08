@@ -246,64 +246,109 @@ class PDEDataset(Dataset):
 
 class DimensionGroupedSampler(Sampler):
     """
-    Sampler that groups samples by dimension type.
+    Distributed-compatible sampler that groups samples by dimension type.
     Ensures each batch contains only samples of the same dimension.
-    
+
     Args:
         dataset (PDEDataset): The dataset to sample from
-        batch_size (int): Batch size
+        batch_size (int): Batch size per GPU
         shuffle (bool): Whether to shuffle within each dimension group
+        num_replicas (int): Number of distributed processes (default: auto-detect)
+        rank (int): Current process rank (default: auto-detect)
+        seed (int): Random seed for shuffling
     """
-    
+
     def __init__(
         self,
         dataset: PDEDataset,
         batch_size: int,
-        shuffle: bool = True
+        shuffle: bool = True,
+        num_replicas: Optional[int] = None,
+        rank: Optional[int] = None,
+        seed: int = 42
     ):
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
-        
+        self.seed = seed
+        self.epoch = 0
+
+        # Auto-detect distributed settings
+        if num_replicas is None:
+            import os
+            num_replicas = int(os.environ.get('WORLD_SIZE', 1))
+        if rank is None:
+            import os
+            rank = int(os.environ.get('RANK', 0))
+
+        self.num_replicas = num_replicas
+        self.rank = rank
+
         # Group indices by dimension type
         self.dim_groups: Dict[str, List[int]] = {'1D': [], '2D': [], '3D': []}
         for idx in range(len(dataset)):
             dim_type = dataset.get_dim_type(idx)
             self.dim_groups[dim_type].append(idx)
-        
-        logger.info("Dimension groups for sampling:")
-        for dim_type, indices in self.dim_groups.items():
-            logger.info(f"  {dim_type}: {len(indices)} samples")
-    
-    def __iter__(self):
-        """Generate batches grouped by dimension, dropping last incomplete batch."""
+
+        # Pre-compute total batches (for __len__)
+        self._compute_batches()
+
+        if rank == 0:
+            logger.info("Dimension groups for sampling:")
+            for dim_type, indices in self.dim_groups.items():
+                logger.info(f"  {dim_type}: {len(indices)} samples")
+            logger.info(f"Distributed: {num_replicas} replicas, {len(self._all_batches)} total batches, {self.num_batches_per_rank} per rank")
+
+    def _compute_batches(self):
+        """Pre-compute all batches and distribute across ranks."""
+        # Use fixed seed for deterministic batch creation
+        rng = np.random.RandomState(self.seed + self.epoch)
+
         batches = []
-        
         for _, indices in self.dim_groups.items():
             if len(indices) < self.batch_size:
-                continue 
-            
+                continue
+
             # Shuffle within dimension group
             if self.shuffle:
-                indices = np.random.permutation(indices).tolist()
-            
+                indices = rng.permutation(indices).tolist()
+            else:
+                indices = list(indices)
+
             num_full_batches = len(indices) // self.batch_size
-            
+
             for i in range(num_full_batches):
                 start = i * self.batch_size
                 end = start + self.batch_size
                 batch = indices[start:end]
                 batches.append(batch)
-        
+
         if self.shuffle:
-            np.random.shuffle(batches)
-        
-        # Yield complete batches
-        for batch in batches:
+            rng.shuffle(batches)
+
+        self._all_batches = batches
+
+        # Ensure all ranks have same number of batches (drop extras)
+        total_batches = len(batches)
+        self.num_batches_per_rank = total_batches // self.num_replicas
+
+    def set_epoch(self, epoch: int):
+        """Set epoch for shuffling (call before each epoch)."""
+        self.epoch = epoch
+        self._compute_batches()
+
+    def __iter__(self):
+        """Generate batches for this rank only."""
+        # Each rank gets a subset of batches
+        start_idx = self.rank * self.num_batches_per_rank
+        end_idx = start_idx + self.num_batches_per_rank
+
+        for batch in self._all_batches[start_idx:end_idx]:
             yield batch
-    
+
     def __len__(self) -> int:
-        return len(self.dataset)
+        """Return number of batches for this rank."""
+        return self.num_batches_per_rank
 
 
 def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:

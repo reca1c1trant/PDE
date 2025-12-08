@@ -33,7 +33,7 @@ else:
     # 主进程：过滤特定 warnings
     warnings.filterwarnings('ignore', message='.*FSDP upcast.*')
 
-# 设置 Triton cache 到用户目录（确保存在）
+# 设置 Triton cache 到用户目录
 triton_cache = os.path.expanduser('~/.cache/triton')
 os.makedirs(triton_cache, exist_ok=True)
 os.environ.setdefault('TRITON_CACHE_DIR', triton_cache)
@@ -76,7 +76,7 @@ def load_config(config_path: str = "config.yaml") -> dict:
 
 
 def create_dataloaders(config: dict):
-    """Create train and validation dataloaders."""
+    """Create train and validation dataloaders with distributed-aware samplers."""
     train_dataset = PDEDataset(
         data_dir=config['dataset']['path'],
         temporal_length=config['dataset']['temporal_length'],
@@ -94,9 +94,11 @@ def create_dataloaders(config: dict):
     )
 
     batch_size = config['dataloader']['batch_size']
+    seed = config['dataset']['seed']
 
-    train_sampler = DimensionGroupedSampler(train_dataset, batch_size, shuffle=True)
-    val_sampler = DimensionGroupedSampler(val_dataset, batch_size, shuffle=False)
+    # Samplers are now distributed-aware (auto-detect WORLD_SIZE and RANK)
+    train_sampler = DimensionGroupedSampler(train_dataset, batch_size, shuffle=True, seed=seed)
+    val_sampler = DimensionGroupedSampler(val_dataset, batch_size, shuffle=False, seed=seed)
 
     train_loader = DataLoader(
         train_dataset,
@@ -114,7 +116,7 @@ def create_dataloaders(config: dict):
         pin_memory=config['dataloader']['pin_memory']
     )
 
-    return train_loader, val_loader
+    return train_loader, val_loader, train_sampler, val_sampler
 
 
 def infinite_dataloader(dataloader):
@@ -155,13 +157,12 @@ def cleanup_checkpoints(save_dir: Path, keep_n: int = 3):
 def validate(model, val_loader, accelerator):
     """Validate the model."""
     model.eval()
-    total_loss = 0.0
-    num_batches = 0
+    total_loss = torch.zeros(1, device=accelerator.device)
+    num_batches = torch.zeros(1, device=accelerator.device)
 
     for batch in val_loader:
-        # Convert data to bf16
-        data = batch['data'].to(torch.bfloat16)
-        channel_mask = batch['channel_mask']
+        data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+        channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
         input_data = data[:, :-1]
         target_data = data[:, 1:]
@@ -169,15 +170,19 @@ def validate(model, val_loader, accelerator):
         output = model(input_data)
         loss = compute_masked_loss(output, target_data, channel_mask)
 
-        # Gather loss across all processes
-        gathered_loss = accelerator.gather(loss.unsqueeze(0)).mean()
-        total_loss += gathered_loss.item()
+        total_loss += loss.detach()
         num_batches += 1
 
-    # Sync before returning
+    # 同步所有进程
     accelerator.wait_for_everyone()
+
+    # 一次性 reduce
+    total_loss = accelerator.reduce(total_loss, reduction='sum')
+    num_batches = accelerator.reduce(num_batches, reduction='sum')
+
     model.train()
-    return total_loss / num_batches if num_batches > 0 else 0.0
+    avg_loss = total_loss / num_batches if num_batches.item() > 0 else total_loss
+    return avg_loss.item()
 
 
 def save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, filename):
@@ -245,12 +250,12 @@ def main():
         logger.info(f"Num Processes: {accelerator.num_processes}")
         logger.info(f"{'='*60}")
 
-    # Create dataloaders
-    train_loader, val_loader = create_dataloaders(config)
-
+    # Create dataloaders (samplers are already distributed-aware)
+    train_loader, val_loader, train_sampler, val_sampler = create_dataloaders(config)
+    
     if accelerator.is_main_process:
-        logger.info(f"Train batches per epoch: {len(train_loader)}")
-        logger.info(f"Val batches: {len(val_loader)}")
+        logger.info(f"Train batches per rank: {len(train_loader)}")
+        logger.info(f"Val batches per rank: {len(val_loader)}")
 
     # Create model
     model = PDECausalModel(config)
@@ -266,10 +271,8 @@ def main():
     # Scheduler with warmup
     scheduler = get_lr_scheduler(optimizer, config)
 
-    # Prepare with Accelerator
-    model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
-        model, optimizer, train_loader, val_loader, scheduler
-    )
+    # Prepare with Accelerator (don't prepare dataloaders - sampler is already distributed)
+    model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
 
     # Init WandB tracker
     if accelerator.is_main_process:
@@ -310,9 +313,9 @@ def main():
 
         while global_step < max_steps:
             batch = next(train_iter)
-            # Convert data to bf16
-            data = batch['data'].to(torch.bfloat16)
-            channel_mask = batch['channel_mask']
+            # Move data to device and convert to bf16
+            data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+            channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
             # Causal AR split
             input_data = data[:, :-1]
@@ -346,6 +349,7 @@ def main():
 
             # Evaluate
             if global_step % eval_every_steps == 0:
+                accelerator.wait_for_everyone()  # 确保所有卡同步进入 validation
                 val_loss = validate(model, val_loader, accelerator)
 
                 accelerator.log({
@@ -356,10 +360,11 @@ def main():
                 if accelerator.is_main_process:
                     console.print(f"[green]Step {global_step}:[/green] val_loss = {val_loss:.6f}")
 
-                    # Save best
-                    if val_loss < best_val_loss:
-                        best_val_loss = val_loss
-                        save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, 'best.pt')
+                # Save best (all ranks must call save_checkpoint for sync)
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, 'best.pt')
+                    if accelerator.is_main_process:
                         console.print(f"[yellow]Saved best model[/yellow] (val_loss: {val_loss:.6f})")
 
             # Save checkpoint
