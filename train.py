@@ -185,8 +185,8 @@ def validate(model, val_loader, accelerator):
     return avg_loss.item()
 
 
-def save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, filename):
-    """Save checkpoint."""
+def save_checkpoint(model, optimizer, scheduler, global_step, val_loss, best_val_loss, config, save_dir, accelerator, filename):
+    """Save checkpoint with all training state."""
     # Sync all processes before saving
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
@@ -197,10 +197,42 @@ def save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, 
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
             'val_loss': val_loss,
+            'best_val_loss': best_val_loss,
             'config': config
         }
         torch.save(checkpoint, save_dir / filename)
     accelerator.wait_for_everyone()
+
+
+def load_checkpoint(checkpoint_path, model, optimizer, scheduler, accelerator):
+    """
+    Load checkpoint and restore training state.
+
+    Returns:
+        global_step: Step to resume from
+        best_val_loss: Best validation loss so far
+    """
+    accelerator.wait_for_everyone()
+
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+
+    # Load model state
+    unwrapped_model = accelerator.unwrap_model(model)
+    unwrapped_model.load_state_dict(checkpoint['model_state_dict'])
+
+    # Load optimizer state
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    # Load scheduler state
+    if scheduler and checkpoint.get('scheduler_state_dict'):
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+    global_step = checkpoint.get('global_step', 0)
+    best_val_loss = checkpoint.get('best_val_loss', checkpoint.get('val_loss', float('inf')))
+
+    accelerator.wait_for_everyone()
+
+    return global_step, best_val_loss
 
 
 def main():
@@ -293,6 +325,25 @@ def main():
     # Training state
     global_step = 0
     best_val_loss = float('inf')
+    last_val_loss = float('inf')  # Track last validation loss for checkpointing
+
+    # Resume from checkpoint if specified
+    resume_path = config['training'].get('resume_from')
+    if resume_path:
+        resume_path = Path(resume_path)
+        if resume_path.exists():
+            if accelerator.is_main_process:
+                logger.info(f"Resuming from checkpoint: {resume_path}")
+            global_step, best_val_loss = load_checkpoint(
+                resume_path, model, optimizer, scheduler, accelerator
+            )
+            if accelerator.is_main_process:
+                logger.info(f"Resumed at step {global_step}, best_val_loss={best_val_loss:.6f}")
+                logger.info(f"Current LR: {scheduler.get_last_lr()[0]:.2e}")
+        else:
+            if accelerator.is_main_process:
+                logger.warning(f"Checkpoint not found: {resume_path}, starting from scratch")
+
     train_iter = infinite_dataloader(train_loader)
     console = Console()
 
@@ -309,7 +360,7 @@ def main():
         console=console,
         disable=not accelerator.is_main_process,
     ) as progress:
-        train_task = progress.add_task("Training", total=max_steps)
+        train_task = progress.add_task("Training", total=max_steps, completed=global_step)
 
         while global_step < max_steps:
             batch = next(train_iter)
@@ -351,6 +402,7 @@ def main():
             if global_step % eval_every_steps == 0:
                 accelerator.wait_for_everyone()  # 确保所有卡同步进入 validation
                 val_loss = validate(model, val_loader, accelerator)
+                last_val_loss = val_loss  # Update for checkpoint saving
 
                 accelerator.log({
                     'val/loss': val_loss,
@@ -363,14 +415,14 @@ def main():
                 # Save best (all ranks must call save_checkpoint for sync)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    save_checkpoint(model, optimizer, scheduler, global_step, val_loss, config, save_dir, accelerator, 'best.pt')
+                    save_checkpoint(model, optimizer, scheduler, global_step, val_loss, best_val_loss, config, save_dir, accelerator, 'best.pt')
                     if accelerator.is_main_process:
                         console.print(f"[yellow]Saved best model[/yellow] (val_loss: {val_loss:.6f})")
 
-            # Save checkpoint
+            # Save checkpoint periodically
             if global_step % save_every_steps == 0:
-                save_checkpoint(model, optimizer, scheduler, global_step, best_val_loss, config, save_dir, accelerator, f'checkpoint-step-{global_step}.pt')
-                save_checkpoint(model, optimizer, scheduler, global_step, best_val_loss, config, save_dir, accelerator, 'latest.pt')
+                save_checkpoint(model, optimizer, scheduler, global_step, last_val_loss, best_val_loss, config, save_dir, accelerator, f'checkpoint-step-{global_step}.pt')
+                save_checkpoint(model, optimizer, scheduler, global_step, last_val_loss, best_val_loss, config, save_dir, accelerator, 'latest.pt')
 
                 if accelerator.is_main_process:
                     cleanup_checkpoints(save_dir, keep_n=keep_last_n)
