@@ -18,6 +18,9 @@ model:
   in_channels: 6
   encoder_hidden_dim: 4096
 
+  # Normalization & Noise
+  noise_level: 0.05  # Gaussian noise std during training (0 to disable)
+
   # Acceleration
   # NOTE: FlashAttention-2 does not support custom 4D attention masks (block causal)
   # Set to false to use eager attention which supports custom masks

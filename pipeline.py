@@ -22,11 +22,19 @@ class PDECausalModel(nn.Module):
     Architecture:
         Input [B, T, *spatial, 6]
           ↓
+        Normalize (per-sample, spatial-wise)
+          ↓
+        Noise Injection (training only)
+          ↓
         Encoder → Tokens [B, seq_len, hidden_dim]
           ↓
         Llama Transformer [B, seq_len, hidden_dim]
           ↓
         Decoder → Output [B, T, *spatial, 6]
+          ↓
+        Denormalize
+          ↓
+        Output
 
     Args:
         config (dict): Model configuration from yaml
@@ -37,6 +45,10 @@ class PDECausalModel(nn.Module):
 
         self.in_channels = config['model']['in_channels']
         self.hidden_dim = config['model']['encoder_hidden_dim']
+
+        # Normalization and noise config
+        self.noise_level = config['model'].get('noise_level', 0.0)
+        self.norm_eps = 1e-6
 
         # Causal mask constants
         self.num_timesteps = 16
@@ -103,6 +115,8 @@ class PDECausalModel(nn.Module):
         print(f"FlashAttention-2: {'Enabled' if use_flash_attn else 'Disabled'}")
         print(f"Gradient Checkpointing: {self.transformer.is_gradient_checkpointing}")
         print(f"Dtype: {llama_config.torch_dtype}")
+        print(f"Normalization: Enabled (spatial-wise, eps={self.norm_eps})")
+        print(f"Noise Injection: {self.noise_level if self.noise_level > 0 else 'Disabled'}")
         print(f"\nParameters:")
         print(f"  Encoders:    {encoder_params:,}")
         print(f"  Transformer: {transformer_params:,}")
@@ -121,9 +135,46 @@ class PDECausalModel(nn.Module):
             )
         return self._causal_mask
 
+    def _normalize(self, x: torch.Tensor):
+        """
+        Normalize input tensor over spatial dimensions.
+
+        Args:
+            x: [B, T, H, C] (1D) or [B, T, H, W, C] (2D)
+
+        Returns:
+            x_norm: Normalized tensor
+            mean: [B, T, 1, C] or [B, T, 1, 1, C]
+            std: [B, T, 1, C] or [B, T, 1, 1, C]
+        """
+        ndim = x.ndim - 3  # 1 for 1D, 2 for 2D
+
+        if ndim == 1:
+            # [B, T, H, C] -> reduce over H (dim=2)
+            mean = x.mean(dim=2, keepdim=True)
+            std = x.std(dim=2, keepdim=True) + self.norm_eps
+        else:
+            # [B, T, H, W, C] -> reduce over H, W (dim=2,3)
+            mean = x.mean(dim=(2, 3), keepdim=True)
+            std = x.std(dim=(2, 3), keepdim=True) + self.norm_eps
+
+        x_norm = (x - mean) / std
+        return x_norm, mean, std
+
+    def _denormalize(self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+        """Reverse normalization."""
+        return x * std + mean
+
+    def _add_noise(self, x: torch.Tensor) -> torch.Tensor:
+        """Add Gaussian noise during training."""
+        if self.training and self.noise_level > 0:
+            noise = torch.randn_like(x) * self.noise_level
+            return x + noise
+        return x
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass with block causal mask.
+        Forward pass with normalization, noise injection, and block causal mask.
 
         Args:
             x: [B, T, H, 6] (1D) or [B, T, H, W, 6] (2D)
@@ -134,21 +185,31 @@ class PDECausalModel(nn.Module):
         ndim = x.ndim - 3
         B = x.shape[0]
 
+        # Normalize
+        x_norm, mean, std = self._normalize(x)
+
+        # Noise injection (training only)
+        x_norm = self._add_noise(x_norm)
+
+        # Causal mask
         causal_mask = self._get_causal_mask(x.device, x.dtype)
         attention_mask = causal_mask.expand(B, -1, -1, -1)
 
         if ndim == 1:
-            tokens = self.encoder_1d(x)
+            tokens = self.encoder_1d(x_norm)
             hidden = self.transformer(inputs_embeds=tokens, attention_mask=attention_mask).last_hidden_state
             output = self.decoder_1d(hidden)
 
         elif ndim == 2:
-            tokens = self.encoder_2d(x)
+            tokens = self.encoder_2d(x_norm)
             hidden = self.transformer(inputs_embeds=tokens, attention_mask=attention_mask).last_hidden_state
             output = self.decoder_2d(hidden)
 
         else:
             raise ValueError(f"Unsupported input dimension: {x.shape}")
+
+        # Denormalize
+        output = self._denormalize(output, mean, std)
 
         return output
 
