@@ -218,3 +218,5 @@ output.txt
 
 checkpoints/
 ARCHITECTURE.md
+
+*.pt

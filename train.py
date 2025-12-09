@@ -33,7 +33,7 @@ else:
     warnings.filterwarnings('ignore', message='.*FSDP upcast.*')
 
 # 设置 Triton cache 到用户目录
-triton_cache = os.path.expanduser('~/.cache/triton')
+triton_cache = '/tmp/triton_cache'
 os.makedirs(triton_cache, exist_ok=True)
 os.environ.setdefault('TRITON_CACHE_DIR', triton_cache)
 

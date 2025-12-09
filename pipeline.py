@@ -57,9 +57,9 @@ class PDECausalModel(nn.Module):
         self._causal_mask = None
 
         # Create encoders and decoders
-        self.encoder_1d = PDE1DEncoder(self.in_channels, self.hidden_dim)
+        # self.encoder_1d = PDE1DEncoder(self.in_channels, self.hidden_dim)
         self.encoder_2d = PDE2DEncoder(self.in_channels, self.hidden_dim)
-        self.decoder_1d = PDE1DDecoder(self.in_channels, self.hidden_dim)
+        # self.decoder_1d = PDE1DDecoder(self.in_channels, self.hidden_dim)
         self.decoder_2d = PDE2DDecoder(self.in_channels, self.hidden_dim)
 
         # Llama config with FlashAttention-2 support
@@ -100,10 +100,11 @@ class PDECausalModel(nn.Module):
         if not _is_main_process():
             return
 
-        encoder_params = sum(p.numel() for p in self.encoder_1d.parameters()) + \
-                        sum(p.numel() for p in self.encoder_2d.parameters())
-        decoder_params = sum(p.numel() for p in self.decoder_1d.parameters()) + \
-                        sum(p.numel() for p in self.decoder_2d.parameters())
+        encoder_params = sum(p.numel() for p in self.encoder_2d.parameters()) #+ \
+                        #sum(p.numel() for p in self.encoder_1d.parameters())
+                        
+        decoder_params = sum(p.numel() for p in self.decoder_2d.parameters()) #+ \
+                        #sum(p.numel() for p in self.decoder_1d.parameters())
         transformer_params = sum(p.numel() for p in self.transformer.parameters())
         total_params = encoder_params + decoder_params + transformer_params
 
@@ -197,9 +198,10 @@ class PDECausalModel(nn.Module):
         attention_mask = causal_mask.expand(B, -1, -1, -1)
 
         if ndim == 1:
-            tokens = self.encoder_1d(x_norm)
-            hidden = self.transformer(inputs_embeds=tokens, attention_mask=attention_mask).last_hidden_state
-            output = self.decoder_1d(hidden)
+            pass
+            # tokens = self.encoder_1d(x_norm)
+            # hidden = self.transformer(inputs_embeds=tokens, attention_mask=attention_mask).last_hidden_state
+            # output = self.decoder_1d(hidden)
 
         elif ndim == 2:
             tokens = self.encoder_2d(x_norm)

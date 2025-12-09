@@ -42,7 +42,7 @@ model:
 
 # Training
 training:
-  max_steps: 100000  # Total training steps
+  max_steps: 10000  # Total training steps
   resume_from: null  # Path to checkpoint (e.g., "./checkpoints/latest.pt") or null to start fresh
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
