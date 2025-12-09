@@ -11,27 +11,43 @@ from typing import Tuple, Optional
 class PDE1DEncoder(nn.Module):
     """
     Encoder for 1D PDE data with multi-stage downsampling.
-    Input: [B, T, H, C] where T=16, H=1024, C=6
+    Input: [B, T, H, C] where T=16, H=1024, C=6 (vector=3, scalar=3)
     Output: [B, seq_len, D] where seq_len=4096, D=hidden_dim
 
     Processing:
-        1. Downsample: 1024 → 512 → 256 (2 stages, stride=2 each)
-        2. Flatten: T*H = 16*256 = 4096 tokens
-        3. Project to hidden_dim
+        1. Separate vector [vx,vy,vz] and scalar [p,ρ,T] branches
+        2. Downsample: 1024 → 512 → 256 (2 stages, stride=2 each)
+        3. Cross-branch fusion via 1x1 conv
+        4. Flatten: T*H = 16*256 = 4096 tokens
+        5. Project to hidden_dim
     """
 
     def __init__(self, in_channels: int = 6, hidden_dim: int = 768):
         super().__init__()
         self.in_channels = in_channels
         self.hidden_dim = hidden_dim
+        self.vector_channels = 3  # vx, vy, vz
+        self.scalar_channels = 3  # p, ρ, T
 
-        # Multi-stage spatial downsampling: 1024 → 512 → 256
-        self.conv_down = nn.Sequential(
-            # Stage 1: 1024 → 512
-            nn.Conv1d(in_channels, 64, kernel_size=3, stride=2, padding=1),
+        # Vector branch: 1024 → 512 → 256
+        self.vector_conv = nn.Sequential(
+            nn.Conv1d(self.vector_channels, 32, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
             nn.GELU(),
-            # Stage 2: 512 → 256
-            nn.Conv1d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.Conv1d(32, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+            nn.GELU(),
+        )
+
+        # Scalar branch: 1024 → 512 → 256
+        self.scalar_conv = nn.Sequential(
+            nn.Conv1d(self.scalar_channels, 32, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+            nn.GELU(),
+            nn.Conv1d(32, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+            nn.GELU(),
+        )
+
+        # Cross-branch fusion: concat (128) → fused (128)
+        self.fusion = nn.Sequential(
+            nn.Conv1d(128, 128, kernel_size=1),
             nn.GELU(),
         )
 
@@ -49,12 +65,21 @@ class PDE1DEncoder(nn.Module):
         assert H == 1024, f"Expected H=1024, got {H}"
         assert C == self.in_channels, f"Expected C={self.in_channels}, got {C}"
 
-        # Process each timestep
-        x = x.permute(0, 1, 3, 2)  # [B, T, C, H]
-        x = x.reshape(B * T, C, H)  # [B*T, C, H]
+        # Split vector and scalar: [B, T, H, 3] each
+        x_vec = x[..., :3]  # vx, vy, vz
+        x_sca = x[..., 3:]  # p, ρ, T
 
-        # Multi-stage downsample: 1024 → 512 → 256
-        x = self.conv_down(x)  # [B*T, 128, 256]
+        # Reshape for conv: [B*T, C, H]
+        x_vec = x_vec.permute(0, 1, 3, 2).reshape(B * T, 3, H)
+        x_sca = x_sca.permute(0, 1, 3, 2).reshape(B * T, 3, H)
+
+        # Separate branch processing
+        x_vec = self.vector_conv(x_vec)  # [B*T, 64, 256]
+        x_sca = self.scalar_conv(x_sca)  # [B*T, 64, 256]
+
+        # Concatenate and fuse
+        x = torch.cat([x_vec, x_sca], dim=1)  # [B*T, 128, 256]
+        x = self.fusion(x)  # [B*T, 128, 256]
 
         # Reshape and flatten
         x = x.permute(0, 2, 1)  # [B*T, 256, 128]
@@ -69,30 +94,47 @@ class PDE1DEncoder(nn.Module):
 class PDE2DEncoder(nn.Module):
     """
     Encoder for 2D PDE data with multi-stage downsampling.
-    Input: [B, T, H, W, C] where T=16, H=W=128, C=6
+    Input: [B, T, H, W, C] where T=16, H=W=128, C=6 (vector=3, scalar=3)
     Output: [B, seq_len, D] where seq_len=4096, D=hidden_dim
 
     Processing:
-        1. Downsample: 128 → 64 → 32 → 16 (3 stages, stride=2 each)
-        2. Flatten: T*H*W = 16*16*16 = 4096 tokens
-        3. Project to hidden_dim
+        1. Separate vector [vx,vy,vz] and scalar [p,ρ,T] branches
+        2. Downsample: 128 → 64 → 32 → 16 (3 stages, stride=2 each)
+        3. Cross-branch fusion via 1x1 conv
+        4. Flatten: T*H*W = 16*16*16 = 4096 tokens
+        5. Project to hidden_dim
     """
 
     def __init__(self, in_channels: int = 6, hidden_dim: int = 768):
         super().__init__()
         self.in_channels = in_channels
         self.hidden_dim = hidden_dim
+        self.vector_channels = 3  # vx, vy, vz
+        self.scalar_channels = 3  # p, ρ, T
 
-        # Multi-stage spatial downsampling: 128 → 64 → 32 → 16
-        self.conv_down = nn.Sequential(
-            # Stage 1: 128 → 64
-            nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1),
+        # Vector branch: 128 → 64 → 32 → 16
+        self.vector_conv = nn.Sequential(
+            nn.Conv2d(self.vector_channels, 16, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
             nn.GELU(),
-            # Stage 2: 64 → 32
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
             nn.GELU(),
-            # Stage 3: 32 → 16
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+            nn.GELU(),
+        )
+
+        # Scalar branch: 128 → 64 → 32 → 16
+        self.scalar_conv = nn.Sequential(
+            nn.Conv2d(self.scalar_channels, 16, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+            nn.GELU(),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+            nn.GELU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+            nn.GELU(),
+        )
+
+        # Cross-branch fusion: concat (128) → fused (128)
+        self.fusion = nn.Sequential(
+            nn.Conv2d(128, 128, kernel_size=1),
             nn.GELU(),
         )
 
@@ -110,12 +152,21 @@ class PDE2DEncoder(nn.Module):
         assert H == 128 and W == 128, f"Expected H=W=128, got {H}x{W}"
         assert C == self.in_channels, f"Expected C={self.in_channels}, got {C}"
 
-        # Process each timestep
-        x = x.permute(0, 1, 4, 2, 3)  # [B, T, C, H, W]
-        x = x.reshape(B * T, C, H, W)  # [B*T, C, H, W]
+        # Split vector and scalar: [B, T, H, W, 3] each
+        x_vec = x[..., :3]  # vx, vy, vz
+        x_sca = x[..., 3:]  # p, ρ, T
 
-        # Multi-stage downsample: 128 → 64 → 32 → 16
-        x = self.conv_down(x)  # [B*T, 128, 16, 16]
+        # Reshape for conv: [B*T, C, H, W]
+        x_vec = x_vec.permute(0, 1, 4, 2, 3).reshape(B * T, 3, H, W)
+        x_sca = x_sca.permute(0, 1, 4, 2, 3).reshape(B * T, 3, H, W)
+
+        # Separate branch processing
+        x_vec = self.vector_conv(x_vec)  # [B*T, 64, 16, 16]
+        x_sca = self.scalar_conv(x_sca)  # [B*T, 64, 16, 16]
+
+        # Concatenate and fuse
+        x = torch.cat([x_vec, x_sca], dim=1)  # [B*T, 128, 16, 16]
+        x = self.fusion(x)  # [B*T, 128, 16, 16]
 
         # Reshape and flatten
         x = x.permute(0, 2, 3, 1)  # [B*T, 16, 16, 128]
@@ -187,28 +238,43 @@ class PDE1DDecoder(nn.Module):
     """
     Decoder for 1D PDE data with multi-stage upsampling (mirrors encoder).
     Input: [B, seq_len, D] where seq_len=4096, D=hidden_dim
-    Output: [B, T, H, C] where T=16, H=1024, C=6
+    Output: [B, T, H, C] where T=16, H=1024, C=6 (vector=3, scalar=3)
 
     Processing:
         1. Project from hidden_dim
-        2. Upsample: 256 → 512 → 1024 (2 stages, stride=2 each)
+        2. Split into vector/scalar branches
+        3. Upsample: 256 → 512 → 1024 (2 stages, stride=2 each)
+        4. Concatenate outputs
     """
 
     def __init__(self, out_channels: int = 6, hidden_dim: int = 768):
         super().__init__()
         self.out_channels = out_channels
         self.hidden_dim = hidden_dim
+        self.vector_channels = 3  # vx, vy, vz
+        self.scalar_channels = 3  # p, ρ, T
 
         # Project from hidden dimension
         self.proj = nn.Linear(hidden_dim, 128)
 
-        # Multi-stage spatial upsampling: 256 → 512 → 1024
-        self.conv_up = nn.Sequential(
-            # Stage 1: 256 → 512
-            nn.ConvTranspose1d(128, 64, kernel_size=4, stride=2, padding=1),
+        # Split layer: 128 → 64 + 64
+        self.split = nn.Sequential(
+            nn.Conv1d(128, 128, kernel_size=1),
             nn.GELU(),
-            # Stage 2: 512 → 1024
-            nn.ConvTranspose1d(64, out_channels, kernel_size=4, stride=2, padding=1),
+        )
+
+        # Vector branch: 256 → 512 → 1024
+        self.vector_conv = nn.Sequential(
+            nn.ConvTranspose1d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            nn.ConvTranspose1d(32, self.vector_channels, kernel_size=4, stride=2, padding=1),
+        )
+
+        # Scalar branch: 256 → 512 → 1024
+        self.scalar_conv = nn.Sequential(
+            nn.ConvTranspose1d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            nn.ConvTranspose1d(32, self.scalar_channels, kernel_size=4, stride=2, padding=1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -228,11 +294,20 @@ class PDE1DDecoder(nn.Module):
         x = x.reshape(B * 16, 256, 128)  # [B*T, 256, 128]
         x = x.permute(0, 2, 1)  # [B*T, 128, 256]
 
-        # Multi-stage upsample: 256 → 512 → 1024
-        x = self.conv_up(x)  # [B*T, C, 1024]
+        # Split preparation
+        x = self.split(x)  # [B*T, 128, 256]
+        x_vec = x[:, :64, :]  # [B*T, 64, 256]
+        x_sca = x[:, 64:, :]  # [B*T, 64, 256]
+
+        # Separate branch upsampling
+        x_vec = self.vector_conv(x_vec)  # [B*T, 3, 1024]
+        x_sca = self.scalar_conv(x_sca)  # [B*T, 3, 1024]
+
+        # Concatenate
+        x = torch.cat([x_vec, x_sca], dim=1)  # [B*T, 6, 1024]
 
         # Reshape back
-        x = x.permute(0, 2, 1)  # [B*T, 1024, C]
+        x = x.permute(0, 2, 1)  # [B*T, 1024, 6]
         x = x.reshape(B, 16, 1024, self.out_channels)  # [B, T, H, C]
 
         return x
@@ -242,31 +317,47 @@ class PDE2DDecoder(nn.Module):
     """
     Decoder for 2D PDE data with multi-stage upsampling (mirrors encoder).
     Input: [B, seq_len, D] where seq_len=4096, D=hidden_dim
-    Output: [B, T, H, W, C] where T=16, H=W=128, C=6
+    Output: [B, T, H, W, C] where T=16, H=W=128, C=6 (vector=3, scalar=3)
 
     Processing:
         1. Project from hidden_dim
-        2. Upsample: 16 → 32 → 64 → 128 (3 stages, stride=2 each)
+        2. Split into vector/scalar branches
+        3. Upsample: 16 → 32 → 64 → 128 (3 stages, stride=2 each)
+        4. Concatenate outputs
     """
 
     def __init__(self, out_channels: int = 6, hidden_dim: int = 768):
         super().__init__()
         self.out_channels = out_channels
         self.hidden_dim = hidden_dim
+        self.vector_channels = 3  # vx, vy, vz
+        self.scalar_channels = 3  # p, ρ, T
 
         # Project from hidden dimension
         self.proj = nn.Linear(hidden_dim, 128)
 
-        # Multi-stage spatial upsampling: 16 → 32 → 64 → 128
-        self.conv_up = nn.Sequential(
-            # Stage 1: 16 → 32
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+        # Split layer: 128 → 64 + 64
+        self.split = nn.Sequential(
+            nn.Conv2d(128, 128, kernel_size=1),
             nn.GELU(),
-            # Stage 2: 32 → 64
+        )
+
+        # Vector branch: 16 → 32 → 64 → 128
+        self.vector_conv = nn.Sequential(
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
             nn.GELU(),
-            # Stage 3: 64 → 128
-            nn.ConvTranspose2d(32, out_channels, kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            nn.ConvTranspose2d(16, self.vector_channels, kernel_size=4, stride=2, padding=1),
+        )
+
+        # Scalar branch: 16 → 32 → 64 → 128
+        self.scalar_conv = nn.Sequential(
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            nn.ConvTranspose2d(16, self.scalar_channels, kernel_size=4, stride=2, padding=1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -286,11 +377,20 @@ class PDE2DDecoder(nn.Module):
         x = x.reshape(B * 16, 16, 16, 128)  # [B*T, 16, 16, 128]
         x = x.permute(0, 3, 1, 2)  # [B*T, 128, 16, 16]
 
-        # Multi-stage upsample: 16 → 32 → 64 → 128
-        x = self.conv_up(x)  # [B*T, C, 128, 128]
+        # Split preparation
+        x = self.split(x)  # [B*T, 128, 16, 16]
+        x_vec = x[:, :64, :, :]  # [B*T, 64, 16, 16]
+        x_sca = x[:, 64:, :, :]  # [B*T, 64, 16, 16]
+
+        # Separate branch upsampling
+        x_vec = self.vector_conv(x_vec)  # [B*T, 3, 128, 128]
+        x_sca = self.scalar_conv(x_sca)  # [B*T, 3, 128, 128]
+
+        # Concatenate
+        x = torch.cat([x_vec, x_sca], dim=1)  # [B*T, 6, 128, 128]
 
         # Reshape back
-        x = x.permute(0, 2, 3, 1)  # [B*T, 128, 128, C]
+        x = x.permute(0, 2, 3, 1)  # [B*T, 128, 128, 6]
         x = x.reshape(B, 16, 128, 128, self.out_channels)  # [B, T, H, W, C]
 
         return x

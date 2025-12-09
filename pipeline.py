@@ -44,7 +44,8 @@ class PDECausalModel(nn.Module):
         super().__init__()
 
         self.in_channels = config['model']['in_channels']
-        self.hidden_dim = config['model']['encoder_hidden_dim']
+        # hidden_dim syncs with transformer.hidden_size automatically
+        self.hidden_dim = config['model']['transformer']['hidden_size']
 
         # Normalization and noise config
         self.noise_level = config['model'].get('noise_level', 0.0)

@@ -3,14 +3,13 @@ Training script for PDE Causal Autoregressive Model.
 Uses Accelerate for distributed training and WandB for logging.
 
 Usage:
-    # First time setup (choose options interactively)
-    accelerate config
+    # Launch with specific config
+    accelerate launch train.py --config configs/llama_1b.yaml
+    accelerate launch train.py --config configs/llama_3b.yaml
+    accelerate launch train.py --config configs/llama_8b.yaml
 
-    # Launch training
-    accelerate launch train.py
-
-    # Or single GPU
-    python train.py
+    # Or use torchrun for DDP (smaller models)
+    torchrun --nproc_per_node=8 train.py --config configs/llama_1b.yaml
 """
 
 import os
@@ -41,6 +40,7 @@ os.environ.setdefault('TRITON_CACHE_DIR', triton_cache)
 # ============================================================
 # 正常 imports
 # ============================================================
+import argparse
 import yaml
 import torch
 from pathlib import Path
@@ -67,6 +67,16 @@ from dataset import PDEDataset, DimensionGroupedSampler, collate_fn
 from pipeline import PDECausalModel, compute_masked_loss
 
 logger = logging.getLogger(__name__)
+
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="PDE Causal AR Training")
+    parser.add_argument(
+        '--config', type=str, default='config.yaml',
+        help='Path to config file (e.g., configs/llama_1b.yaml)'
+    )
+    return parser.parse_args()
 
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -236,9 +246,16 @@ def load_checkpoint(checkpoint_path, model, optimizer, scheduler, accelerator):
 
 
 def main():
-    # Load config
-    config = load_config()
+    # Parse arguments and load config
+    args = parse_args()
+    config = load_config(args.config)
     set_seed(config['dataset']['seed'])
+
+    # Model info for logging
+    model_name = config.get('model_name', 'llama')
+    hidden_size = config['model']['transformer']['hidden_size']
+    num_layers = config['model']['transformer']['num_hidden_layers']
+    seed = config['dataset']['seed']
 
     # Initialize Accelerator
     mixed_precision = config['training'].get('mixed_precision', 'bf16')
@@ -271,12 +288,14 @@ def main():
         logger.info(f"{'='*60}")
         logger.info(f"Training Configuration")
         logger.info(f"{'='*60}")
+        logger.info(f"Config: {args.config}")
+        logger.info(f"Model: {model_name} (hidden={hidden_size}, layers={num_layers})")
         logger.info(f"Max Steps: {max_steps}")
         logger.info(f"Save Every: {save_every_steps} steps")
         logger.info(f"Eval Every: {eval_every_steps} steps")
         logger.info(f"Mixed Precision: {mixed_precision}")
         logger.info(f"Gradient Accumulation: {grad_accum}")
-        logger.info(f"FSDP: {'Enabled' if use_fsdp else 'Disabled'}")
+        logger.info(f"Distributed: {'FSDP' if use_fsdp else 'DDP'}")
         if use_fsdp:
             logger.info(f"FSDP CPU Offload: {config['training'].get('fsdp_cpu_offload', False)}")
         logger.info(f"Num Processes: {accelerator.num_processes}")
@@ -308,12 +327,23 @@ def main():
 
     # Init WandB tracker
     if accelerator.is_main_process:
+        # WandB run name and notes
+        run_name = f"{model_name}-h{hidden_size}-L{num_layers}-s{seed}"
+        run_notes = (
+            f"Model: {model_name}\n"
+            f"Transformer: hidden_size={hidden_size}, layers={num_layers}\n"
+            f"Distributed: {'FSDP' if use_fsdp else 'DDP'}\n"
+            f"Config: {args.config}"
+        )
+
         accelerator.init_trackers(
             project_name=config['logging']['project'],
             config=config,
             init_kwargs={"wandb": {
                 "entity": config['logging'].get('entity'),
-                "name": f"pde-{config['dataset']['seed']}"
+                "name": run_name,
+                "notes": run_notes,
+                "tags": [model_name, f"h{hidden_size}", f"L{num_layers}", "FSDP" if use_fsdp else "DDP"],
             }}
         )
 
