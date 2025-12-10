@@ -262,22 +262,36 @@ def create_block_causal_mask(
     return mask.to(dtype=dtype)
 
 
-def compute_masked_loss(pred, target, channel_mask):
+def compute_masked_loss(pred, target, channel_mask, alpha=0.0):
     """
-    Compute MSE loss with channel masking.
+    Compute combined MSE + RMSE loss with channel masking.
+
+    Loss = alpha * RMSE + (1 - alpha) * MSE
 
     Args:
-        pred: [B, T, *spatial, 6]
-        target: [B, T, *spatial, 6]
-        channel_mask: [B, 6]
+        pred: [B, T, *spatial, C]
+        target: [B, T, *spatial, C]
+        channel_mask: [B, C]
+        alpha: Weight for RMSE (0=pure MSE, 1=pure RMSE)
 
     Returns:
         loss: scalar
     """
-    squared_error = (pred - target) ** 2
-    ndim = pred.ndim
-    mask_shape = [pred.shape[0]] + [1] * (ndim - 2) + [pred.shape[-1]]
-    mask = channel_mask.view(*mask_shape)
-    masked_error = squared_error * mask
-    num_valid = mask.sum()
-    return masked_error.sum() / num_valid if num_valid > 0 else masked_error.sum()
+    # Get valid channels from first sample (assume consistent across batch)
+    valid_mask = channel_mask[0].bool()  # [C]
+
+    # Filter to valid channels only
+    pred_valid = pred[..., valid_mask]  # [B, T, *spatial, C_valid]
+    target_valid = target[..., valid_mask]  # [B, T, *spatial, C_valid]
+
+    # MSE
+    mse = ((pred_valid - target_valid) ** 2).mean()
+
+    # Combined loss
+    if alpha > 0:
+        rmse = torch.sqrt(mse + 1e-8)  # Add eps for numerical stability
+        loss = alpha * rmse + (1 - alpha) * mse
+    else:
+        loss = mse
+
+    return loss

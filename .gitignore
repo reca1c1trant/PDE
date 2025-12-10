@@ -215,7 +215,7 @@ CLAUDE.md
 PROJECT_SPEC.md
 output.txt
 .claude/
-
+TRAIN_LOSS_PLAN.md
 checkpoints/
 ARCHITECTURE.md
 wandb_output/

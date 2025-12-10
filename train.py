@@ -164,7 +164,7 @@ def cleanup_checkpoints(save_dir: Path, keep_n: int = 3):
 
 
 @torch.no_grad()
-def validate(model, val_loader, accelerator):
+def validate(model, val_loader, accelerator, loss_alpha=0.0):
     """Validate the model."""
     model.eval()
     total_loss = torch.zeros(1, device=accelerator.device)
@@ -178,7 +178,7 @@ def validate(model, val_loader, accelerator):
         target_data = data[:, 1:]
 
         output = model(input_data)
-        loss = compute_masked_loss(output, target_data, channel_mask)
+        loss = compute_masked_loss(output, target_data, channel_mask, alpha=loss_alpha)
 
         total_loss += loss.detach()
         num_batches += 1
@@ -283,6 +283,7 @@ def main():
     eval_every_steps = config['training']['eval_every_steps']
     keep_last_n = config['training']['keep_last_n_checkpoints']
     log_interval = config['logging']['log_interval']
+    loss_alpha = config['training'].get('loss_alpha', 0.0)  # 0=MSE, 1=RMSE
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
@@ -358,7 +359,7 @@ def main():
     best_val_loss = float('inf')
     last_val_loss = float('inf')  # Track last validation loss for checkpointing
 
-    # Resume from checkpoint if specified
+    # Resume from checkpoint if specified (full resume: model + optimizer + scheduler)
     resume_path = config['training'].get('resume_from')
     if resume_path:
         resume_path = Path(resume_path)
@@ -374,6 +375,24 @@ def main():
         else:
             if accelerator.is_main_process:
                 logger.warning(f"Checkpoint not found: {resume_path}, starting from scratch")
+
+    # Pretrain from checkpoint (model weights only, fresh optimizer/scheduler with warmup)
+    pretrain_path = config['training'].get('pretrain_from')
+    if pretrain_path and not resume_path:  # Only if not resuming
+        pretrain_path = Path(pretrain_path)
+        if pretrain_path.exists():
+            if accelerator.is_main_process:
+                logger.info(f"Loading pretrained weights from: {pretrain_path}")
+            accelerator.wait_for_everyone()
+            checkpoint = torch.load(pretrain_path, map_location='cpu', weights_only=False)
+            unwrapped_model = accelerator.unwrap_model(model)
+            unwrapped_model.load_state_dict(checkpoint['model_state_dict'])
+            accelerator.wait_for_everyone()
+            if accelerator.is_main_process:
+                logger.info(f"Loaded pretrained weights (optimizer/scheduler reset, warmup from scratch)")
+        else:
+            if accelerator.is_main_process:
+                logger.warning(f"Pretrain checkpoint not found: {pretrain_path}, starting from scratch")
 
     train_iter = infinite_dataloader(train_loader)
     console = Console()
@@ -410,7 +429,7 @@ def main():
             # Forward & Backward
             with accelerator.accumulate(model):
                 output = model(input_data)
-                loss = compute_masked_loss(output, target_data, channel_mask)
+                loss = compute_masked_loss(output, target_data, channel_mask, alpha=loss_alpha)
 
                 accelerator.backward(loss)
 
@@ -437,7 +456,7 @@ def main():
             # Evaluate
             if global_step % eval_every_steps == 0:
                 accelerator.wait_for_everyone()  # 确保所有卡同步进入 validation
-                val_loss = validate(model, val_loader, accelerator)
+                val_loss = validate(model, val_loader, accelerator, loss_alpha=loss_alpha)
                 last_val_loss = val_loss  # Update for checkpoint saving
 
                 accelerator.log({
