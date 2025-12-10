@@ -40,14 +40,14 @@ model:
 
 # Training
 training:
-  max_steps: 2000
+  max_steps: 4000
   resume_from: null
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   betas: [0.9, 0.999]
   grad_clip: 1.0
   min_lr: 1.0e-6
-  warmup_steps: 1000
+  warmup_steps: 400
 
   # Distributed: DDP for 1B model
   use_fsdp: false
@@ -57,9 +57,9 @@ training:
   gradient_accumulation_steps: 1
 
   # Checkpointing
-  save_every_steps: 500
+  save_every_steps: 1000
   eval_every_steps: 50
-  keep_last_n_checkpoints: 3
+  keep_last_n_checkpoints: 2
 
 # Logging
 logging:

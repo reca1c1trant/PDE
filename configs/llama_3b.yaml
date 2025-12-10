@@ -47,7 +47,7 @@ training:
   betas: [0.9, 0.999]
   grad_clip: 1.0
   min_lr: 1.0e-6
-  warmup_steps: 1000
+  warmup_steps: 200
 
   # Distributed: DDP for 3B model
   use_fsdp: false

@@ -323,7 +323,8 @@ def main():
     scheduler = get_lr_scheduler(optimizer, config)
 
     # Prepare with Accelerator (don't prepare dataloaders - sampler is already distributed)
-    model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
+    # Don't prepare scheduler - we manage it manually to avoid double stepping
+    model, optimizer = accelerator.prepare(model, optimizer)
 
     # Init WandB tracker
     if accelerator.is_main_process:
@@ -413,9 +414,10 @@ def main():
                     accelerator.clip_grad_norm_(model.parameters(), config['training']['grad_clip'])
 
                 optimizer.step()
-                scheduler.step()
                 optimizer.zero_grad()
 
+            # Scheduler step outside accumulate block (once per global step, not per GPU)
+            scheduler.step()
             global_step += 1
             progress.update(train_task, advance=1, description=f"Training [loss={loss.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}]")
 
