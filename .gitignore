@@ -218,5 +218,5 @@ output.txt
 
 checkpoints/
 ARCHITECTURE.md
-
+wandb_output/
 *.pt
