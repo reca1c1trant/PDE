@@ -126,16 +126,33 @@ class PDECausalModel(nn.Module):
         print(f"  Total:       {total_params:,}")
         print(f"{'='*60}\n")
 
-    def _get_causal_mask(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        """Get or create block causal mask (cached)."""
-        if self._causal_mask is None or self._causal_mask.device != device:
-            self._causal_mask = create_block_causal_mask(
-                self.num_timesteps,
-                self.tokens_per_timestep,
-                device,
-                dtype
-            )
-        return self._causal_mask
+    def _get_causal_mask(self, num_timesteps: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """
+        Get or create block causal mask (cached for training, dynamic for inference).
+
+        Args:
+            num_timesteps: Actual number of timesteps in input
+            device: Device
+            dtype: Data type
+        """
+        # For training (fixed 16 timesteps), use cached mask
+        if num_timesteps == self.num_timesteps:
+            if self._causal_mask is None or self._causal_mask.device != device:
+                self._causal_mask = create_block_causal_mask(
+                    self.num_timesteps,
+                    self.tokens_per_timestep,
+                    device,
+                    dtype
+                )
+            return self._causal_mask
+
+        # For inference with different timesteps, create dynamically
+        return create_block_causal_mask(
+            num_timesteps,
+            self.tokens_per_timestep,
+            device,
+            dtype
+        )
 
     def _normalize(self, x: torch.Tensor):
         """
@@ -186,6 +203,7 @@ class PDECausalModel(nn.Module):
         """
         ndim = x.ndim - 3
         B = x.shape[0]
+        T = x.shape[1]  # Actual number of timesteps
 
         # Normalize
         x_norm, mean, std = self._normalize(x)
@@ -193,8 +211,8 @@ class PDECausalModel(nn.Module):
         # Noise injection (training only)
         x_norm = self._add_noise(x_norm)
 
-        # Causal mask
-        causal_mask = self._get_causal_mask(x.device, x.dtype)
+        # Causal mask (dynamic based on actual timesteps)
+        causal_mask = self._get_causal_mask(T, x.device, x.dtype)
         attention_mask = causal_mask.expand(B, -1, -1, -1)
 
         if ndim == 1:

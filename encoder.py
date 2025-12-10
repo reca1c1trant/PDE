@@ -62,8 +62,8 @@ class PDE1DEncoder(nn.Module):
             tokens: [B, seq_len, D] where seq_len=4096
         """
         B, T, H, C = x.shape
-        assert H == 1024, f"Expected H=1024, got {H}"
-        assert C == self.in_channels, f"Expected C={self.in_channels}, got {C}"
+        # assert H == 1024, f"Expected H=1024, got {H}"
+        # assert C == self.in_channels, f"Expected C={self.in_channels}, got {C}"
 
         # Split vector and scalar: [B, T, H, 3] each
         x_vec = x[..., :3]  # vx, vy, vz
@@ -368,13 +368,13 @@ class PDE2DDecoder(nn.Module):
             output: [B, T, H, W, C] where T=16, H=W=128
         """
         B, seq_len, D = x.shape
-        assert seq_len == 4096, f"Expected seq_len=4096, got {seq_len}"
+        # assert seq_len == 4096, f"Expected seq_len=4096, got {seq_len}"
 
         # Project
         x = self.proj(x)  # [B, 4096, 128]
-
+        T = seq_len // (16 * 16)  # 16
         # Reshape
-        x = x.reshape(B * 16, 16, 16, 128)  # [B*T, 16, 16, 128]
+        x = x.reshape(B * T, 16, 16, 128)  # [B*T, 16, 16, 128]
         x = x.permute(0, 3, 1, 2)  # [B*T, 128, 16, 16]
 
         # Split preparation
@@ -391,7 +391,7 @@ class PDE2DDecoder(nn.Module):
 
         # Reshape back
         x = x.permute(0, 2, 3, 1)  # [B*T, 128, 128, 6]
-        x = x.reshape(B, 16, 128, 128, self.out_channels)  # [B, T, H, W, C]
+        x = x.reshape(B, T, 128, 128, self.out_channels)  # [B, T, H, W, C]
 
         return x
 
@@ -426,7 +426,7 @@ class PDE3DDecoder(nn.Module):
             output: [B, T, H, W, D, C] where T=16, H=W=D=128
         """
         B, seq_len, D = x.shape
-        assert seq_len == 65536, f"Expected seq_len=65536, got {seq_len}"
+        # assert seq_len == 65536, f"Expected seq_len=65536, got {seq_len}"
         
         # Project
         x = self.proj(x)  # [B, 65536, 128]

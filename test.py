@@ -35,7 +35,7 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-def load_model(checkpoint_path: str, model_config: dict, device: torch.device) -> PDECausalModel:
+def load_model(checkpoint_path: str, model_config: dict, device: torch.device, dtype: torch.dtype = torch.bfloat16) -> PDECausalModel:
     """Load model from checkpoint."""
     model = PDECausalModel(model_config)
 
@@ -53,43 +53,66 @@ def load_model(checkpoint_path: str, model_config: dict, device: torch.device) -
         new_state_dict[k] = v
 
     model.load_state_dict(new_state_dict)
-    model = model.to(device)
+    model = model.to(device=device, dtype=dtype)
     model.eval()
 
-    return model
+    return model, dtype
 
 
-def compute_metrics(pred: torch.Tensor, gt: torch.Tensor) -> dict:
+def compute_final_metrics(all_preds: torch.Tensor, all_gts: torch.Tensor, channel_names: list = None) -> dict:
     """
-    Compute MSE and nRMSE per sample, then average over batch.
+    Compute MSE and nRMSE using the formula:
+        L_c = sqrt(mean(((pred_c - gt_c) / sigma_c) ** 2))
+        L_sim = mean(L_c for all channels)
+
+    where sigma_c is the global std of channel c across all samples and spatial dims.
 
     Args:
-        pred: [B, H, W, C] or [B, H, C] - prediction for last timestep
-        gt: [B, H, W, C] or [B, H, C] - ground truth for last timestep
+        all_preds: [N, *spatial, C] - all predictions concatenated
+        all_gts: [N, *spatial, C] - all ground truths concatenated
+        channel_names: Optional list of channel names for display
 
     Returns:
-        dict with mse, nrmse, and per-sample values
+        dict with mse, nrmse, per-channel metrics
     """
-    # Flatten spatial and channel dims: [B, -1]
-    B = pred.shape[0]
-    pred_flat = pred.reshape(B, -1)
-    gt_flat = gt.reshape(B, -1)
+    C = all_preds.shape[-1]
+    if channel_names is None:
+        channel_names = [f'ch{i}' for i in range(C)]
 
-    # Per-sample MSE: mean over spatial*channel
-    mse_per_sample = ((pred_flat - gt_flat) ** 2).mean(dim=1)  # [B]
+    # Flatten spatial dims: [N, -1, C] -> then work per channel
+    N = all_preds.shape[0]
+    spatial_dims = all_preds.shape[1:-1]  # H, W or just H
 
-    # Per-sample RMSE
-    rmse_per_sample = torch.sqrt(mse_per_sample)  # [B]
+    # [N, H*W, C] or [N, H, C]
+    pred_flat = all_preds.reshape(N, -1, C)  # [N, spatial, C]
+    gt_flat = all_gts.reshape(N, -1, C)  # [N, spatial, C]
 
-    # Per-sample nRMSE: normalize by GT std
-    gt_std = gt_flat.std(dim=1)  # [B]
-    nrmse_per_sample = rmse_per_sample / (gt_std + 1e-8)  # [B]
+    # Global sigma per channel: std over all samples and spatial
+    # [N, spatial, C] -> std over dims 0,1 -> [C]
+    sigma = gt_flat.std(dim=(0, 1))  # [C]
+
+    # Per-channel nRMSE: L_c = sqrt(mean(((pred - gt) / sigma) ** 2))
+    # Normalize error by sigma
+    normalized_error = (pred_flat - gt_flat) / (sigma + 1e-8)  # [N, spatial, C]
+
+    # Mean over samples and spatial, then sqrt
+    mse_per_channel = (normalized_error ** 2).mean(dim=(0, 1))  # [C]
+    nrmse_per_channel = torch.sqrt(mse_per_channel)  # [C]
+
+    # L_sim = mean over channels
+    nrmse = nrmse_per_channel.mean().item()
+
+    # Also compute regular MSE (not normalized)
+    mse_per_channel_raw = ((pred_flat - gt_flat) ** 2).mean(dim=(0, 1))  # [C]
+    mse = mse_per_channel_raw.mean().item()
 
     return {
-        'mse_per_sample': mse_per_sample,
-        'nrmse_per_sample': nrmse_per_sample,
-        'mse': mse_per_sample.mean().item(),
-        'nrmse': nrmse_per_sample.mean().item(),
+        'mse': mse,
+        'nrmse': nrmse,
+        'sigma_per_channel': sigma,
+        'nrmse_per_channel': nrmse_per_channel,
+        'mse_per_channel': mse_per_channel_raw,
+        'channel_names': channel_names,
     }
 
 
@@ -107,7 +130,9 @@ class TestDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         # Get full sequence from base dataset
-        data, channel_mask = self.base_dataset[idx]
+        sample = self.base_dataset[idx]
+        data = sample['data']
+        channel_mask = sample['channel_mask']
 
         # data shape: [T, *spatial, C] where T=17
         T = data.shape[0]
@@ -141,7 +166,7 @@ def main():
     # Load model
     checkpoint_path = test_config['checkpoint']
     print(f"Loading checkpoint: {checkpoint_path}")
-    model = load_model(checkpoint_path, model_config, device)
+    model, model_dtype = load_model(checkpoint_path, model_config, device)
     print("Model loaded successfully")
 
     # Create dataset
@@ -176,18 +201,19 @@ def main():
     print(f"Input steps: {input_steps}")
     print()
 
-    # Evaluation
-    all_mse = []
-    all_nrmse = []
+    # Evaluation: collect all predictions and ground truths
+    all_preds = []
+    all_gts = []
+    valid_channels_mask = None  # Track which channels are valid
 
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Evaluating"):
             input_data, gt_data, channel_mask = batch
 
-            # Move to device
-            input_data = input_data.to(device)  # [B, input_steps, *spatial, C]
-            gt_data = gt_data.to(device)  # [B, *spatial, C]
-            channel_mask = channel_mask.to(device)
+            # Move to device and cast to model dtype
+            input_data = input_data.to(device=device, dtype=model_dtype)  # [B, input_steps, *spatial, C]
+            gt_data = gt_data.to(device=device, dtype=model_dtype)  # [B, *spatial, C]
+            channel_mask = channel_mask.to(device=device, dtype=model_dtype)
 
             # Forward pass
             output = model(input_data)  # [B, input_steps, *spatial, C]
@@ -195,41 +221,51 @@ def main():
             # Get last timestep prediction
             pred = output[:, -1]  # [B, *spatial, C]
 
-            # Apply channel mask (only compute on valid channels)
-            # channel_mask: [B, C] -> expand to match spatial dims
-            if pred.ndim == 4:  # 2D: [B, H, W, C]
-                mask = channel_mask[:, None, None, :]  # [B, 1, 1, C]
-            else:  # 1D: [B, H, C]
-                mask = channel_mask[:, None, :]  # [B, 1, C]
+            # Get valid channels (assume same for all samples in dataset)
+            if valid_channels_mask is None:
+                valid_channels_mask = channel_mask[0].bool().cpu()  # [C]
 
-            pred_masked = pred * mask
-            gt_masked = gt_data * mask
+            # Collect (move to CPU to save GPU memory)
+            all_preds.append(pred.cpu())
+            all_gts.append(gt_data.cpu())
 
-            # Compute metrics
-            metrics = compute_metrics(pred_masked, gt_masked)
-            all_mse.append(metrics['mse_per_sample'])
-            all_nrmse.append(metrics['nrmse_per_sample'])
+    # Concatenate all samples
+    all_preds = torch.cat(all_preds, dim=0)  # [N, *spatial, C]
+    all_gts = torch.cat(all_gts, dim=0)  # [N, *spatial, C]
 
-    # Aggregate results
-    all_mse = torch.cat(all_mse)
-    all_nrmse = torch.cat(all_nrmse)
+    # Filter to only valid channels
+    all_preds = all_preds[..., valid_channels_mask]  # [N, *spatial, C_valid]
+    all_gts = all_gts[..., valid_channels_mask]  # [N, *spatial, C_valid]
 
-    mse_mean = all_mse.mean().item()
-    mse_std = all_mse.std().item()
-    nrmse_mean = all_nrmse.mean().item()
-    nrmse_std = all_nrmse.std().item()
+    # Get valid channel names
+    full_channel_names = ['vx', 'vy', 'vz', 'p', 'rho', 'T']
+    channel_names = [name for name, valid in zip(full_channel_names, valid_channels_mask.tolist()) if valid]
+
+    # Compute metrics with global sigma
+    metrics = compute_final_metrics(all_preds, all_gts, channel_names)
 
     # Print results
     print()
-    print("=" * 42)
-    print("           Test Results")
-    print("=" * 42)
+    print("=" * 50)
+    print("                 Test Results")
+    print("=" * 50)
     print(f"Checkpoint:   {checkpoint_path}")
     print(f"Samples:      {len(test_dataset)} | Input steps: {input_steps}")
     print()
-    print(f"MSE:          {mse_mean:.6f} ± {mse_std:.6f}")
-    print(f"nRMSE:        {nrmse_mean:.6f} ± {nrmse_std:.6f}")
-    print("=" * 42)
+    print("Per-channel metrics:")
+    print("-" * 50)
+    print(f"{'Channel':<10} {'sigma':<12} {'MSE':<12} {'nRMSE':<12}")
+    print("-" * 50)
+    for i, name in enumerate(metrics['channel_names']):
+        sigma = metrics['sigma_per_channel'][i].item()
+        mse_c = metrics['mse_per_channel'][i].item()
+        nrmse_c = metrics['nrmse_per_channel'][i].item()
+        print(f"{name:<10} {sigma:<12.6f} {mse_c:<12.6f} {nrmse_c:<12.6f}")
+    print("-" * 50)
+    print()
+    print(f"Overall MSE:   {metrics['mse']:.6f}")
+    print(f"Overall nRMSE: {metrics['nrmse']:.6f}")
+    print("=" * 50)
 
 
 if __name__ == "__main__":

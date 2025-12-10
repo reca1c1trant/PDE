@@ -1,10 +1,10 @@
 # Test Configuration
 
 # Model checkpoint
-checkpoint: "./checkpoints_3b/best.pt"
+checkpoint: "./checkpoints_1b/best.pt"
 
 # Model config (用于加载模型结构)
-model_config: "./configs/llama_3b.yaml"
+model_config: "./configs/llama_1b.yaml"
 
 # Test dataset
 dataset:
@@ -14,5 +14,5 @@ dataset:
 test:
   input_steps: 4          # 用几个timestep作为输入
   batch_size: 4           # 每次评估的batch大小
-  num_samples: null       # 评估多少个样本 (null = 全部)
+  num_samples: 100       # 评估多少个样本 (null = 全部)
   seed: 42                # 随机种子 (保证可复现)

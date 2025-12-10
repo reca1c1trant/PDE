@@ -378,6 +378,10 @@ def main():
     train_iter = infinite_dataloader(train_loader)
     console = Console()
 
+    # Early stopping setup (not affected by accelerator)
+    early_stopping_patience = config['training'].get('early_stopping_patience')
+    patience_counter = 0
+
     # Training loop with Rich progress
     model.train()
 
@@ -444,12 +448,23 @@ def main():
                 if accelerator.is_main_process:
                     console.print(f"[green]Step {global_step}:[/green] val_loss = {val_loss:.6f}")
 
-                # Save best (all ranks must call save_checkpoint for sync)
+                # Save best and early stopping check (all ranks must call save_checkpoint for sync)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
+                    patience_counter = 0  # Reset patience
                     save_checkpoint(model, optimizer, scheduler, global_step, val_loss, best_val_loss, config, save_dir, accelerator, 'best.pt')
                     if accelerator.is_main_process:
                         console.print(f"[yellow]Saved best model[/yellow] (val_loss: {val_loss:.6f})")
+                else:
+                    patience_counter += 1
+                    if accelerator.is_main_process and early_stopping_patience:
+                        console.print(f"[dim]Patience: {patience_counter}/{early_stopping_patience}[/dim]")
+
+                # Early stopping check
+                if early_stopping_patience and patience_counter >= early_stopping_patience:
+                    if accelerator.is_main_process:
+                        console.print(f"[red]Early stopping triggered![/red] No improvement for {early_stopping_patience} evaluations.")
+                    break
 
             # Save checkpoint periodically
             if global_step % save_every_steps == 0:
