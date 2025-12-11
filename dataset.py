@@ -256,6 +256,8 @@ class DimensionGroupedSampler(Sampler):
         num_replicas (int): Number of distributed processes (default: auto-detect)
         rank (int): Current process rank (default: auto-detect)
         seed (int): Random seed for shuffling
+        same_sample_per_batch (bool): If True, each batch contains the same sample
+                                      repeated batch_size times (different start_t)
     """
 
     def __init__(
@@ -265,13 +267,15 @@ class DimensionGroupedSampler(Sampler):
         shuffle: bool = True,
         num_replicas: Optional[int] = None,
         rank: Optional[int] = None,
-        seed: int = 42
+        seed: int = 42,
+        same_sample_per_batch: bool = False
     ):
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
         self.epoch = 0
+        self.same_sample_per_batch = same_sample_per_batch
 
         # Auto-detect distributed settings
         if num_replicas is None:
@@ -297,6 +301,7 @@ class DimensionGroupedSampler(Sampler):
             logger.info("Dimension groups for sampling:")
             for dim_type, indices in self.dim_groups.items():
                 logger.info(f"  {dim_type}: {len(indices)} samples")
+            logger.info(f"Batch mode: {'same_sample' if same_sample_per_batch else 'different_samples'}")
             logger.info(f"Distributed: {num_replicas} replicas, {len(self._all_batches)} total batches, {self.num_batches_per_rank} per rank")
 
     def _compute_batches(self):
@@ -306,7 +311,7 @@ class DimensionGroupedSampler(Sampler):
 
         batches = []
         for _, indices in self.dim_groups.items():
-            if len(indices) < self.batch_size:
+            if len(indices) == 0:
                 continue
 
             # Shuffle within dimension group
@@ -315,13 +320,21 @@ class DimensionGroupedSampler(Sampler):
             else:
                 indices = list(indices)
 
-            num_full_batches = len(indices) // self.batch_size
-
-            for i in range(num_full_batches):
-                start = i * self.batch_size
-                end = start + self.batch_size
-                batch = indices[start:end]
-                batches.append(batch)
+            if self.same_sample_per_batch:
+                # 同一样本重复batch_size次，__getitem__会随机取不同start_t
+                for idx in indices:
+                    batch = [idx] * self.batch_size
+                    batches.append(batch)
+            else:
+                # 原逻辑：不同样本组成batch
+                if len(indices) < self.batch_size:
+                    continue
+                num_full_batches = len(indices) // self.batch_size
+                for i in range(num_full_batches):
+                    start = i * self.batch_size
+                    end = start + self.batch_size
+                    batch = indices[start:end]
+                    batches.append(batch)
 
         if self.shuffle:
             rng.shuffle(batches)

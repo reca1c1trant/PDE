@@ -105,10 +105,11 @@ def create_dataloaders(config: dict):
 
     batch_size = config['dataloader']['batch_size']
     seed = config['dataset']['seed']
+    same_sample = config['dataloader'].get('same_sample_per_batch', False)
 
     # Samplers are now distributed-aware (auto-detect WORLD_SIZE and RANK)
-    train_sampler = DimensionGroupedSampler(train_dataset, batch_size, shuffle=True, seed=seed)
-    val_sampler = DimensionGroupedSampler(val_dataset, batch_size, shuffle=False, seed=seed)
+    train_sampler = DimensionGroupedSampler(train_dataset, batch_size, shuffle=True, seed=seed, same_sample_per_batch=same_sample)
+    val_sampler = DimensionGroupedSampler(val_dataset, batch_size, shuffle=False, seed=seed, same_sample_per_batch=False)  # val always different samples
 
     train_loader = DataLoader(
         train_dataset,
@@ -164,7 +165,7 @@ def cleanup_checkpoints(save_dir: Path, keep_n: int = 3):
 
 
 @torch.no_grad()
-def validate(model, val_loader, accelerator, loss_alpha=0.0):
+def validate(model, val_loader, accelerator, loss_alpha=0.0, sigma=None):
     """Validate the model."""
     model.eval()
     total_loss = torch.zeros(1, device=accelerator.device)
@@ -178,7 +179,7 @@ def validate(model, val_loader, accelerator, loss_alpha=0.0):
         target_data = data[:, 1:]
 
         output = model(input_data)
-        loss = compute_masked_loss(output, target_data, channel_mask, alpha=loss_alpha)
+        loss = compute_masked_loss(output, target_data, channel_mask, alpha=loss_alpha, sigma=sigma)
 
         total_loss += loss.detach()
         num_batches += 1
@@ -283,7 +284,14 @@ def main():
     eval_every_steps = config['training']['eval_every_steps']
     keep_last_n = config['training']['keep_last_n_checkpoints']
     log_interval = config['logging']['log_interval']
-    loss_alpha = config['training'].get('loss_alpha', 0.0)  # 0=MSE, 1=RMSE
+    loss_alpha = config['training'].get('loss_alpha', 0.0)  # 0=MSE, 1=RMSE/nRMSE
+
+    # nRMSE sigma (global std per channel)
+    nrmse_sigma_config = config['training'].get('nrmse_sigma')
+    if nrmse_sigma_config is not None:
+        nrmse_sigma = torch.tensor(nrmse_sigma_config, dtype=torch.float32)
+    else:
+        nrmse_sigma = None
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
@@ -426,10 +434,13 @@ def main():
             input_data = data[:, :-1]
             target_data = data[:, 1:]
 
+            # Move sigma to device if needed
+            sigma_device = nrmse_sigma.to(accelerator.device) if nrmse_sigma is not None else None
+
             # Forward & Backward
             with accelerator.accumulate(model):
                 output = model(input_data)
-                loss = compute_masked_loss(output, target_data, channel_mask, alpha=loss_alpha)
+                loss = compute_masked_loss(output, target_data, channel_mask, alpha=loss_alpha, sigma=sigma_device)
 
                 accelerator.backward(loss)
 
@@ -456,7 +467,7 @@ def main():
             # Evaluate
             if global_step % eval_every_steps == 0:
                 accelerator.wait_for_everyone()  # 确保所有卡同步进入 validation
-                val_loss = validate(model, val_loader, accelerator, loss_alpha=loss_alpha)
+                val_loss = validate(model, val_loader, accelerator, loss_alpha=loss_alpha, sigma=sigma_device)
                 last_val_loss = val_loss  # Update for checkpoint saving
 
                 accelerator.log({

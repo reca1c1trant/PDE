@@ -262,17 +262,23 @@ def create_block_causal_mask(
     return mask.to(dtype=dtype)
 
 
-def compute_masked_loss(pred, target, channel_mask, alpha=0.0):
+def compute_masked_loss(pred, target, channel_mask, alpha=0.0, sigma=None):
     """
-    Compute combined MSE + RMSE loss with channel masking.
+    Compute combined MSE + RMSE/nRMSE loss with channel masking.
 
-    Loss = alpha * RMSE + (1 - alpha) * MSE
+    Loss = alpha * RMSE + (1 - alpha) * MSE           (if sigma is None)
+    Loss = alpha * nRMSE + (1 - alpha) * MSE          (if sigma is provided)
+
+    nRMSE formula (per channel c):
+        L_c = sqrt(mean(((pred_c - target_c) / sigma_c)^2))
+        nRMSE = mean(L_c for all valid channels)
 
     Args:
         pred: [B, T, *spatial, C]
         target: [B, T, *spatial, C]
         channel_mask: [B, C]
-        alpha: Weight for RMSE (0=pure MSE, 1=pure RMSE)
+        alpha: Weight for RMSE/nRMSE (0=pure MSE, 1=pure RMSE/nRMSE)
+        sigma: [C] global std per channel, or None for plain RMSE
 
     Returns:
         loss: scalar
@@ -284,13 +290,30 @@ def compute_masked_loss(pred, target, channel_mask, alpha=0.0):
     pred_valid = pred[..., valid_mask]  # [B, T, *spatial, C_valid]
     target_valid = target[..., valid_mask]  # [B, T, *spatial, C_valid]
 
-    # MSE
+    # MSE (global)
     mse = ((pred_valid - target_valid) ** 2).mean()
 
     # Combined loss
     if alpha > 0:
-        rmse = torch.sqrt(mse + 1e-8)  # Add eps for numerical stability
-        loss = alpha * rmse + (1 - alpha) * mse
+        if sigma is not None:
+            # nRMSE with global sigma
+            sigma_valid = sigma[valid_mask]  # [C_valid]
+            # Reshape sigma for broadcasting: [1, 1, ..., C_valid]
+            sigma_shape = [1] * (pred_valid.ndim - 1) + [sigma_valid.shape[0]]
+            sigma_broadcast = sigma_valid.view(*sigma_shape)
+
+            # Per-channel normalized squared error
+            normalized_error = (pred_valid - target_valid) / (sigma_broadcast + 1e-8)
+            # Per-channel RMSE: sqrt(mean over B,T,spatial)
+            per_channel_mse = (normalized_error ** 2).mean(dim=tuple(range(pred_valid.ndim - 1)))  # [C_valid]
+            per_channel_rmse = torch.sqrt(per_channel_mse + 1e-8)
+            # nRMSE = mean over channels
+            nrmse = per_channel_rmse.mean()
+            loss = alpha * nrmse + (1 - alpha) * mse
+        else:
+            # Plain RMSE (no normalization)
+            rmse = torch.sqrt(mse + 1e-8)
+            loss = alpha * rmse + (1 - alpha) * mse
     else:
         loss = mse
 

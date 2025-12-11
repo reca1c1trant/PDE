@@ -15,6 +15,7 @@ dataloader:
   batch_size: 2  # Per GPU (larger batch for smaller model)
   num_workers: 4
   pin_memory: true
+  same_sample_per_batch: false  # true: 同一样本不同start_t, false: 不同样本
 
 # Model
 model:
@@ -43,7 +44,9 @@ training:
   max_steps: 4000
   resume_from: null           # Full resume (model + optimizer + scheduler)
   pretrain_from: null         # Load model weights only, restart optimizer/scheduler
-  loss_alpha: 0.0             # 0=pure MSE, 1=pure RMSE, 0.5=balanced
+  loss_alpha: 0.0             # 0=pure MSE, 1=pure RMSE/nRMSE, 0.5=balanced
+  nrmse_sigma: null           # null=use RMSE, [sigma_vx, sigma_vy, ...]=use nRMSE
+  # Example: nrmse_sigma: [1.5, 1.2, 0.0, 0.8, 2.0, 1.0]  # Run compute_sigma.py to get values
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   betas: [0.9, 0.999]
