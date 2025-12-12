@@ -59,17 +59,16 @@ def load_model(checkpoint_path: str, model_config: dict, device: torch.device, d
     return model, dtype
 
 
-def compute_final_metrics(all_preds: torch.Tensor, all_gts: torch.Tensor, channel_names: list = None) -> dict:
+def compute_final_metrics(all_preds: torch.Tensor, all_gts: torch.Tensor, sigma: torch.Tensor, channel_names: list = None) -> dict:
     """
     Compute MSE and nRMSE using the formula:
         L_c = sqrt(mean(((pred_c - gt_c) / sigma_c) ** 2))
         L_sim = mean(L_c for all channels)
 
-    where sigma_c is the global std of channel c across all samples and spatial dims.
-
     Args:
         all_preds: [N, *spatial, C] - all predictions concatenated
         all_gts: [N, *spatial, C] - all ground truths concatenated
+        sigma: [C] - global std per channel (from training set)
         channel_names: Optional list of channel names for display
 
     Returns:
@@ -81,18 +80,13 @@ def compute_final_metrics(all_preds: torch.Tensor, all_gts: torch.Tensor, channe
 
     # Flatten spatial dims: [N, -1, C] -> then work per channel
     N = all_preds.shape[0]
-    spatial_dims = all_preds.shape[1:-1]  # H, W or just H
 
     # [N, H*W, C] or [N, H, C]
     pred_flat = all_preds.reshape(N, -1, C)  # [N, spatial, C]
     gt_flat = all_gts.reshape(N, -1, C)  # [N, spatial, C]
 
-    # Global sigma per channel: std over all samples and spatial
-    # [N, spatial, C] -> std over dims 0,1 -> [C]
-    sigma = gt_flat.std(dim=(0, 1))  # [C]
-
     # Per-channel nRMSE: L_c = sqrt(mean(((pred - gt) / sigma) ** 2))
-    # Normalize error by sigma
+    # Normalize error by sigma (from training set)
     normalized_error = (pred_flat - gt_flat) / (sigma + 1e-8)  # [N, spatial, C]
 
     # Mean over samples and spatial, then sqrt
@@ -241,8 +235,12 @@ def main():
     full_channel_names = ['vx', 'vy', 'vz', 'p', 'rho', 'T']
     channel_names = [name for name, valid in zip(full_channel_names, valid_channels_mask.tolist()) if valid]
 
+    # Get sigma from config (training set global sigma)
+    nrmse_sigma = torch.tensor(test_config['test']['nrmse_sigma'], dtype=torch.float32)
+    sigma_valid = nrmse_sigma[valid_channels_mask]  # Filter to valid channels
+
     # Compute metrics with global sigma
-    metrics = compute_final_metrics(all_preds, all_gts, channel_names)
+    metrics = compute_final_metrics(all_preds, all_gts, sigma_valid, channel_names)
 
     # Print results
     print()
