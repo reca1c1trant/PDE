@@ -41,18 +41,18 @@ model:
 
 # Training
 training:
-  max_steps: 4000
+  max_steps: 2000
   resume_from: null           # Full resume (model + optimizer + scheduler)
-  pretrain_from: null         # Load model weights only, restart optimizer/scheduler
+  pretrain_from: checkpoints_1b/best4000.pt         # Load model weights only, restart optimizer/scheduler
   loss_alpha: 0.0             # 0=pure MSE, 1=pure RMSE/nRMSE, 0.5=balanced
-  nrmse_sigma: null           # null=use RMSE, [sigma_vx, sigma_vy, ...]=use nRMSE
+  nrmse_sigma: [0.143810, 0.111739, 0.000000, 0.000000, 0.000000, 0.000000]           # null=use RMSE, [sigma_vx, sigma_vy, ...]=use nRMSE
   # Example: nrmse_sigma: [1.5, 1.2, 0.0, 0.8, 2.0, 1.0]  # Run compute_sigma.py to get values
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   betas: [0.9, 0.999]
   grad_clip: 1.0
   min_lr: 1.0e-6
-  warmup_steps: 400
+  warmup_steps: 200
 
   # Distributed: DDP for 1B model
   use_fsdp: false
@@ -67,7 +67,7 @@ training:
   keep_last_n_checkpoints: 2
 
   # Early stopping (null to disable)
-  early_stopping_patience: null
+  early_stopping_patience: 20
 
 # Logging
 logging:
