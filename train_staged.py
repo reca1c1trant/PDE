@@ -5,13 +5,13 @@ Supports freezing specific modules (encoder, transformer, decoder) for staged tr
 
 Usage:
     # Stage 1: Train Encoder/Decoder only
-    torchrun --nproc_per_node=8 train_staged.py --config configs/train/stage1.yaml
+    OMP_NUM_THREADS=6 torchrun --nproc_per_node=8 train_staged.py --config train/stage1.yaml
 
     # Stage 2: Train Transformer only
-    torchrun --nproc_per_node=8 train_staged.py --config configs/train/stage2.yaml
+    OMP_NUM_THREADS=6 torchrun --nproc_per_node=8 train_staged.py --config train/stage2.yaml
 
     # Stage 3: Fine-tune all
-    torchrun --nproc_per_node=8 train_staged.py --config configs/train/stage3.yaml
+    OMP_NUM_THREADS=6 torchrun --nproc_per_node=8 train_staged.py --config train/stage3.yaml
 """
 
 import os
@@ -254,10 +254,18 @@ def main():
     stage = config.get('stage', 0)
 
     # Initialize Accelerator (DDP only for staged training)
+    # DDP kwargs: find_unused_parameters for frozen modules, static_graph for gradient checkpointing
+    from accelerate import DistributedDataParallelKwargs
+    ddp_kwargs = DistributedDataParallelKwargs(
+        find_unused_parameters=True,
+        static_graph=True  # Required for gradient checkpointing + DDP
+    )
+
     accelerator = Accelerator(
         mixed_precision=config['training'].get('mixed_precision', 'bf16'),
         gradient_accumulation_steps=config['training'].get('gradient_accumulation_steps', 1),
-        log_with="wandb"
+        log_with="wandb",
+        kwargs_handlers=[ddp_kwargs]
     )
 
     # Training config

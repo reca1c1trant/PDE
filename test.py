@@ -96,44 +96,60 @@ def compute_final_metrics(all_preds: torch.Tensor, all_gts: torch.Tensor, sigma:
     # L_sim = mean over channels
     nrmse = nrmse_per_channel.mean().item()
 
-    # Also compute regular MSE (not normalized)
+    # Also compute regular MSE and RMSE (not normalized)
     mse_per_channel_raw = ((pred_flat - gt_flat) ** 2).mean(dim=(0, 1))  # [C]
+    rmse_per_channel = torch.sqrt(mse_per_channel_raw)  # [C]
     mse = mse_per_channel_raw.mean().item()
+    rmse = rmse_per_channel.mean().item()
 
     return {
         'mse': mse,
+        'rmse': rmse,
         'nrmse': nrmse,
         'sigma_per_channel': sigma,
-        'nrmse_per_channel': nrmse_per_channel,
         'mse_per_channel': mse_per_channel_raw,
+        'rmse_per_channel': rmse_per_channel,
+        'nrmse_per_channel': nrmse_per_channel,
         'channel_names': channel_names,
     }
 
 
 class TestDataset(torch.utils.data.Dataset):
     """
-    Wrapper dataset for testing with random timestep sampling.
+    Wrapper dataset for testing with multiple random timestep samples per base sample.
+
+    Each base sample generates `slices_per_sample` different time slices.
     """
-    def __init__(self, base_dataset: PDEDataset, input_steps: int, seed: int = 42):
+    def __init__(self, base_dataset: PDEDataset, input_steps: int, slices_per_sample: int = 4, seed: int = 42):
         self.base_dataset = base_dataset
         self.input_steps = input_steps
+        self.slices_per_sample = slices_per_sample
         self.rng = random.Random(seed)
 
+        # Pre-generate random start_t for each (sample, slice) pair
+        self.slice_starts = []
+        for idx in range(len(base_dataset)):
+            sample = base_dataset[idx]
+            T = sample['data'].shape[0]
+            max_start = T - input_steps - 1
+            starts = [self.rng.randint(0, max_start) for _ in range(slices_per_sample)]
+            self.slice_starts.append(starts)
+
     def __len__(self):
-        return len(self.base_dataset)
+        return len(self.base_dataset) * self.slices_per_sample
 
     def __getitem__(self, idx):
+        # Map idx to (sample_idx, slice_idx)
+        sample_idx = idx // self.slices_per_sample
+        slice_idx = idx % self.slices_per_sample
+
         # Get full sequence from base dataset
-        sample = self.base_dataset[idx]
+        sample = self.base_dataset[sample_idx]
         data = sample['data']
         channel_mask = sample['channel_mask']
 
-        # data shape: [T, *spatial, C] where T=17
-        T = data.shape[0]
-
-        # Random start point: need input_steps + 1 frames
-        max_start = T - self.input_steps - 1
-        t_start = self.rng.randint(0, max_start)
+        # Get pre-generated start_t
+        t_start = self.slice_starts[sample_idx][slice_idx]
 
         # Extract input and ground truth
         input_data = data[t_start : t_start + self.input_steps]  # [input_steps, *spatial, C]
@@ -173,16 +189,18 @@ def main():
     )
 
     input_steps = test_config['test']['input_steps']
-    test_dataset = TestDataset(base_dataset, input_steps, seed)
+    slices_per_sample = test_config['test'].get('slices_per_sample', 4)
 
-    # Limit samples if specified
+    # Limit base samples if specified
     num_samples = test_config['test'].get('num_samples')
     if num_samples is not None:
-        indices = list(range(min(num_samples, len(test_dataset))))
-        test_dataset = torch.utils.data.Subset(test_dataset, indices)
+        indices = list(range(min(num_samples, len(base_dataset))))
+        base_dataset = torch.utils.data.Subset(base_dataset, indices)
+
+    test_dataset = TestDataset(base_dataset, input_steps, slices_per_sample, seed)
 
     # DataLoader
-    batch_size = test_config['test'].get('batch_size', 1)
+    batch_size = test_config['test'].get('batch_size', 4)
     test_loader = torch.utils.data.DataLoader(
         test_dataset,
         batch_size=batch_size,
@@ -191,7 +209,8 @@ def main():
         pin_memory=True,
     )
 
-    print(f"Test samples: {len(test_dataset)}")
+    print(f"Base samples: {num_samples if num_samples else len(base_dataset)} | Slices per sample: {slices_per_sample}")
+    print(f"Total test points: {len(test_dataset)}")
     print(f"Input steps: {input_steps}")
     print()
 
@@ -251,17 +270,19 @@ def main():
     print(f"Samples:      {len(test_dataset)} | Input steps: {input_steps}")
     print()
     print("Per-channel metrics:")
-    print("-" * 50)
-    print(f"{'Channel':<10} {'sigma':<12} {'MSE':<12} {'nRMSE':<12}")
-    print("-" * 50)
+    print("-" * 66)
+    print(f"{'Channel':<10} {'sigma':<12} {'MSE':<12} {'RMSE':<12} {'nRMSE':<12}")
+    print("-" * 66)
     for i, name in enumerate(metrics['channel_names']):
         sigma = metrics['sigma_per_channel'][i].item()
         mse_c = metrics['mse_per_channel'][i].item()
+        rmse_c = metrics['rmse_per_channel'][i].item()
         nrmse_c = metrics['nrmse_per_channel'][i].item()
-        print(f"{name:<10} {sigma:<12.6f} {mse_c:<12.6f} {nrmse_c:<12.6f}")
-    print("-" * 50)
+        print(f"{name:<10} {sigma:<12.6f} {mse_c:<12.6f} {rmse_c:<12.6f} {nrmse_c:<12.6f}")
+    print("-" * 66)
     print()
     print(f"Overall MSE:   {metrics['mse']:.6f}")
+    print(f"Overall RMSE:  {metrics['rmse']:.6f}")
     print(f"Overall nRMSE: {metrics['nrmse']:.6f}")
     print("=" * 50)
 

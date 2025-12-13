@@ -5,9 +5,276 @@ Supports 1D, 2D, and 3D spatial data with temporal dynamics.
 
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 
 
+# ============================================================
+# 残差块 (用于方案 B)
+# ============================================================
+class ResBlock2D(nn.Module):
+    """残差块 with GroupNorm"""
+    def __init__(self, channels: int):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.GroupNorm(8, channels),
+            nn.GELU(),
+            nn.Conv2d(channels, channels, 3, padding=1, padding_mode='replicate'),
+            nn.GroupNorm(8, channels),
+            nn.GELU(),
+            nn.Conv2d(channels, channels, 3, padding=1, padding_mode='replicate'),
+        )
+
+    def forward(self, x):
+        return x + self.conv(x)
+
+
+# ============================================================
+# 新版 Encoder/Decoder (方案 A+B: 可配置 + 残差块)
+# ============================================================
+class PDE2DEncoderV2(nn.Module):
+    """
+    升级版 2D Encoder (方案 A+B):
+    - 可配置的中间维度 (mid_channels)
+    - 残差块增强表达能力
+    - 支持从 config 传入参数
+
+    Input: [B, T, H, W, C] where T=16, H=W=128, C=6
+    Output: [B, seq_len, hidden_dim] where seq_len=4096
+    """
+    def __init__(
+        self,
+        in_channels: int = 6,
+        hidden_dim: int = 768,
+        mid_channels: int = 256,  # 中间特征维度 (方案 A)
+        use_resblock: bool = True,  # 是否使用残差块 (方案 B)
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.hidden_dim = hidden_dim
+        self.mid_channels = mid_channels
+
+        # 每个分支输出 mid_channels // 2
+        branch_out = mid_channels // 2
+
+        # Vector branch: 128 → 64 → 32 → 16
+        if use_resblock:
+            self.vector_conv = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                ResBlock2D(64),
+                nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                ResBlock2D(128),
+                nn.Conv2d(128, branch_out, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                ResBlock2D(branch_out),
+            )
+        else:
+            self.vector_conv = nn.Sequential(
+                nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                nn.Conv2d(64, branch_out, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+            )
+
+        # Scalar branch: 同上
+        if use_resblock:
+            self.scalar_conv = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                ResBlock2D(64),
+                nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                ResBlock2D(128),
+                nn.Conv2d(128, branch_out, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                ResBlock2D(branch_out),
+            )
+        else:
+            self.scalar_conv = nn.Sequential(
+                nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+                nn.Conv2d(64, branch_out, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.GELU(),
+            )
+
+        # Fusion: mid_channels → mid_channels
+        if use_resblock:
+            self.fusion = nn.Sequential(
+                nn.Conv2d(mid_channels, mid_channels, kernel_size=1),
+                nn.GELU(),
+                ResBlock2D(mid_channels),
+            )
+        else:
+            self.fusion = nn.Sequential(
+                nn.Conv2d(mid_channels, mid_channels, kernel_size=1),
+                nn.GELU(),
+            )
+
+        # Project: mid_channels → hidden_dim
+        self.proj = nn.Linear(mid_channels, hidden_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, H, W, C = x.shape
+
+        # Split vector and scalar
+        x_vec = x[..., :3].permute(0, 1, 4, 2, 3).reshape(B * T, 3, H, W)
+        x_sca = x[..., 3:].permute(0, 1, 4, 2, 3).reshape(B * T, 3, H, W)
+
+        # Separate branch processing
+        x_vec = self.vector_conv(x_vec)  # [B*T, mid//2, 16, 16]
+        x_sca = self.scalar_conv(x_sca)  # [B*T, mid//2, 16, 16]
+
+        # Concatenate and fuse
+        x = torch.cat([x_vec, x_sca], dim=1)  # [B*T, mid, 16, 16]
+        x = self.fusion(x)
+
+        # Reshape and project
+        x = x.permute(0, 2, 3, 1).reshape(B, T * 16 * 16, self.mid_channels)
+        x = self.proj(x)  # [B, 4096, hidden_dim]
+
+        return x
+
+
+class PDE2DDecoderV2(nn.Module):
+    """
+    升级版 2D Decoder (对应 EncoderV2):
+    - 可配置的中间维度
+    - 残差块增强
+
+    Input: [B, seq_len, hidden_dim] where seq_len=4096
+    Output: [B, T, H, W, C] where T=16, H=W=128, C=6
+    """
+    def __init__(
+        self,
+        out_channels: int = 6,
+        hidden_dim: int = 768,
+        mid_channels: int = 256,
+        use_resblock: bool = True,
+    ):
+        super().__init__()
+        self.out_channels = out_channels
+        self.hidden_dim = hidden_dim
+        self.mid_channels = mid_channels
+
+        branch_in = mid_channels // 2
+
+        # Project: hidden_dim → mid_channels
+        self.proj = nn.Linear(hidden_dim, mid_channels)
+
+        # Split layer
+        if use_resblock:
+            self.split = nn.Sequential(
+                nn.Conv2d(mid_channels, mid_channels, kernel_size=1),
+                nn.GELU(),
+                ResBlock2D(mid_channels),
+            )
+        else:
+            self.split = nn.Sequential(
+                nn.Conv2d(mid_channels, mid_channels, kernel_size=1),
+                nn.GELU(),
+            )
+
+        # Vector branch: 16 → 32 → 64 → 128
+        if use_resblock:
+            self.vector_conv = nn.Sequential(
+                ResBlock2D(branch_in),
+                nn.ConvTranspose2d(branch_in, 128, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                ResBlock2D(128),
+                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                ResBlock2D(64),
+                nn.ConvTranspose2d(64, 3, kernel_size=4, stride=2, padding=1),
+            )
+        else:
+            self.vector_conv = nn.Sequential(
+                nn.ConvTranspose2d(branch_in, 64, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
+            )
+
+        # Scalar branch: 同上
+        if use_resblock:
+            self.scalar_conv = nn.Sequential(
+                ResBlock2D(branch_in),
+                nn.ConvTranspose2d(branch_in, 128, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                ResBlock2D(128),
+                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                ResBlock2D(64),
+                nn.ConvTranspose2d(64, 3, kernel_size=4, stride=2, padding=1),
+            )
+        else:
+            self.scalar_conv = nn.Sequential(
+                nn.ConvTranspose2d(branch_in, 64, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
+            )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, seq_len, D = x.shape
+        T = seq_len // (16 * 16)
+
+        # Project
+        x = self.proj(x)  # [B, 4096, mid_channels]
+
+        # Reshape
+        x = x.reshape(B * T, 16, 16, self.mid_channels).permute(0, 3, 1, 2)
+
+        # Split
+        x = self.split(x)  # [B*T, mid, 16, 16]
+        branch_ch = self.mid_channels // 2
+        x_vec = x[:, :branch_ch, :, :]
+        x_sca = x[:, branch_ch:, :, :]
+
+        # Upsample
+        x_vec = self.vector_conv(x_vec)  # [B*T, 3, 128, 128]
+        x_sca = self.scalar_conv(x_sca)  # [B*T, 3, 128, 128]
+
+        # Concatenate
+        x = torch.cat([x_vec, x_sca], dim=1)  # [B*T, 6, 128, 128]
+
+        # Reshape back
+        x = x.permute(0, 2, 3, 1).reshape(B, T, 128, 128, self.out_channels)
+
+        return x
+
+
+def create_encoder_v2(config: Dict) -> PDE2DEncoderV2:
+    """从 config 创建 EncoderV2"""
+    enc_config = config['model'].get('encoder', {})
+    return PDE2DEncoderV2(
+        in_channels=config['model']['in_channels'],
+        hidden_dim=config['model']['transformer']['hidden_size'],
+        mid_channels=enc_config.get('mid_channels', 256),
+        use_resblock=enc_config.get('use_resblock', True),
+    )
+
+
+def create_decoder_v2(config: Dict) -> PDE2DDecoderV2:
+    """从 config 创建 DecoderV2"""
+    enc_config = config['model'].get('encoder', {})
+    return PDE2DDecoderV2(
+        out_channels=config['model']['in_channels'],
+        hidden_dim=config['model']['transformer']['hidden_size'],
+        mid_channels=enc_config.get('mid_channels', 256),
+        use_resblock=enc_config.get('use_resblock', True),
+    )
+
+
+# ============================================================
+# 原始版本 (保持向后兼容)
+# ============================================================
 class PDE1DEncoder(nn.Module):
     """
     Encoder for 1D PDE data with multi-stage downsampling.

@@ -220,3 +220,8 @@ checkpoints/
 ARCHITECTURE.md
 wandb_output/
 *.pt
+
+MODEL_COMPARISON.md
+LlamaForPDE.py
+base_model.py
+ENCODER_UPGRADE_PLAN.md

@@ -7,7 +7,10 @@ import os
 import torch
 import torch.nn as nn
 from transformers import LlamaConfig, LlamaModel
-from encoder import PDE1DEncoder, PDE2DEncoder, PDE1DDecoder, PDE2DDecoder
+from encoder import (
+    PDE1DEncoder, PDE2DEncoder, PDE1DDecoder, PDE2DDecoder,
+    PDE2DEncoderV2, PDE2DDecoderV2, create_encoder_v2, create_decoder_v2
+)
 
 
 def _is_main_process():
@@ -57,10 +60,17 @@ class PDECausalModel(nn.Module):
         self._causal_mask = None
 
         # Create encoders and decoders
-        # self.encoder_1d = PDE1DEncoder(self.in_channels, self.hidden_dim)
-        self.encoder_2d = PDE2DEncoder(self.in_channels, self.hidden_dim)
-        # self.decoder_1d = PDE1DDecoder(self.in_channels, self.hidden_dim)
-        self.decoder_2d = PDE2DDecoder(self.in_channels, self.hidden_dim)
+        # 检查是否使用 V2 encoder (通过 config.model.encoder 判断)
+        encoder_config = config['model'].get('encoder', {})
+        use_v2 = encoder_config.get('version', 'v1') == 'v2'
+
+        if use_v2:
+            self.encoder_2d = create_encoder_v2(config)
+            self.decoder_2d = create_decoder_v2(config)
+        else:
+            # 原始版本 (向后兼容)
+            self.encoder_2d = PDE2DEncoder(self.in_channels, self.hidden_dim)
+            self.decoder_2d = PDE2DDecoder(self.in_channels, self.hidden_dim)
 
         # Llama config with FlashAttention-2 support
         use_flash_attn = config['model'].get('use_flash_attention', True)
@@ -93,18 +103,15 @@ class PDECausalModel(nn.Module):
         # Convert entire model to bf16 for FSDP compatibility
         self.to(torch.bfloat16)
 
-        self._log_info(llama_config, use_flash_attn)
+        self._log_info(llama_config, use_flash_attn, use_v2, encoder_config)
 
-    def _log_info(self, llama_config, use_flash_attn):
+    def _log_info(self, llama_config, use_flash_attn, use_v2=False, encoder_config=None):
         """Log model info (only on main process)."""
         if not _is_main_process():
             return
 
-        encoder_params = sum(p.numel() for p in self.encoder_2d.parameters()) #+ \
-                        #sum(p.numel() for p in self.encoder_1d.parameters())
-                        
-        decoder_params = sum(p.numel() for p in self.decoder_2d.parameters()) #+ \
-                        #sum(p.numel() for p in self.decoder_1d.parameters())
+        encoder_params = sum(p.numel() for p in self.encoder_2d.parameters())
+        decoder_params = sum(p.numel() for p in self.decoder_2d.parameters())
         transformer_params = sum(p.numel() for p in self.transformer.parameters())
         total_params = encoder_params + decoder_params + transformer_params
 
@@ -114,6 +121,12 @@ class PDECausalModel(nn.Module):
         print(f"Transformer: {llama_config.num_hidden_layers} layers, "
               f"{llama_config.hidden_size} hidden, "
               f"{llama_config.num_attention_heads} heads")
+        if use_v2 and encoder_config:
+            mid_ch = encoder_config.get('mid_channels', 256)
+            use_res = encoder_config.get('use_resblock', True)
+            print(f"Encoder: V2 (mid_channels={mid_ch}, resblock={use_res})")
+        else:
+            print(f"Encoder: V1 (original)")
         print(f"FlashAttention-2: {'Enabled' if use_flash_attn else 'Disabled'}")
         print(f"Gradient Checkpointing: {self.transformer.is_gradient_checkpointing}")
         print(f"Dtype: {llama_config.torch_dtype}")

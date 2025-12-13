@@ -1,0 +1,78 @@
+# Stage 1: Train Encoder/Decoder (Transformer Frozen)
+# 新架构: 768 hidden_size + V2 Encoder (ResBlock)
+
+stage: 1
+model_name: "pde_v2_stage1"
+
+# Dataset
+dataset:
+  path: "/home/msai/song0304/code/PDE/data"
+  temporal_length: 16
+  train_ratio: 0.9
+  seed: 42
+
+# DataLoader
+dataloader:
+  batch_size: 4  # 小模型可以增加 batch_size
+  num_workers: 4
+  pin_memory: true
+  same_sample_per_batch: false
+
+# Model - 新配置 (~125M 参数)
+model:
+  in_channels: 6
+  noise_level: 0.05
+  use_flash_attention: false
+  gradient_checkpointing: true
+
+  # V2 Encoder 配置 (方案 A+B)
+  encoder:
+    version: "v2"          # 使用 V2 encoder
+    mid_channels: 512      # 中间特征维度 (方案 A: 从 128 提升)
+    use_resblock: true     # 使用残差块 (方案 B)
+
+  # Transformer - 缩小版 (~125M)
+  transformer:
+    hidden_size: 768
+    num_hidden_layers: 12
+    num_attention_heads: 12
+    num_key_value_heads: 4   # GQA
+    intermediate_size: 3072  # 4x hidden
+    hidden_act: "silu"
+    max_position_embeddings: 4096
+    rms_norm_eps: 1.0e-5
+    rope_theta: 500000.0
+    attention_dropout: 0.0
+
+# Freeze config
+freeze:
+  transformer: true   # FROZEN
+  encoder: false      # TRAINABLE
+  decoder: false      # TRAINABLE
+
+# Training
+training:
+  max_steps: 2000
+  pretrain_from: null
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  grad_clip: 1.0
+  min_lr: 1.0e-6
+  warmup_steps: 100
+
+  loss_alpha: 0.0     # Pure MSE
+  nrmse_sigma: null
+
+  mixed_precision: "bf16"
+  gradient_accumulation_steps: 1
+
+  eval_every_steps: 50
+  early_stopping_patience: 10
+
+# Logging
+logging:
+  project: "pde-v2"
+  entity: "reca1c1trant-ntu"
+  save_dir: "./checkpoints_v2_stage1"
+  log_interval: 10

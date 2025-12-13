@@ -1,0 +1,23 @@
+# Test Configuration for V2 Model (768 hidden_size)
+
+# Checkpoint to evaluate
+checkpoint: "./checkpoints_v2_stage3/best.pt"
+
+# Model config (must match training)
+model_config: null  # 从 checkpoint 中读取 config
+
+# Test settings
+num_samples: 100        # Base samples from validation set
+slices_per_sample: 4    # Different time slices per sample
+input_steps: 16         # Number of input timesteps (same as training)
+batch_size: 4
+
+# Dataset
+dataset:
+  path: "/home/msai/song0304/code/PDE/data"
+  temporal_length: 16
+  train_ratio: 0.9
+  seed: 42
+
+# nRMSE sigma (same as training)
+nrmse_sigma: [0.143810, 0.111739, 0.0, 0.0, 0.0, 0.0]
