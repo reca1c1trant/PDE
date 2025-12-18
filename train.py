@@ -9,7 +9,7 @@ Usage:
     accelerate launch train.py --config configs/llama_8b.yaml
 
     # Or use torchrun for DDP (smaller models)
-    torchrun --nproc_per_node=8 train.py --config configs/llama_1b.yaml
+    OMP_NUM_THREADS=6 torchrun --nproc_per_node=8 train.py --config configs/llama_1b.yaml
 """
 
 import os

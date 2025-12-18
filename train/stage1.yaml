@@ -16,12 +16,12 @@ dataloader:
   batch_size: 2
   num_workers: 4
   pin_memory: true
-  same_sample_per_batch: false
+  same_sample_per_batch: true
 
 # Model (same as llama_1b)
 model:
   in_channels: 6
-  noise_level: 0.05
+  noise_level: 0
   use_flash_attention: false
   gradient_checkpointing: true
 
@@ -52,7 +52,7 @@ training:
   betas: [0.9, 0.999]
   grad_clip: 1.0
   min_lr: 1.0e-6
-  warmup_steps: 200
+  warmup_steps: 20
 
   loss_alpha: 0.0      # Pure MSE (fast convergence for large errors)
   nrmse_sigma: null

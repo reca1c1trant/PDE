@@ -9,7 +9,8 @@ import torch.nn as nn
 from transformers import LlamaConfig, LlamaModel
 from encoder import (
     PDE1DEncoder, PDE2DEncoder, PDE1DDecoder, PDE2DDecoder,
-    PDE2DEncoderV2, PDE2DDecoderV2, create_encoder_v2, create_decoder_v2
+    PDE2DEncoderV2, PDE2DDecoderV2, create_encoder_v2, create_decoder_v2,
+    FFTEncoder2D, FFTDecoder2D, create_encoder_v3, create_decoder_v3
 )
 
 
@@ -60,15 +61,20 @@ class PDECausalModel(nn.Module):
         self._causal_mask = None
 
         # Create encoders and decoders
-        # 检查是否使用 V2 encoder (通过 config.model.encoder 判断)
+        # 检查encoder版本 (通过 config.model.encoder.version 判断)
         encoder_config = config['model'].get('encoder', {})
-        use_v2 = encoder_config.get('version', 'v1') == 'v2'
+        encoder_version = encoder_config.get('version', 'v1')
 
-        if use_v2:
+        if encoder_version == 'v3':
+            # V3: FFT-based encoder
+            self.encoder_2d = create_encoder_v3(config)
+            self.decoder_2d = create_decoder_v3(config)
+        elif encoder_version == 'v2':
+            # V2: CNN with ResBlocks
             self.encoder_2d = create_encoder_v2(config)
             self.decoder_2d = create_decoder_v2(config)
         else:
-            # 原始版本 (向后兼容)
+            # V1: 原始版本 (向后兼容)
             self.encoder_2d = PDE2DEncoder(self.in_channels, self.hidden_dim)
             self.decoder_2d = PDE2DDecoder(self.in_channels, self.hidden_dim)
 
@@ -96,16 +102,18 @@ class PDECausalModel(nn.Module):
         self.transformer = LlamaModel(llama_config)
         self.transformer.embed_tokens = None
 
-        # Gradient checkpointing
+        # Gradient checkpointing (use_reentrant=False for DDP compatibility)
         if config['model'].get('gradient_checkpointing', True):
-            self.transformer.gradient_checkpointing_enable()
+            self.transformer.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
 
         # Convert entire model to bf16 for FSDP compatibility
         self.to(torch.bfloat16)
 
-        self._log_info(llama_config, use_flash_attn, use_v2, encoder_config)
+        self._log_info(llama_config, use_flash_attn, encoder_version, encoder_config)
 
-    def _log_info(self, llama_config, use_flash_attn, use_v2=False, encoder_config=None):
+    def _log_info(self, llama_config, use_flash_attn, encoder_version='v1', encoder_config=None):
         """Log model info (only on main process)."""
         if not _is_main_process():
             return
@@ -121,7 +129,12 @@ class PDECausalModel(nn.Module):
         print(f"Transformer: {llama_config.num_hidden_layers} layers, "
               f"{llama_config.hidden_size} hidden, "
               f"{llama_config.num_attention_heads} heads")
-        if use_v2 and encoder_config:
+        if encoder_version == 'v3' and encoder_config:
+            hidden_ch = encoder_config.get('hidden_channels', 64)
+            modes = encoder_config.get('modes', 64)
+            n_blocks = encoder_config.get('n_blocks', 4)
+            print(f"Encoder: V3 FFT (hidden_channels={hidden_ch}, modes={modes}, n_blocks={n_blocks})")
+        elif encoder_version == 'v2' and encoder_config:
             mid_ch = encoder_config.get('mid_channels', 256)
             use_res = encoder_config.get('use_resblock', True)
             print(f"Encoder: V2 (mid_channels={mid_ch}, resblock={use_res})")

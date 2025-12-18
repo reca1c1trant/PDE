@@ -254,11 +254,11 @@ def main():
     stage = config.get('stage', 0)
 
     # Initialize Accelerator (DDP only for staged training)
-    # DDP kwargs: find_unused_parameters for frozen modules, static_graph for gradient checkpointing
+    # DDP kwargs: static_graph=True required for gradient_checkpointing + DDP
+    # Note: embed_tokens is set to None in pipeline.py, so no unused parameters
     from accelerate import DistributedDataParallelKwargs
     ddp_kwargs = DistributedDataParallelKwargs(
-        find_unused_parameters=True,
-        static_graph=True  # Required for gradient checkpointing + DDP
+        static_graph=True
     )
 
     accelerator = Accelerator(

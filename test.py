@@ -17,7 +17,7 @@ from dataset import PDEDataset
 
 def parse_args():
     parser = argparse.ArgumentParser(description="PDE Causal AR Testing")
-    parser.add_argument('--config', type=str, default='configs/test.yaml',
+    parser.add_argument('--config', type=str, default='configs/test_v2.yaml',
                         help='Path to test config file')
     return parser.parse_args()
 

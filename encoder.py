@@ -712,6 +712,287 @@ class PDE3DDecoder(nn.Module):
         return x
 
 
+# ============================================================
+# V3: FFT-based Encoder/Decoder
+# ============================================================
+class FFTBlock(nn.Module):
+    """
+    FFT处理块：在频域进行可学习的特征变换
+
+    流程：
+    1. rfft2 → 提取低频modes
+    2. 可学习权重变换（复数乘法）
+    3. 零填充 → irfft2
+    4. 残差连接 + LayerNorm + FFN
+    """
+    def __init__(self, channels: int, modes: int = 64):
+        super().__init__()
+        self.channels = channels
+        self.modes = modes
+
+        # 可学习Fourier权重（实部和虚部分开存储）
+        # rfft2输出形状: [B, C, H, W//2+1]，所以第二个modes维度是 modes//2+1
+        scale = 1.0 / (channels * channels)
+        self.weight_re = nn.Parameter(scale * torch.randn(channels, channels, modes, modes // 2 + 1))
+        self.weight_im = nn.Parameter(scale * torch.randn(channels, channels, modes, modes // 2 + 1))
+
+        # LayerNorm和FFN
+        self.norm1 = nn.LayerNorm(channels)
+        self.norm2 = nn.LayerNorm(channels)
+        self.ffn = nn.Sequential(
+            nn.Linear(channels, channels * 4),
+            nn.GELU(),
+            nn.Linear(channels * 4, channels)
+        )
+
+    def complex_mul(self, x_re: torch.Tensor, x_im: torch.Tensor,
+                    w_re: torch.Tensor, w_im: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """复数乘法: (a+bi)(c+di) = (ac-bd) + (ad+bc)i"""
+        # x: [B, C_in, modes, modes//2+1]
+        # w: [C_in, C_out, modes, modes//2+1]
+        # 输出: [B, C_out, modes, modes//2+1]
+        out_re = torch.einsum('bcxy,cdxy->bdxy', x_re, w_re) - torch.einsum('bcxy,cdxy->bdxy', x_im, w_im)
+        out_im = torch.einsum('bcxy,cdxy->bdxy', x_re, w_im) + torch.einsum('bcxy,cdxy->bdxy', x_im, w_re)
+        return out_re, out_im
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, H, W, C] 其中 H=W=128
+        Returns:
+            x: [B, H, W, C]
+        """
+        B, H, W, C = x.shape
+        residual = x
+
+        # 保存原始dtype，FFT不支持bfloat16
+        orig_dtype = x.dtype
+
+        # 转换为 [B, C, H, W] 用于FFT
+        x = x.permute(0, 3, 1, 2)
+
+        # 禁用autocast进行FFT操作 (FFT不支持bfloat16)
+        with torch.amp.autocast(device_type='cuda', enabled=False):
+            # 转换为float32进行FFT操作
+            x = x.float()
+
+            # rfft2: 实数FFT，输出 [B, C, H, W//2+1] 复数
+            x_ft = torch.fft.rfft2(x, norm='ortho')
+
+            # 提取低频modes
+            x_ft_modes = x_ft[:, :, :self.modes, :self.modes // 2 + 1]
+
+            # 可学习权重变换 (权重也需要float32)
+            out_re, out_im = self.complex_mul(
+                x_ft_modes.real, x_ft_modes.imag,
+                self.weight_re.float(), self.weight_im.float()
+            )
+
+            # 零填充回原尺寸
+            out_ft = torch.zeros_like(x_ft)
+            out_ft[:, :, :self.modes, :self.modes // 2 + 1] = torch.complex(out_re, out_im)
+
+            # irfft2: 逆FFT
+            x = torch.fft.irfft2(out_ft, s=(H, W), norm='ortho')
+
+        # 转回原始dtype
+        x = x.to(orig_dtype)
+
+        # 转回 [B, H, W, C]
+        x = x.permute(0, 2, 3, 1)
+
+        # 残差连接 + LayerNorm
+        x = self.norm1(x + residual)
+
+        # FFN + 残差
+        x = self.norm2(x + self.ffn(x))
+
+        return x
+
+
+class FFTEncoder2D(nn.Module):
+    """
+    V3 FFT Encoder: 使用FFT在频域提取特征
+
+    Input: [B, T, 128, 128, 6]
+    Output: [B, 4096, hidden_size]
+
+    架构：
+    1. 通道投影: 6 → hidden_channels
+    2. FFT块 × N: 在128×128上进行频域处理
+    3. 空间池化: 128×128 → 16×16
+    4. 投影: hidden_channels → hidden_size
+    """
+    def __init__(
+        self,
+        in_channels: int = 6,
+        hidden_channels: int = 64,
+        hidden_size: int = 768,
+        modes: int = 64,
+        n_blocks: int = 4,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.hidden_size = hidden_size
+
+        # 通道投影
+        self.proj_in = nn.Linear(in_channels, hidden_channels)
+
+        # FFT块
+        self.blocks = nn.ModuleList([
+            FFTBlock(hidden_channels, modes) for _ in range(n_blocks)
+        ])
+
+        # 空间池化: 128×128 → 16×16 (stride=8)
+        self.pool = nn.Conv2d(hidden_channels, hidden_channels, kernel_size=8, stride=8)
+        self.norm = nn.LayerNorm(hidden_channels)
+
+        # 最终投影到transformer的hidden_size
+        self.proj_out = nn.Linear(hidden_channels, hidden_size)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, T, H, W, C] 其中 T=16, H=W=128, C=6
+        Returns:
+            tokens: [B, 4096, hidden_size]
+        """
+        B, T, H, W, C = x.shape
+
+        # 合并B和T维度
+        x = x.reshape(B * T, H, W, C)
+
+        # 通道投影
+        x = self.proj_in(x)  # [B*T, 128, 128, hidden_channels]
+
+        # FFT块处理
+        for block in self.blocks:
+            x = block(x)
+
+        # 空间池化
+        x = x.permute(0, 3, 1, 2)  # [B*T, C, 128, 128]
+        x = self.pool(x)  # [B*T, C, 16, 16]
+        x = x.permute(0, 2, 3, 1)  # [B*T, 16, 16, C]
+        x = self.norm(x)
+
+        # Flatten空间维度
+        x = x.reshape(B * T, 256, self.hidden_channels)  # [B*T, 256, C]
+
+        # 最终投影
+        x = self.proj_out(x)  # [B*T, 256, hidden_size]
+
+        # 重塑为序列
+        x = x.reshape(B, T * 256, self.hidden_size)  # [B, 4096, hidden_size]
+
+        return x
+
+
+class FFTDecoder2D(nn.Module):
+    """
+    V3 FFT Decoder: 对应FFTEncoder2D的解码器
+
+    Input: [B, 4096, hidden_size]
+    Output: [B, T, 128, 128, 6]
+
+    架构：
+    1. 投影: hidden_size → hidden_channels
+    2. 空间上采样: 16×16 → 128×128
+    3. FFT块 × N
+    4. 输出投影: hidden_channels → 6
+    """
+    def __init__(
+        self,
+        out_channels: int = 6,
+        hidden_channels: int = 64,
+        hidden_size: int = 768,
+        modes: int = 64,
+        n_blocks: int = 4,
+    ):
+        super().__init__()
+        self.out_channels = out_channels
+        self.hidden_channels = hidden_channels
+        self.hidden_size = hidden_size
+
+        # 从hidden_size投影
+        self.proj_in = nn.Linear(hidden_size, hidden_channels)
+
+        # 空间上采样: 16×16 → 128×128 (stride=8)
+        self.upsample = nn.ConvTranspose2d(hidden_channels, hidden_channels, kernel_size=8, stride=8)
+        self.norm_up = nn.LayerNorm(hidden_channels)
+
+        # FFT块
+        self.blocks = nn.ModuleList([
+            FFTBlock(hidden_channels, modes) for _ in range(n_blocks)
+        ])
+
+        # 输出投影
+        self.proj_out = nn.Linear(hidden_channels, out_channels)
+
+    def forward(self, x: torch.Tensor, B: int = None, T: int = None) -> torch.Tensor:
+        """
+        Args:
+            x: [B, 4096, hidden_size]
+            B: batch size (可选，用于reshape)
+            T: temporal length (可选，用于reshape)
+        Returns:
+            output: [B, T, 128, 128, out_channels]
+        """
+        if B is None:
+            B = x.shape[0]
+        if T is None:
+            T = x.shape[1] // 256  # 4096 / 256 = 16
+
+        # 投影
+        x = self.proj_in(x)  # [B, 4096, hidden_channels]
+
+        # 重塑
+        x = x.reshape(B * T, 256, self.hidden_channels)  # [B*T, 256, C]
+        x = x.reshape(B * T, 16, 16, self.hidden_channels)  # [B*T, 16, 16, C]
+
+        # 上采样
+        x = x.permute(0, 3, 1, 2)  # [B*T, C, 16, 16]
+        x = self.upsample(x)  # [B*T, C, 128, 128]
+        x = x.permute(0, 2, 3, 1)  # [B*T, 128, 128, C]
+        x = self.norm_up(x)
+
+        # FFT块处理
+        for block in self.blocks:
+            x = block(x)
+
+        # 输出投影
+        x = self.proj_out(x)  # [B*T, 128, 128, out_channels]
+
+        # 重塑
+        x = x.reshape(B, T, 128, 128, self.out_channels)  # [B, T, 128, 128, out_channels]
+
+        return x
+
+
+def create_encoder_v3(config: Dict) -> FFTEncoder2D:
+    """从config创建FFT Encoder V3"""
+    enc_config = config['model'].get('encoder', {})
+    return FFTEncoder2D(
+        in_channels=config['model']['in_channels'],
+        hidden_size=config['model']['transformer']['hidden_size'],
+        hidden_channels=enc_config.get('hidden_channels', 64),
+        modes=enc_config.get('modes', 64),
+        n_blocks=enc_config.get('n_blocks', 4),
+    )
+
+
+def create_decoder_v3(config: Dict) -> FFTDecoder2D:
+    """从config创建FFT Decoder V3"""
+    enc_config = config['model'].get('encoder', {})
+    return FFTDecoder2D(
+        out_channels=config['model']['in_channels'],
+        hidden_size=config['model']['transformer']['hidden_size'],
+        hidden_channels=enc_config.get('hidden_channels', 64),
+        modes=enc_config.get('modes', 64),
+        n_blocks=enc_config.get('n_blocks', 4),
+    )
+
+
 class PDEAutoencoder(nn.Module):
     """
     Wrapper that selects appropriate encoder/decoder based on input dimension.
@@ -760,8 +1041,33 @@ class PDEAutoencoder(nn.Module):
 
 if __name__ == "__main__":
     """Test encoder/decoder shapes."""
-    
+
+    print("=" * 60)
+    print("Testing FFT Encoder/Decoder V3...")
+    print("=" * 60)
+    x_fft = torch.randn(2, 16, 128, 128, 6)
+    encoder_fft = FFTEncoder2D(in_channels=6, hidden_channels=64, hidden_size=768, modes=64, n_blocks=4)
+    decoder_fft = FFTDecoder2D(out_channels=6, hidden_channels=64, hidden_size=768, modes=64, n_blocks=4)
+
+    # 计算参数量
+    enc_params = sum(p.numel() for p in encoder_fft.parameters())
+    dec_params = sum(p.numel() for p in decoder_fft.parameters())
+    print(f"  Encoder params: {enc_params / 1e6:.2f}M")
+    print(f"  Decoder params: {dec_params / 1e6:.2f}M")
+
+    tokens_fft = encoder_fft(x_fft)
+    print(f"  Input: {x_fft.shape} → Tokens: {tokens_fft.shape}")
+
+    recon_fft = decoder_fft(tokens_fft)
+    print(f"  Tokens: {tokens_fft.shape} → Output: {recon_fft.shape}")
+
+    assert tokens_fft.shape == (2, 4096, 768), f"Token shape mismatch: {tokens_fft.shape}"
+    assert recon_fft.shape == x_fft.shape, f"Output shape mismatch: {recon_fft.shape}"
+    print("  ✓ FFT V3 test passed!")
+
+    print("\n" + "=" * 60)
     print("Testing 1D Encoder/Decoder...")
+    print("=" * 60)
     x_1d = torch.randn(2, 16, 1024, 6)
     encoder_1d = PDE1DEncoder()
     decoder_1d = PDE1DDecoder()
@@ -769,8 +1075,11 @@ if __name__ == "__main__":
     recon_1d = decoder_1d(tokens_1d)
     print(f"  Input: {x_1d.shape} → Tokens: {tokens_1d.shape} → Output: {recon_1d.shape}")
     assert recon_1d.shape == x_1d.shape, "Shape mismatch!"
-    
-    print("\nTesting 2D Encoder/Decoder...")
+    print("  ✓ 1D test passed!")
+
+    print("\n" + "=" * 60)
+    print("Testing 2D Encoder/Decoder...")
+    print("=" * 60)
     x_2d = torch.randn(2, 16, 128, 128, 6)
     encoder_2d = PDE2DEncoder()
     decoder_2d = PDE2DDecoder()
@@ -778,20 +1087,19 @@ if __name__ == "__main__":
     recon_2d = decoder_2d(tokens_2d)
     print(f"  Input: {x_2d.shape} → Tokens: {tokens_2d.shape} → Output: {recon_2d.shape}")
     assert recon_2d.shape == x_2d.shape, "Shape mismatch!"
-    
-    print("\nTesting 3D Encoder/Decoder...")
-    x_3d = torch.randn(2, 16, 128, 128, 128, 6)
-    encoder_3d = PDE3DEncoder()
-    decoder_3d = PDE3DDecoder()
-    tokens_3d = encoder_3d(x_3d)
-    recon_3d = decoder_3d(tokens_3d)
-    print(f"  Input: {x_3d.shape} → Tokens: {tokens_3d.shape} → Output: {recon_3d.shape}")
-    assert recon_3d.shape == x_3d.shape, "Shape mismatch!"
-    
-    print("\nTesting Autoencoder wrapper...")
-    model = PDEAutoencoder()
-    print(f"  1D: {x_1d.shape} → {model(x_1d).shape}")
-    print(f"  2D: {x_2d.shape} → {model(x_2d).shape}")
-    print(f"  3D: {x_3d.shape} → {model(x_3d).shape}")
-    
-    print("\n✓ All tests passed!")
+    print("  ✓ 2D test passed!")
+
+    print("\n" + "=" * 60)
+    print("Testing 2D V2 Encoder/Decoder...")
+    print("=" * 60)
+    encoder_v2 = PDE2DEncoderV2(in_channels=6, hidden_dim=768, mid_channels=256, use_resblock=True)
+    decoder_v2 = PDE2DDecoderV2(out_channels=6, hidden_dim=768, mid_channels=256, use_resblock=True)
+    tokens_v2 = encoder_v2(x_2d)
+    recon_v2 = decoder_v2(tokens_v2)
+    print(f"  Input: {x_2d.shape} → Tokens: {tokens_v2.shape} → Output: {recon_v2.shape}")
+    assert recon_v2.shape == x_2d.shape, "Shape mismatch!"
+    print("  ✓ V2 test passed!")
+
+    print("\n" + "=" * 60)
+    print("All tests passed!")
+    print("=" * 60)
