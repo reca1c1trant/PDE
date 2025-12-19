@@ -34,6 +34,7 @@ class ResBlock2D(nn.Module):
 class PDE2DEncoderV2(nn.Module):
     """
     升级版 2D Encoder (方案 A+B):
+    - 可配置的通道数 (channels)
     - 可配置的中间维度 (mid_channels)
     - 残差块增强表达能力
     - 支持从 config 传入参数
@@ -45,78 +46,86 @@ class PDE2DEncoderV2(nn.Module):
         self,
         in_channels: int = 6,
         hidden_dim: int = 768,
-        mid_channels: int = 256,  # 中间特征维度 (方案 A)
-        use_resblock: bool = True,  # 是否使用残差块 (方案 B)
+        channels: list = None,  # 每层的通道数 [c1, c2, c3]，如 [64, 128, 256]
+        mid_channels: int = 512,  # fusion后的通道数 = 2 * channels[-1]
+        use_resblock: bool = True,  # 是否使用残差块
     ):
         super().__init__()
         self.in_channels = in_channels
         self.hidden_dim = hidden_dim
-        self.mid_channels = mid_channels
 
-        # 每个分支输出 mid_channels // 2
-        branch_out = mid_channels // 2
+        # 默认通道配置
+        if channels is None:
+            channels = [64, 128, 256]
+        self.channels = channels
+
+        # mid_channels = 2 * branch_out (vector + scalar concat)
+        branch_out = channels[-1]
+        self.mid_channels = 2 * branch_out
+
+        c1, c2, c3 = channels
 
         # Vector branch: 128 → 64 → 32 → 16
         if use_resblock:
             self.vector_conv = nn.Sequential(
-                nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(3, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                ResBlock2D(64),
-                nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                ResBlock2D(c1),
+                nn.Conv2d(c1, c2, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                ResBlock2D(128),
-                nn.Conv2d(128, branch_out, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                ResBlock2D(c2),
+                nn.Conv2d(c2, c3, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                ResBlock2D(branch_out),
+                ResBlock2D(c3),
             )
         else:
             self.vector_conv = nn.Sequential(
-                nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(3, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(c1, c2, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                nn.Conv2d(64, branch_out, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(c2, c3, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
             )
 
         # Scalar branch: 同上
         if use_resblock:
             self.scalar_conv = nn.Sequential(
-                nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(3, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                ResBlock2D(64),
-                nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                ResBlock2D(c1),
+                nn.Conv2d(c1, c2, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                ResBlock2D(128),
-                nn.Conv2d(128, branch_out, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                ResBlock2D(c2),
+                nn.Conv2d(c2, c3, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                ResBlock2D(branch_out),
+                ResBlock2D(c3),
             )
         else:
             self.scalar_conv = nn.Sequential(
-                nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(3, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(c1, c2, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
-                nn.Conv2d(64, branch_out, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(c2, c3, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
             )
 
         # Fusion: mid_channels → mid_channels
         if use_resblock:
             self.fusion = nn.Sequential(
-                nn.Conv2d(mid_channels, mid_channels, kernel_size=1),
+                nn.Conv2d(self.mid_channels, self.mid_channels, kernel_size=1),
                 nn.GELU(),
-                ResBlock2D(mid_channels),
+                ResBlock2D(self.mid_channels),
             )
         else:
             self.fusion = nn.Sequential(
-                nn.Conv2d(mid_channels, mid_channels, kernel_size=1),
+                nn.Conv2d(self.mid_channels, self.mid_channels, kernel_size=1),
                 nn.GELU(),
             )
 
         # Project: mid_channels → hidden_dim
-        self.proj = nn.Linear(mid_channels, hidden_dim)
+        self.proj = nn.Linear(self.mid_channels, hidden_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, H, W, C = x.shape
@@ -143,6 +152,7 @@ class PDE2DEncoderV2(nn.Module):
 class PDE2DDecoderV2(nn.Module):
     """
     升级版 2D Decoder (对应 EncoderV2):
+    - 可配置的通道数 (channels)
     - 可配置的中间维度
     - 残差块增强
 
@@ -153,72 +163,81 @@ class PDE2DDecoderV2(nn.Module):
         self,
         out_channels: int = 6,
         hidden_dim: int = 768,
-        mid_channels: int = 256,
+        channels: list = None,  # 每层的通道数 [c1, c2, c3]，与encoder对应
+        mid_channels: int = 512,  # 不再使用，由channels自动计算
         use_resblock: bool = True,
     ):
         super().__init__()
         self.out_channels = out_channels
         self.hidden_dim = hidden_dim
-        self.mid_channels = mid_channels
 
-        branch_in = mid_channels // 2
+        # 默认通道配置
+        if channels is None:
+            channels = [64, 128, 256]
+        self.channels = channels
+
+        # mid_channels = 2 * channels[-1]
+        branch_in = channels[-1]
+        self.mid_channels = 2 * branch_in
+
+        c1, c2, c3 = channels  # c3 = branch_in
 
         # Project: hidden_dim → mid_channels
-        self.proj = nn.Linear(hidden_dim, mid_channels)
+        self.proj = nn.Linear(hidden_dim, self.mid_channels)
 
         # Split layer
         if use_resblock:
             self.split = nn.Sequential(
-                nn.Conv2d(mid_channels, mid_channels, kernel_size=1),
+                nn.Conv2d(self.mid_channels, self.mid_channels, kernel_size=1),
                 nn.GELU(),
-                ResBlock2D(mid_channels),
+                ResBlock2D(self.mid_channels),
             )
         else:
             self.split = nn.Sequential(
-                nn.Conv2d(mid_channels, mid_channels, kernel_size=1),
+                nn.Conv2d(self.mid_channels, self.mid_channels, kernel_size=1),
                 nn.GELU(),
             )
 
-        # Vector branch: 16 → 32 → 64 → 128
+        # Vector branch: 16 → 32 → 64 → 128 (reverse of encoder)
         if use_resblock:
             self.vector_conv = nn.Sequential(
-                ResBlock2D(branch_in),
-                nn.ConvTranspose2d(branch_in, 128, kernel_size=4, stride=2, padding=1),
+                ResBlock2D(c3),
+                nn.ConvTranspose2d(c3, c2, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                ResBlock2D(128),
-                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+                ResBlock2D(c2),
+                nn.ConvTranspose2d(c2, c1, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                ResBlock2D(64),
-                nn.ConvTranspose2d(64, 3, kernel_size=4, stride=2, padding=1),
+                ResBlock2D(c1),
+                nn.ConvTranspose2d(c1, 3, kernel_size=4, stride=2, padding=1),
             )
         else:
             self.vector_conv = nn.Sequential(
-                nn.ConvTranspose2d(branch_in, 64, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c3, c2, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c2, c1, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c1, 3, kernel_size=4, stride=2, padding=1),
             )
 
         # Scalar branch: 同上
         if use_resblock:
             self.scalar_conv = nn.Sequential(
-                ResBlock2D(branch_in),
-                nn.ConvTranspose2d(branch_in, 128, kernel_size=4, stride=2, padding=1),
+                ResBlock2D(c3),
+                nn.ConvTranspose2d(c3, c2, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                ResBlock2D(128),
-                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+                ResBlock2D(c2),
+                nn.ConvTranspose2d(c2, c1, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                ResBlock2D(64),
-                nn.ConvTranspose2d(64, 3, kernel_size=4, stride=2, padding=1),
+                ResBlock2D(c1),
+                nn.ConvTranspose2d(c1, 3, kernel_size=4, stride=2, padding=1),
             )
         else:
             self.scalar_conv = nn.Sequential(
-                nn.ConvTranspose2d(branch_in, 64, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c3, c2, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c2, c1, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c1, 3, kernel_size=4, stride=2, padding=1),
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -233,7 +252,7 @@ class PDE2DDecoderV2(nn.Module):
 
         # Split
         x = self.split(x)  # [B*T, mid, 16, 16]
-        branch_ch = self.mid_channels // 2
+        branch_ch = self.channels[-1]  # = mid_channels // 2
         x_vec = x[:, :branch_ch, :, :]
         x_sca = x[:, branch_ch:, :, :]
 
@@ -256,7 +275,7 @@ def create_encoder_v2(config: Dict) -> PDE2DEncoderV2:
     return PDE2DEncoderV2(
         in_channels=config['model']['in_channels'],
         hidden_dim=config['model']['transformer']['hidden_size'],
-        mid_channels=enc_config.get('mid_channels', 256),
+        channels=enc_config.get('channels', [64, 128, 256]),
         use_resblock=enc_config.get('use_resblock', True),
     )
 
@@ -267,7 +286,7 @@ def create_decoder_v2(config: Dict) -> PDE2DDecoderV2:
     return PDE2DDecoderV2(
         out_channels=config['model']['in_channels'],
         hidden_dim=config['model']['transformer']['hidden_size'],
-        mid_channels=enc_config.get('mid_channels', 256),
+        channels=enc_config.get('channels', [64, 128, 256]),
         use_resblock=enc_config.get('use_resblock', True),
     )
 
