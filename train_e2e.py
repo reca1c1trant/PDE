@@ -134,6 +134,12 @@ def get_lr_scheduler(optimizer, config):
 def validate(model, val_loader, accelerator, sigma=None):
     """
     Validate and return both MSE and nRMSE losses.
+
+    Args:
+        model: The model to validate
+        val_loader: Validation dataloader
+        accelerator: Accelerator instance
+        sigma: Sigma for nRMSE calculation
     """
     model.eval()
     total_mse = torch.zeros(1, device=accelerator.device)
@@ -163,6 +169,7 @@ def validate(model, val_loader, accelerator, sigma=None):
     num_batches = accelerator.reduce(num_batches, reduction='sum')
 
     model.train()
+
     avg_mse = (total_mse / num_batches).item() if num_batches.item() > 0 else 0
     avg_nrmse = (total_nrmse / num_batches).item() if num_batches.item() > 0 else 0
     return avg_mse, avg_nrmse
@@ -180,7 +187,7 @@ def save_checkpoint(model, optimizer, scheduler, global_step, val_mse, val_nrmse
             'val_mse': val_mse,
             'val_nrmse': val_nrmse,
             'best_val_nrmse': best_val_nrmse,
-            'config': config
+            'config': config,
         }
         torch.save(checkpoint, save_dir / filename)
     accelerator.wait_for_everyone()

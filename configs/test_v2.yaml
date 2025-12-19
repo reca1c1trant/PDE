@@ -1,30 +1,22 @@
-# Test Configuration for V2 Model (768 hidden_size)
+# Test Configuration for V2 Model
 
 # Checkpoint to evaluate
-checkpoint: "./checkpoints_e2e_v2/best.pt"
+checkpoint: "./checkpoints_e2e_v2_s/best.pt"
 
 # Model config (must match training)
-model_config: "./configs/e2e_v2.yaml"  # 从 checkpoint 中读取 config
+model_config: "./configs/e2e_v2.yaml"
 
-# Test settings
-num_samples: 100        # Base samples from validation set
-slices_per_sample: 8    # Different time slices per sample
-input_steps: 16         # Number of input timesteps (same as training)
-batch_size: 8
-
-# Dataset
+# Dataset (seed and train_ratio must match training for correct val split)
 dataset:
   path: "/home/msai/song0304/code/PDE/data"
-  temporal_length: 16
   train_ratio: 0.9
-  seed: 42
-
+  seed: 42  # Must match training seed for consistent val split
 
 # Test parameters
 test:
-  input_steps: 16          # 用几个timestep作为输入
-  slices_per_sample: 8    # 每个样本取几个不同的时间切片
-  batch_size: 8           # DataLoader batch大小
-  num_samples: 100        # 评估多少个基础样本 (null = 全部)
-  seed: 5                # 随机种子 (保证可复现)
-  nrmse_sigma: [0.143810, 0.111739, 0.0, 0.0, 0.0, 0.0]  # 训练集全局sigma
+  input_steps: 1          # 用几个timestep作为输入
+  batch_size: 8           # 每个样本生成的随机时间切片数
+  num_samples: 100        # 评估多少个样本 (null = 全部val集)
+  seed: 57                # 随机采样timestep的种子
+
+
