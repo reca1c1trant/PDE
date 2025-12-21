@@ -2,12 +2,12 @@
 End-to-End Training for PDE Causal Autoregressive Model.
 
 Features:
-- Warmup phase: Pure MSE loss, no early stopping, no best model saving
-- Post-warmup: Switch to nRMSE loss, enable early stopping and best model saving
-- Both phases log nRMSE to wandb for comparison
+- nRMSE loss: sqrt(MSE(pred, gt) / MSE(0, gt))
+- Logs MSE and RMSE to wandb for reference (not used in loss)
+- Early stopping based on validation nRMSE
 
 Usage:
-    OMP_NUM_THREADS=6  torchrun --nproc_per_node=8 train_e2e.py --config configs/e2e_v2.yaml
+    OMP_NUM_THREADS=6  torchrun --nproc_per_node=8 train_e2e.py --config configs/e2e_small.yaml
 """
 
 import os
@@ -48,9 +48,48 @@ else:
     logging.disable(logging.CRITICAL)
 
 from dataset import PDEDataset, DimensionGroupedSampler, collate_fn
-from pipeline import PDECausalModel, compute_masked_loss
+from pipeline import PDECausalModel
 
 logger = logging.getLogger(__name__)
+
+
+def compute_nrmse_loss(pred: torch.Tensor, target: torch.Tensor, channel_mask: torch.Tensor):
+    """
+    Compute nRMSE loss: sqrt(MSE(pred, gt) / MSE(0, gt))
+
+    Args:
+        pred: [B, T, H, W, C] predictions
+        target: [B, T, H, W, C] ground truth
+        channel_mask: [B, C] or [C] valid channel mask
+
+    Returns:
+        nrmse_loss: scalar loss for backprop
+        mse: scalar MSE for logging
+        rmse: scalar RMSE for logging
+    """
+    # Handle channel_mask shape
+    if channel_mask.dim() == 2:
+        valid_mask = channel_mask[0].bool()  # [C]
+    else:
+        valid_mask = channel_mask.bool()  # [C]
+
+    # Filter valid channels
+    pred_valid = pred[..., valid_mask]  # [B, T, H, W, C_valid]
+    target_valid = target[..., valid_mask]  # [B, T, H, W, C_valid]
+
+    # MSE(pred, gt)
+    mse_pred_gt = ((pred_valid - target_valid) ** 2).mean()
+
+    # MSE(0, gt) = mean(gt^2)
+    mse_zero_gt = (target_valid ** 2).mean()
+
+    # nRMSE = sqrt(MSE(pred, gt) / MSE(0, gt))
+    nrmse = torch.sqrt(mse_pred_gt / (mse_zero_gt + 1e-8))
+
+    # For logging
+    rmse = torch.sqrt(mse_pred_gt + 1e-8)
+
+    return nrmse, mse_pred_gt, rmse
 
 
 def parse_args():
@@ -131,18 +170,18 @@ def get_lr_scheduler(optimizer, config):
 
 
 @torch.no_grad()
-def validate(model, val_loader, accelerator, sigma=None):
+def validate(model, val_loader, accelerator):
     """
-    Validate and return both MSE and nRMSE losses.
+    Validate and return MSE, RMSE, and nRMSE.
 
     Args:
         model: The model to validate
         val_loader: Validation dataloader
         accelerator: Accelerator instance
-        sigma: Sigma for nRMSE calculation
     """
     model.eval()
     total_mse = torch.zeros(1, device=accelerator.device)
+    total_rmse = torch.zeros(1, device=accelerator.device)
     total_nrmse = torch.zeros(1, device=accelerator.device)
     num_batches = torch.zeros(1, device=accelerator.device)
 
@@ -155,24 +194,26 @@ def validate(model, val_loader, accelerator, sigma=None):
 
         output = model(input_data)
 
-        # Compute both losses
-        mse_loss = compute_masked_loss(output, target_data, channel_mask, alpha=0.0, sigma=None)
-        nrmse_loss = compute_masked_loss(output, target_data, channel_mask, alpha=1.0, sigma=sigma)
+        # Compute nRMSE loss
+        nrmse, mse, rmse = compute_nrmse_loss(output.float(), target_data.float(), channel_mask)
 
-        total_mse += mse_loss.detach()
-        total_nrmse += nrmse_loss.detach()
+        total_mse += mse.detach()
+        total_rmse += rmse.detach()
+        total_nrmse += nrmse.detach()
         num_batches += 1
 
     accelerator.wait_for_everyone()
     total_mse = accelerator.reduce(total_mse, reduction='sum')
+    total_rmse = accelerator.reduce(total_rmse, reduction='sum')
     total_nrmse = accelerator.reduce(total_nrmse, reduction='sum')
     num_batches = accelerator.reduce(num_batches, reduction='sum')
 
     model.train()
 
     avg_mse = (total_mse / num_batches).item() if num_batches.item() > 0 else 0
+    avg_rmse = (total_rmse / num_batches).item() if num_batches.item() > 0 else 0
     avg_nrmse = (total_nrmse / num_batches).item() if num_batches.item() > 0 else 0
-    return avg_mse, avg_nrmse
+    return avg_mse, avg_rmse, avg_nrmse
 
 
 def save_checkpoint(model, optimizer, scheduler, global_step, val_mse, val_nrmse, best_val_nrmse, config, save_dir, accelerator, filename):
@@ -215,13 +256,9 @@ def main():
 
     max_steps = config['training']['max_steps']
     eval_every_steps = config['training']['eval_every_steps']
-    save_every_steps = config['training'].get('save_every_steps', 500)
+    save_every_steps = config['training'].get('save_every_steps', 0)  # 0 = only save best model
     log_interval = config['logging']['log_interval']
     early_stopping_patience = config['training'].get('early_stopping_patience', 20)
-
-    # nRMSE sigma
-    nrmse_sigma_config = config['training'].get('nrmse_sigma')
-    nrmse_sigma = torch.tensor(nrmse_sigma_config, dtype=torch.float32) if nrmse_sigma_config else None
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
@@ -230,10 +267,8 @@ def main():
         logger.info(f"Config: {args.config}")
         logger.info(f"Model: {model_name} (hidden={hidden_size}, layers={num_layers})")
         logger.info(f"Max Steps: {max_steps}")
-        logger.info(f"Warmup Steps: {warmup_steps}")
-        logger.info(f"  - Warmup phase: Pure MSE, no early stopping, no best model saving")
-        logger.info(f"  - Post-warmup: nRMSE, early stopping enabled")
-        logger.info(f"nRMSE Sigma: {nrmse_sigma_config}")
+        logger.info(f"Warmup Steps: {warmup_steps} (MSE loss)")
+        logger.info(f"Post-warmup: nRMSE = sqrt(MSE(pred,gt) / MSE(0,gt))")
         logger.info(f"{'='*60}")
 
     train_loader, val_loader = create_dataloaders(config)
@@ -295,19 +330,22 @@ def main():
             input_data = data[:, :-1]
             target_data = data[:, 1:]
 
-            sigma_device = nrmse_sigma.to(accelerator.device) if nrmse_sigma is not None else None
-
             # Determine current phase
             in_warmup = global_step < warmup_steps
 
             with accelerator.accumulate(model):
                 output = model(input_data)
 
-                # Training loss: MSE during warmup, nRMSE after
+                # Compute nRMSE, MSE, RMSE
+                nrmse_loss, mse_loss, rmse_loss = compute_nrmse_loss(
+                    output.float(), target_data.float(), channel_mask
+                )
+
+                # Warmup: use MSE, Post-warmup: use nRMSE
                 if in_warmup:
-                    train_loss = compute_masked_loss(output, target_data, channel_mask, alpha=0.0, sigma=None)
+                    train_loss = mse_loss
                 else:
-                    train_loss = compute_masked_loss(output, target_data, channel_mask, alpha=1.0, sigma=sigma_device)
+                    train_loss = nrmse_loss
 
                 accelerator.backward(train_loss)
 
@@ -323,33 +361,30 @@ def main():
             phase_str = "[warmup]" if in_warmup else "[nRMSE]"
             progress.update(train_task, advance=1, description=f"{phase_str} [loss={train_loss.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}]")
 
-            # Log (compute both losses for logging)
+            # Log MSE, RMSE, nRMSE
             if global_step % log_interval == 0:
-                with torch.no_grad():
-                    # Log both MSE and nRMSE for comparison
-                    mse_for_log = compute_masked_loss(output, target_data, channel_mask, alpha=0.0, sigma=None)
-                    nrmse_for_log = compute_masked_loss(output, target_data, channel_mask, alpha=1.0, sigma=sigma_device)
-
                 accelerator.log({
                     'train/loss': train_loss.item(),
-                    'train/mse': mse_for_log.item(),
-                    'train/nrmse': nrmse_for_log.item(),
-                    'train/phase': 0 if in_warmup else 1,  # 0=warmup, 1=nRMSE
+                    'train/mse': mse_loss.item(),
+                    'train/rmse': rmse_loss.item(),
+                    'train/nrmse': nrmse_loss.item(),
+                    'train/phase': 0 if in_warmup else 1,
                     'train/lr': scheduler.get_last_lr()[0],
                 }, step=global_step)
 
             # Evaluate
             if global_step % eval_every_steps == 0:
                 accelerator.wait_for_everyone()
-                val_mse, val_nrmse = validate(model, val_loader, accelerator, sigma=sigma_device)
+                val_mse, val_rmse, val_nrmse = validate(model, val_loader, accelerator)
 
                 accelerator.log({
                     'val/mse': val_mse,
+                    'val/rmse': val_rmse,
                     'val/nrmse': val_nrmse,
                 }, step=global_step)
 
                 if accelerator.is_main_process:
-                    console.print(f"[green]Step {global_step} {phase_str}:[/green] val_mse={val_mse:.6f}, val_nrmse={val_nrmse:.6f}")
+                    console.print(f"[green]Step {global_step} {phase_str}:[/green] val_mse={val_mse:.6f}, val_rmse={val_rmse:.6f}, val_nrmse={val_nrmse:.6f}")
 
                 # Post-warmup: enable best model saving and early stopping
                 if not in_warmup:
@@ -369,8 +404,8 @@ def main():
                             console.print(f"[red]Early stopping triggered![/red]")
                         break
 
-            # Save periodic checkpoint (both phases)
-            if global_step % save_every_steps == 0:
+            # Save periodic checkpoint
+            if save_every_steps > 0 and global_step % save_every_steps == 0:
                 save_checkpoint(model, optimizer, scheduler, global_step,
                               val_mse if 'val_mse' in dir() else 0,
                               val_nrmse if 'val_nrmse' in dir() else 0,

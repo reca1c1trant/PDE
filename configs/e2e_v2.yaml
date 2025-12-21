@@ -51,7 +51,7 @@ training:
   weight_decay: 5.0e-5
   betas: [0.9, 0.999]
   grad_clip: 1.0
-  min_lr: 1.0e-7
+  min_lr: 1.0e-6
 
   # nRMSE sigma (used after warmup)
   nrmse_sigma: [0.143810, 0.111739, 0.0, 0.0, 0.0, 0.0]

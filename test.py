@@ -1,10 +1,11 @@
 """
-Test script for PDE Causal AR model evaluation.
+For PDE-Transformer
+Test script for PDE Causal AR model evaluation using metrics.py
 
-nRMSE = sqrt(MSE(pred, gt) / MSE(0, gt))
+VERSION: 2.0 - Global normalization + Per-channel nRMSE
 
 Usage:
-    python test.py --config configs/test_v2.yaml
+    python test_with_metrics.py --config configs/test_v2.yaml
 """
 
 import os
@@ -15,9 +16,14 @@ import torch
 import yaml
 from pathlib import Path
 from tqdm import tqdm
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from pipeline import PDECausalModel
 from dataset import PDEDataset
+from metrics import metric_func
 
 
 def parse_args():
@@ -63,41 +69,58 @@ def load_model(checkpoint_path: str, model_config: dict, device: torch.device, d
     return model, dtype
 
 
-def compute_nrmse(pred: torch.Tensor, gt: torch.Tensor, channel_mask: torch.Tensor):
-    """
-    Compute nRMSE = sqrt(MSE(pred, gt) / MSE(0, gt)) per channel and overall.
+def save_visualization(pred, target, channel_idx, model_name, H, W, channel_name="channel"):
+    """Save prediction and ground truth visualization for 2D spatial data."""
+    plt.ioff()
+    
+    # Prediction plot
+    fig, ax = plt.subplots(figsize=(6.5, 6))
+    h = ax.imshow(
+        pred.squeeze().t().detach().cpu(),
+        extent=[0, W, 0, H],
+        origin="lower",
+        aspect="auto",
+    )
+    h.set_clim(target.min(), target.max())
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    cbar = fig.colorbar(h, cax=cax)
+    cbar.ax.tick_params(labelsize=20)
+    ax.set_title(f"Prediction - {channel_name}", fontsize=20)
+    ax.tick_params(axis="x", labelsize=20)
+    ax.tick_params(axis="y", labelsize=20)
+    ax.set_ylabel("$y$", fontsize=20)
+    ax.set_xlabel("$x$", fontsize=20)
+    plt.tight_layout()
+    filename = f"{model_name}_{channel_name}_pred.pdf"
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved: {filename}")
 
-    Args:
-        pred: [B, H, W, C] predictions
-        gt: [B, H, W, C] ground truth
-        channel_mask: [C] valid channel mask
+    # Ground truth plot
+    fig, ax = plt.subplots(figsize=(6.5, 6))
+    h = ax.imshow(
+        target.squeeze().t().detach().cpu(),
+        extent=[0, W, 0, H],
+        origin="lower",
+        aspect="auto",
+    )
+    h.set_clim(target.min(), target.max())
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    cbar = fig.colorbar(h, cax=cax)
+    cbar.ax.tick_params(labelsize=20)
+    ax.set_title(f"Ground Truth - {channel_name}", fontsize=20)
+    ax.tick_params(axis="x", labelsize=20)
+    ax.tick_params(axis="y", labelsize=20)
+    ax.set_ylabel("$y$", fontsize=20)
+    ax.set_xlabel("$x$", fontsize=20)
+    plt.tight_layout()
+    filename = f"{model_name}_{channel_name}_gt.pdf"
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved: {filename}")
 
-    Returns:
-        nrmse_per_channel: [C_valid] nRMSE per valid channel
-        nrmse_overall: scalar overall nRMSE (computed across all valid channels together)
-    """
-    # Filter valid channels
-    valid_mask = channel_mask.bool()
-    pred_valid = pred[..., valid_mask]  # [B, H, W, C_valid]
-    gt_valid = gt[..., valid_mask]  # [B, H, W, C_valid]
-
-    C_valid = pred_valid.shape[-1]
-
-    # Flatten spatial dims: [B, H*W, C_valid]
-    pred_flat = pred_valid.reshape(pred_valid.shape[0], -1, C_valid)
-    gt_flat = gt_valid.reshape(gt_valid.shape[0], -1, C_valid)
-
-    # Per-channel nRMSE
-    mse_pred_gt_per_ch = ((pred_flat - gt_flat) ** 2).mean(dim=(0, 1))  # [C_valid]
-    mse_zero_gt_per_ch = (gt_flat ** 2).mean(dim=(0, 1))  # [C_valid]
-    nrmse_per_channel = torch.sqrt(mse_pred_gt_per_ch / (mse_zero_gt_per_ch + 1e-8))  # [C_valid]
-
-    # Overall nRMSE: compute across all channels together (not mean of per-channel)
-    mse_pred_gt_all = ((pred_valid - gt_valid) ** 2).mean()  # scalar
-    mse_zero_gt_all = (gt_valid ** 2).mean()  # scalar
-    nrmse_overall = torch.sqrt(mse_pred_gt_all / (mse_zero_gt_all + 1e-8))
-
-    return nrmse_per_channel, nrmse_overall
 
 
 def main():
@@ -136,12 +159,28 @@ def main():
     num_samples = test_config['test'].get('num_samples', len(base_dataset))
     num_samples = min(num_samples, len(base_dataset))
 
+    # Get spatial domain size (assuming square domain)
+    sample_data = base_dataset[0]['data']  # [T, H, W, C]
+    H, W = sample_data.shape[1:3]
+    Lx = test_config['test'].get('Lx', 1.0)
+    Ly = test_config['test'].get('Ly', 1.0)
+    
+    # Plot config
+    do_plot = test_config['test'].get('plot', False)
+    channel_plot = test_config['test'].get('channel_plot', 0)
+    model_name = test_config['test'].get('model_name', 'pde_transformer')
+    
     print(f"Samples: {num_samples} | Input steps: {input_steps} | Batch size: {batch_size}")
-
-    # Evaluation
-    all_nrmse_per_channel = []
-    all_nrmse_overall = []
+    print(f"Spatial resolution: {H}x{W} | Domain size: Lx={Lx}, Ly={Ly}")
+    if do_plot:
+        print(f"Plotting enabled: channel {channel_plot}, output prefix '{model_name}'")
+    
+    # Collect all predictions and ground truths
+    all_preds = []
+    all_gts = []
+    
     valid_mask = None
+    plot_saved = False
     rng = random.Random(seed)
 
     print("\nEvaluating...")
@@ -186,37 +225,132 @@ def main():
             if valid_mask is None:
                 valid_mask = channel_mask.bool().cpu()
 
-            # Compute nRMSE for this batch
-            nrmse_per_ch, nrmse_overall = compute_nrmse(pred.float(), gt_batch.float(), channel_mask_device)
+            # Filter valid channels
+            valid_channel_mask = channel_mask_device.bool()
+            pred_valid = pred[..., valid_channel_mask]  # [B, H, W, C_valid]
+            gt_valid = gt_batch[..., valid_channel_mask]  # [B, H, W, C_valid]
 
-            all_nrmse_per_channel.append(nrmse_per_ch.cpu())
-            all_nrmse_overall.append(nrmse_overall.cpu().item())
+            # Save visualization for first batch if requested
+            if do_plot and not plot_saved:
+                full_names = ['vx', 'vy', 'vz', 'p', 'rho', 'T']
+                channel_names = [n for n, v in zip(full_names, valid_mask.tolist()) if v]
+                
+                if channel_plot < len(channel_names):
+                    channel_name = channel_names[channel_plot]
+                    print(f"\nSaving visualization for channel '{channel_name}'...")
+                    save_visualization(
+                        pred_valid[0, :, :, channel_plot],
+                        gt_valid[0, :, :, channel_plot],
+                        channel_plot,
+                        model_name,
+                        H, W,
+                        channel_name
+                    )
+                    plot_saved = True
+                else:
+                    print(f"\nWarning: channel_plot={channel_plot} is invalid (max={len(channel_names)-1}), skipping plot")
+                    plot_saved = True
 
-    # Average nRMSE across all samples
-    nrmse_per_channel = torch.stack(all_nrmse_per_channel, dim=0).mean(dim=0)  # [C_valid]
-    nrmse_overall = np.mean(all_nrmse_overall)
+            # Collect predictions and ground truths
+            all_preds.append(pred_valid.cpu())  # Move to CPU to save GPU memory
+            all_gts.append(gt_valid.cpu())
+
+    # Concatenate all batches into one large batch
+    print("\nComputing metrics on all collected data...")
+    all_preds = torch.cat(all_preds, dim=0)  # [N_total, H, W, C_valid]
+    all_gts = torch.cat(all_gts, dim=0)  # [N_total, H, W, C_valid]
+    
+    print(f"Total samples: {all_preds.shape[0]}")
+    
+    # Add time dimension
+    all_preds = all_preds.unsqueeze(-2)  # [N_total, H, W, 1, C_valid]
+    all_gts = all_gts.unsqueeze(-2)  # [N_total, H, W, 1, C_valid]
+    
+    # Move to device for computation
+    all_preds = all_preds.to(device=device)
+    all_gts = all_gts.to(device=device)
+    
+    # Compute overall metrics on entire dataset at once
+    err_RMSE, err_nRMSE, err_CSV, err_Max, err_BD, err_F = metric_func(
+        all_preds.float(),
+        all_gts.float(),
+        if_mean=True,
+        Lx=Lx, Ly=Ly, Lz=1.0,
+        iLow=4, iHigh=12,
+        initial_step=0
+    )
+    
+    # Compute per-channel nRMSE
+    C_valid = all_preds.shape[-1]
+    per_channel_nRMSE = []
+    
+    for ch_idx in range(C_valid):
+        pred_ch = all_preds[..., ch_idx:ch_idx+1]
+        gt_ch = all_gts[..., ch_idx:ch_idx+1]
+        
+        _, ch_nRMSE, _, _, _, _ = metric_func(
+            pred_ch.float(),
+            gt_ch.float(),
+            if_mean=True,
+            Lx=Lx, Ly=Ly, Lz=1.0,
+            iLow=4, iHigh=12,
+            initial_step=0
+        )
+        per_channel_nRMSE.append(ch_nRMSE.cpu())
+    
+    per_channel_nRMSE = torch.stack(per_channel_nRMSE)
 
     # Channel names
     full_names = ['vx', 'vy', 'vz', 'p', 'rho', 'T']
     channel_names = [n for n, v in zip(full_names, valid_mask.tolist()) if v]
 
     # Print results
-    print("\n" + "=" * 50)
-    print("              Test Results")
-    print("=" * 50)
+    print("\n" + "=" * 70)
+    print("                         Test Results")
+    print("                   [Script Version 2.0]")
+    print("=" * 70)
     print(f"Checkpoint: {checkpoint_path}")
     print(f"Samples: {num_samples} | Input steps: {input_steps} | Batch size: {batch_size}")
+    print(f"Total predictions: {all_preds.shape[0]}")
+    print(f"Spatial resolution: {H}x{W} | Domain: Lx={Lx}, Ly={Ly}")
     print()
+    
+    # Overall metrics (averaged over all valid channels)
+    print("Overall Metrics (averaged over all valid channels):")
+    print("-" * 70)
+    print(f"{'Metric':<30} {'Value':<20}")
+    print("-" * 70)
+    print(f"{'RMSE':<30} {err_RMSE.item():<20.1e}")
+    print(f"{'Normalized RMSE (nRMSE)':<30} {err_nRMSE.item():<20.1e}")
+    print(f"{'Maximum Error':<30} {err_Max.item():<20.1e}")
+    print(f"{'Conserved Variables RMSE':<30} {err_CSV.item():<20.1e}")
+    print(f"{'Boundary RMSE':<30} {err_BD.item():<20.1e}")
+    print("-" * 70)
+    print()
+    
+    # Fourier space errors
+    print("Fourier Space RMSE (Low/Mid/High frequency):")
+    print("-" * 70)
+    freq_labels = ['Low Frequency', 'Mid Frequency', 'High Frequency']
+    for i, label in enumerate(freq_labels):
+        print(f"{label:<30} {err_F[i].item():<20.1e}")
+    print("-" * 70)
+    print()
+    
+    # Per-channel nRMSE breakdown
     print("Per-channel nRMSE:")
-    print("-" * 50)
-    print(f"{'Channel':<10} {'nRMSE':<12}")
-    print("-" * 50)
+    print("-" * 70)
+    print(f"{'Channel':<15} {'nRMSE':<20}")
+    print("-" * 70)
     for i, name in enumerate(channel_names):
-        print(f"{name:<10} {nrmse_per_channel[i].item():<12.6f}")
-    print("-" * 50)
+        print(f"{name:<15} {per_channel_nRMSE[i].item():<20.1e}")
+    print("-" * 70)
+    print(f"{'Average':<15} {per_channel_nRMSE.mean().item():<20.1e}")
+    print("-" * 70)
     print()
-    print(f"Overall nRMSE: {nrmse_overall:.6f}")
-    print("=" * 50)
+    
+    print("Note: All metrics computed on entire dataset with global normalization.")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
