@@ -13,7 +13,7 @@ dataset:
 
 # DataLoader
 dataloader:
-  batch_size: 8
+  batch_size: 6
   num_workers: 4
   pin_memory: true
   same_sample_per_batch: true
@@ -35,7 +35,7 @@ model:
   transformer:
     hidden_size: 768
     num_hidden_layers: 10
-    num_attention_heads: 12
+    num_attention_heads: 16
     num_key_value_heads: 4
     intermediate_size: 3072
     hidden_act: "silu"
@@ -48,11 +48,11 @@ model:
 training:
   max_steps: 4000
   warmup_steps: 200
-  learning_rate: 5.0e-4
-  weight_decay: 5.0e-4
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
   betas: [0.9, 0.999]
   grad_clip: 5.0
-  min_lr: 5.0e-6
+  min_lr: 1.0e-6
 
   
   mixed_precision: "bf16"
