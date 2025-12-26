@@ -8,7 +8,7 @@ Features:
 - Logs nRMSE and RMSE to wandb
 
 Usage:
-    OMP_NUM_THREADS=6  torchrun --nproc_per_node=8 train_e2e.py --config configs/e2e_small.yaml
+    OMP_NUM_THREADS=6  torchrun --nproc_per_node=8 train_e2e.py --config configs/e2e_medium.yaml
 """
 
 import os

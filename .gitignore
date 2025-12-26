@@ -226,3 +226,5 @@ LlamaForPDE.py
 base_model.py
 ENCODER_UPGRADE_PLAN.md
 VIDEO_TRANSFORMER_ANALYSIS.md
+
+Burgers2D.md
