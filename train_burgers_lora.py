@@ -6,6 +6,7 @@ Features:
 - LoRA applied to Transformer layers only
 - Encoder and Decoder frozen
 - Boundary conditions used for PDE loss computation
+- Epoch-based training with balanced sampling (K clips per sample)
 
 Usage:
     torchrun --nproc_per_node=8 train_burgers_lora.py --config configs/finetune_burgers.yaml
@@ -67,12 +68,15 @@ def load_config(config_path: str) -> dict:
 
 def create_dataloaders(config: dict):
     """Create train and validation dataloaders."""
+    clips_per_sample = config['dataset'].get('clips_per_sample', 100)
+
     train_dataset = BurgersDataset(
         data_path=config['dataset']['path'],
         temporal_length=config['dataset']['temporal_length'],
         split='train',
         train_ratio=config['dataset']['train_ratio'],
-        seed=config['dataset']['seed']
+        seed=config['dataset']['seed'],
+        clips_per_sample=clips_per_sample,
     )
 
     val_dataset = BurgersDataset(
@@ -80,7 +84,8 @@ def create_dataloaders(config: dict):
         temporal_length=config['dataset']['temporal_length'],
         split='val',
         train_ratio=config['dataset']['train_ratio'],
-        seed=config['dataset']['seed']
+        seed=config['dataset']['seed'],
+        clips_per_sample=clips_per_sample // 10,  # Fewer clips for validation
     )
 
     batch_size = config['dataloader']['batch_size']
@@ -105,30 +110,24 @@ def create_dataloaders(config: dict):
         pin_memory=config['dataloader']['pin_memory']
     )
 
-    return train_loader, val_loader
+    return train_loader, val_loader, train_sampler, val_sampler
 
 
-def infinite_dataloader(dataloader):
-    """Infinite iterator over dataloader."""
-    while True:
-        for batch in dataloader:
-            yield batch
 
 
-def get_lr_scheduler(optimizer, config):
+def get_lr_scheduler(optimizer, config, total_steps: int):
     """Create learning rate scheduler with warmup and cosine decay."""
     from torch.optim.lr_scheduler import LambdaLR
     import math
 
     warmup_steps = config['training'].get('warmup_steps', 100)
-    max_steps = config['training']['max_steps']
     min_lr_ratio = config['training'].get('min_lr', 1e-6) / config['training']['learning_rate']
 
     def lr_lambda(step):
         if step < warmup_steps:
             return step / warmup_steps
         else:
-            progress = (step - warmup_steps) / (max_steps - warmup_steps)
+            progress = (step - warmup_steps) / (total_steps - warmup_steps)
             return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
 
     return LambdaLR(optimizer, lr_lambda)
@@ -260,26 +259,31 @@ def main():
     )
 
     # Training params
-    max_steps = config['training']['max_steps']
+    max_epochs = config['training'].get('max_epochs', 10)
     warmup_steps = config['training'].get('warmup_steps', 100)
-    eval_every_steps = config['training']['eval_every_steps']
     log_interval = config['logging']['log_interval']
     lambda_pde = config['training'].get('lambda_pde', 1.0)
     grad_clip = config['training'].get('grad_clip', 1.0)
+    clips_per_sample = config['dataset'].get('clips_per_sample', 100)
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
         logger.info(f"Burgers2D LoRA Finetuning with PDE Loss")
         logger.info(f"{'='*60}")
         logger.info(f"Config: {args.config}")
-        logger.info(f"Max Steps: {max_steps}")
+        logger.info(f"Max Epochs: {max_epochs}")
+        logger.info(f"Clips per Sample: {clips_per_sample}")
         logger.info(f"Warmup Steps: {warmup_steps}")
         logger.info(f"Loss: Pure PDE Residual (lambda_pde={lambda_pde})")
         logger.info(f"Grad Clip: {grad_clip}")
         logger.info(f"{'='*60}")
 
     # Create dataloaders
-    train_loader, val_loader = create_dataloaders(config)
+    train_loader, val_loader, train_sampler, val_sampler = create_dataloaders(config)
+
+    # Calculate total steps for scheduler
+    steps_per_epoch = len(train_loader)
+    total_steps = max_epochs * steps_per_epoch
 
     # Create model with LoRA
     pretrained_path = config['model'].get('pretrained_path', None)
@@ -294,7 +298,7 @@ def main():
         betas=tuple(config['training'].get('betas', [0.9, 0.999]))
     )
 
-    scheduler = get_lr_scheduler(optimizer, config)
+    scheduler = get_lr_scheduler(optimizer, config, total_steps)
 
     # Prepare with accelerator
     model, optimizer = accelerator.prepare(model, optimizer)
@@ -322,8 +326,11 @@ def main():
     global_step = 0
     best_pde_loss = float('inf')
 
-    train_iter = infinite_dataloader(train_loader)
     console = Console()
+
+    if accelerator.is_main_process:
+        logger.info(f"Steps per epoch: {steps_per_epoch}")
+        logger.info(f"Total steps: {total_steps}")
 
     model.train()
 
@@ -337,93 +344,105 @@ def main():
         console=console,
         disable=not accelerator.is_main_process,
     ) as progress:
-        train_task = progress.add_task("Training", total=max_steps)
+        train_task = progress.add_task("Training", total=total_steps)
 
-        while global_step < max_steps:
-            batch = next(train_iter)
+        for epoch in range(max_epochs):
+            # Set epoch for reproducible shuffling
+            train_sampler.set_epoch(epoch)
 
-            data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+            epoch_pde_loss = 0.0
+            epoch_steps = 0
 
-            input_data = data[:, :-1]  # [B, 16, H, W, 6]
+            for batch in train_loader:
+                data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
 
-            with accelerator.accumulate(model):
-                output = model(input_data)
+                input_data = data[:, :-1]  # [B, 16, H, W, 6]
 
-                # Compute PDE loss
-                pde_loss, loss_u, loss_v = compute_pde_loss(
-                    output, input_data, batch, config, accelerator
-                )
+                with accelerator.accumulate(model):
+                    output = model(input_data)
 
-                train_loss = lambda_pde * pde_loss
-
-                accelerator.backward(train_loss)
-
-                if grad_clip > 0:
-                    accelerator.clip_grad_norm_(trainable_params, grad_clip)
-
-                optimizer.step()
-                optimizer.zero_grad()
-
-            scheduler.step()
-            global_step += 1
-
-            # Reduce loss for logging
-            pde_loss_reduced = accelerator.reduce(pde_loss.detach(), reduction='mean')
-            loss_u_reduced = accelerator.reduce(loss_u.detach(), reduction='mean')
-            loss_v_reduced = accelerator.reduce(loss_v.detach(), reduction='mean')
-
-            # Update progress bar
-            in_warmup = global_step < warmup_steps
-            phase_str = "[warmup]" if in_warmup else "[train]"
-            progress.update(
-                train_task, advance=1,
-                description=f"{phase_str} PDE={pde_loss_reduced.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}"
-            )
-
-            # Log to wandb
-            if global_step % log_interval == 0:
-                accelerator.log({
-                    'train/pde_loss': pde_loss_reduced.item(),
-                    'train/loss_u': loss_u_reduced.item(),
-                    'train/loss_v': loss_v_reduced.item(),
-                    'train/lr': scheduler.get_last_lr()[0],
-                }, step=global_step)
-
-            # Evaluate
-            if global_step % eval_every_steps == 0:
-                accelerator.wait_for_everyone()
-
-                val_pde_loss, val_constraint_error = validate(
-                    model, val_loader, config, accelerator
-                )
-
-                accelerator.log({
-                    'val/pde_loss': val_pde_loss,
-                    'val/constraint_error': val_constraint_error,
-                }, step=global_step)
-
-                if accelerator.is_main_process:
-                    console.print(
-                        f"[green]Step {global_step}:[/green] "
-                        f"val_pde={val_pde_loss:.6f}, constraint_err={val_constraint_error:.6f}"
+                    # Compute PDE loss
+                    pde_loss, loss_u, loss_v = compute_pde_loss(
+                        output, input_data, batch, config, accelerator
                     )
 
-                # Save best model (after warmup)
-                if not in_warmup and val_pde_loss < best_pde_loss:
-                    best_pde_loss = val_pde_loss
+                    train_loss = lambda_pde * pde_loss
 
-                    if accelerator.is_main_process:
-                        unwrapped_model = accelerator.unwrap_model(model)
-                        save_lora_checkpoint(
-                            model=unwrapped_model.model,
-                            optimizer=optimizer,
-                            scheduler=scheduler,
-                            global_step=global_step,
-                            metrics={'pde_loss': val_pde_loss, 'constraint_error': val_constraint_error},
-                            save_path=str(save_dir / 'best_lora.pt'),
-                            config=config,
-                        )
-                        console.print(f"[yellow]Saved best model[/yellow] (pde_loss: {val_pde_loss:.6f})")
+                    accelerator.backward(train_loss)
+
+                    if grad_clip > 0:
+                        accelerator.clip_grad_norm_(trainable_params, grad_clip)
+
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+                scheduler.step()
+                global_step += 1
+                epoch_steps += 1
+
+                # Reduce loss for logging
+                pde_loss_reduced = accelerator.reduce(pde_loss.detach(), reduction='mean')
+                loss_u_reduced = accelerator.reduce(loss_u.detach(), reduction='mean')
+                loss_v_reduced = accelerator.reduce(loss_v.detach(), reduction='mean')
+
+                epoch_pde_loss += pde_loss_reduced.item()
+
+                # Update progress bar
+                in_warmup = global_step < warmup_steps
+                phase_str = "[warmup]" if in_warmup else f"[E{epoch+1}]"
+                progress.update(
+                    train_task, advance=1,
+                    description=f"{phase_str} PDE={pde_loss_reduced.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}"
+                )
+
+                # Log to wandb
+                if global_step % log_interval == 0:
+                    accelerator.log({
+                        'train/pde_loss': pde_loss_reduced.item(),
+                        'train/loss_u': loss_u_reduced.item(),
+                        'train/loss_v': loss_v_reduced.item(),
+                        'train/lr': scheduler.get_last_lr()[0],
+                        'train/epoch': epoch + 1,
+                    }, step=global_step)
+
+            # End of epoch: validate
+            accelerator.wait_for_everyone()
+
+            avg_epoch_loss = epoch_pde_loss / epoch_steps
+            val_pde_loss, val_constraint_error = validate(
+                model, val_loader, config, accelerator
+            )
+
+            accelerator.log({
+                'epoch/train_pde_loss': avg_epoch_loss,
+                'epoch/val_pde_loss': val_pde_loss,
+                'epoch/val_constraint_error': val_constraint_error,
+                'epoch': epoch + 1,
+            }, step=global_step)
+
+            if accelerator.is_main_process:
+                console.print(
+                    f"\n[green]Epoch {epoch+1}/{max_epochs}:[/green] "
+                    f"train_pde={avg_epoch_loss:.6f}, val_pde={val_pde_loss:.6f}, "
+                    f"constraint_err={val_constraint_error:.6f}"
+                )
+
+            # Save best model (after warmup)
+            if global_step >= warmup_steps and val_pde_loss < best_pde_loss:
+                best_pde_loss = val_pde_loss
+
+                if accelerator.is_main_process:
+                    unwrapped_model = accelerator.unwrap_model(model)
+                    save_lora_checkpoint(
+                        model=unwrapped_model.model,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        global_step=global_step,
+                        metrics={'pde_loss': val_pde_loss, 'constraint_error': val_constraint_error},
+                        save_path=str(save_dir / 'best_lora.pt'),
+                        config=config,
+                    )
+                    console.print(f"[yellow]Saved best model[/yellow] (pde_loss: {val_pde_loss:.6f})")
 
     accelerator.end_training()
 

@@ -1,10 +1,14 @@
 """
 Burgers2D Dataset for LoRA Finetuning.
 
-Loads 2D Burgers equation data and prepares it for PDE loss training.
-- Pads 2 channels (u, v) to 6 channels to match pretrained model
-- Returns boundary conditions for PDE loss computation
-- Returns viscosity coefficient nu
+Sampling Strategy (方案C):
+- Each sample contributes K clips per epoch
+- Ensures balanced usage across all samples (different nu values)
+- Random start times provide temporal diversity
+
+Example with K=100:
+- 90 train samples × 100 clips = 9000 clips/epoch
+- batch_size=4 → 2250 steps/epoch
 """
 
 import h5py
@@ -21,25 +25,25 @@ logger = logging.getLogger(__name__)
 
 class BurgersDataset(Dataset):
     """
-    Dataset for 2D Burgers equation with boundary conditions.
+    Dataset for 2D Burgers equation with balanced sampling.
 
-    HDF5 Structure (from generate_burgers2d_dataset.py):
+    Each epoch, every sample contributes exactly `clips_per_sample` clips,
+    ensuring balanced training across different viscosity values.
+
+    HDF5 Structure:
         sample_N/
         ├── nu: float32 (viscosity)
         ├── scalar: Empty
         └── vector/
             ├── data: [T=1000, H=128, W=128, C=2]
             └── boundary/
-                ├── left:   [T=1000, H=128, 1, C=2]
-                ├── right:  [T=1000, H=128, 1, C=2]
-                ├── bottom: [T=1000, 1, W=128, C=2]
-                └── top:    [T=1000, 1, W=128, C=2]
+                ├── left/right/bottom/top
 
-    Output:
+    Output per clip:
         - data: [T=17, H=128, W=128, C=6] padded to 6 channels
         - channel_mask: [6] = [1, 1, 0, 0, 0, 0]
-        - boundaries: dict with left/right/bottom/top [T=17, ...]
-        - nu: float viscosity coefficient
+        - boundaries: [T=17, ...]
+        - nu: float viscosity
     """
 
     def __init__(
@@ -48,33 +52,41 @@ class BurgersDataset(Dataset):
         temporal_length: int = 16,
         split: str = 'train',
         train_ratio: float = 0.9,
-        seed: int = 42
+        seed: int = 42,
+        clips_per_sample: int = 100,  # K clips per sample per epoch
     ):
         super().__init__()
         self.data_path = Path(data_path)
-        self.temporal_length = temporal_length + 1  # 17 frames for PDE loss
+        self.temporal_length = temporal_length + 1  # 17 frames
         self.split = split
         self.train_ratio = train_ratio
         self.seed = seed
+        self.clips_per_sample = clips_per_sample
 
-        # Build sample index
-        self.samples: List[Tuple[str, float, int]] = []  # (sample_key, nu, total_timesteps)
+        # Build sample index: (sample_key, nu, total_timesteps)
+        self.samples: List[Tuple[str, float, int]] = []
         self._build_index()
         self._split_dataset()
 
-        logger.info(f"BurgersDataset: {len(self.samples)} samples for {split}")
+        # Max possible start index
+        self.max_start = self.samples[0][2] - self.temporal_length if self.samples else 0
+
+        # Generate initial clips
+        self.epoch = 0
+        self._generate_clips()
+
+        logger.info(f"BurgersDataset ({split}): {len(self.samples)} samples, "
+                   f"{self.clips_per_sample} clips/sample, {len(self.clips)} total clips/epoch")
 
     def _build_index(self):
         """Build index of all samples."""
         with h5py.File(self.data_path, 'r') as f:
-            for sample_key in f.keys():
+            for sample_key in sorted(f.keys(), key=lambda x: int(x)):
                 nu = float(f[sample_key]['nu'][()])
                 total_timesteps = f[sample_key]['vector']['data'].shape[0]
 
                 if total_timesteps >= self.temporal_length:
                     self.samples.append((sample_key, nu, total_timesteps))
-                else:
-                    logger.warning(f"Skipping {sample_key}: only {total_timesteps} timesteps")
 
         logger.info(f"Found {len(self.samples)} valid samples")
 
@@ -93,15 +105,51 @@ class BurgersDataset(Dataset):
 
         self.samples = [self.samples[i] for i in selected]
 
+    def _generate_clips(self):
+        """
+        Generate clips for current epoch.
+        Each sample contributes exactly clips_per_sample clips.
+
+        IMPORTANT: Clips are stored grouped by sample (not shuffled globally).
+        The BurgersSampler handles shuffling to ensure each batch contains
+        clips from the same sample only.
+        """
+        rng = np.random.RandomState(self.seed + self.epoch)
+
+        self.clips = []
+        self.clips_by_sample: Dict[int, List[int]] = {}  # sample_idx -> list of clip indices
+
+        clip_idx = 0
+        for sample_idx, (sample_key, nu, total_t) in enumerate(self.samples):
+            max_start = total_t - self.temporal_length
+
+            # Sample K start times (with replacement if K > max_start)
+            if self.clips_per_sample <= max_start + 1:
+                starts = rng.choice(max_start + 1, self.clips_per_sample, replace=False)
+            else:
+                starts = rng.choice(max_start + 1, self.clips_per_sample, replace=True)
+
+            self.clips_by_sample[sample_idx] = []
+            for start_t in starts:
+                self.clips.append((sample_idx, int(start_t)))
+                self.clips_by_sample[sample_idx].append(clip_idx)
+                clip_idx += 1
+
+        # NOTE: Do NOT shuffle self.clips here. BurgersSampler handles
+        # shuffling to ensure same-sample batching.
+
+    def set_epoch(self, epoch: int):
+        """Set epoch for reproducible shuffling. Call before each epoch."""
+        self.epoch = epoch
+        self._generate_clips()
+
     def __len__(self) -> int:
-        return len(self.samples)
+        return len(self.clips)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        sample_key, nu, total_timesteps = self.samples[idx]
+        sample_idx, start_t = self.clips[idx]
+        sample_key, nu, _ = self.samples[sample_idx]
 
-        # Random temporal slice
-        max_start = total_timesteps - self.temporal_length
-        start_t = np.random.randint(0, max_start + 1) if max_start > 0 else 0
         end_t = start_t + self.temporal_length
 
         with h5py.File(self.data_path, 'r') as f:
@@ -120,7 +168,7 @@ class BurgersDataset(Dataset):
         # Pad to 6 channels: [u, v, 0, 0, 0, 0]
         T, H, W, _ = data_2ch.shape
         data_6ch = np.zeros((T, H, W, 6), dtype=np.float32)
-        data_6ch[..., :2] = data_2ch  # u → ch0, v → ch1
+        data_6ch[..., :2] = data_2ch
 
         # Channel mask
         channel_mask = np.array([1, 1, 0, 0, 0, 0], dtype=np.float32)
@@ -138,8 +186,17 @@ class BurgersDataset(Dataset):
 
 class BurgersSampler(Sampler):
     """
-    Simple batch sampler for Burgers dataset.
-    All samples have the same dimension (2D 128x128), so no grouping needed.
+    Distributed-aware sampler for BurgersDataset.
+
+    IMPORTANT: Ensures each batch contains clips from the SAME sample only.
+    This is critical for PDE loss computation where boundary conditions
+    must be consistent within a batch.
+
+    Sampling logic:
+    1. Shuffle sample order (which sample comes first)
+    2. For each sample, shuffle its K clips
+    3. Divide each sample's clips into batches of size batch_size
+    4. Result: each batch contains clips from one sample only
     """
 
     def __init__(
@@ -157,6 +214,13 @@ class BurgersSampler(Sampler):
         self.seed = seed
         self.epoch = 0
 
+        # Validate: clips_per_sample must be divisible by batch_size
+        if dataset.clips_per_sample % batch_size != 0:
+            raise ValueError(
+                f"clips_per_sample ({dataset.clips_per_sample}) must be "
+                f"divisible by batch_size ({batch_size})"
+            )
+
         # Distributed settings
         import os
         if num_replicas is None:
@@ -170,28 +234,48 @@ class BurgersSampler(Sampler):
         self._compute_batches()
 
     def _compute_batches(self):
-        """Compute batches for this epoch."""
+        """
+        Compute batches ensuring each batch contains clips from same sample.
+
+        Process:
+        1. Shuffle sample order
+        2. For each sample: shuffle its clips, then divide into batches
+        3. Each batch = batch_size clips from ONE sample
+        """
         rng = np.random.RandomState(self.seed + self.epoch)
 
-        indices = list(range(len(self.dataset)))
+        # Get sample indices and shuffle their order
+        sample_indices = list(range(len(self.dataset.samples)))
         if self.shuffle:
-            rng.shuffle(indices)
+            rng.shuffle(sample_indices)
 
-        # Create batches
         batches = []
-        for i in range(0, len(indices), self.batch_size):
-            batch = indices[i:i + self.batch_size]
-            if len(batch) == self.batch_size:
-                batches.append(batch)
+        for sample_idx in sample_indices:
+            # Get this sample's clip indices
+            clip_indices = list(self.dataset.clips_by_sample[sample_idx])
 
-        if self.shuffle:
-            rng.shuffle(batches)
+            # Shuffle clips within this sample
+            if self.shuffle:
+                rng.shuffle(clip_indices)
+
+            # Divide into batches (all clips in a batch are from same sample)
+            for i in range(0, len(clip_indices), self.batch_size):
+                batch = clip_indices[i:i + self.batch_size]
+                if len(batch) == self.batch_size:
+                    batches.append(batch)
 
         self._all_batches = batches
         self.num_batches_per_rank = len(batches) // self.num_replicas
 
+        if self.rank == 0:
+            logger.info(f"BurgersSampler: {len(batches)} batches total, "
+                       f"{self.num_batches_per_rank} per rank, "
+                       f"each batch from same sample")
+
     def set_epoch(self, epoch: int):
+        """Set epoch for shuffling. Also updates dataset's epoch."""
         self.epoch = epoch
+        self.dataset.set_epoch(epoch)
         self._compute_batches()
 
     def __iter__(self):
@@ -206,9 +290,7 @@ class BurgersSampler(Sampler):
 
 
 def burgers_collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-    """
-    Collate function for Burgers dataset.
-    """
+    """Collate function for Burgers dataset."""
     return {
         'data': torch.stack([item['data'] for item in batch], dim=0),
         'channel_mask': torch.stack([item['channel_mask'] for item in batch], dim=0),
@@ -221,33 +303,90 @@ def burgers_collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.
 
 
 if __name__ == "__main__":
-    """Test dataset loading."""
+    """Test dataset and sampling."""
     import sys
 
-    # Test with a dummy path - update with actual path
     data_path = "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
 
     if not Path(data_path).exists():
         print(f"Test file not found: {data_path}")
-        print("Please generate the dataset first using generate_burgers2d_dataset.py")
         sys.exit(0)
 
-    dataset = BurgersDataset(data_path, temporal_length=16, split='train')
+    # Test dataset
+    batch_size = 4
+    clips_per_sample = 100  # Must be divisible by batch_size
 
-    print(f"\nDataset size: {len(dataset)}")
+    dataset = BurgersDataset(
+        data_path,
+        temporal_length=16,
+        split='train',
+        clips_per_sample=clips_per_sample
+    )
 
+    print(f"\n{'='*60}")
+    print(f"Dataset Statistics")
+    print(f"{'='*60}")
+    print(f"Number of samples: {len(dataset.samples)}")
+    print(f"Clips per sample: {dataset.clips_per_sample}")
+    print(f"Total clips: {len(dataset)}")
+    print(f"Expected: {len(dataset.samples)} × {dataset.clips_per_sample} = {len(dataset.samples) * dataset.clips_per_sample}")
+
+    # Test one clip
     sample = dataset[0]
-    print(f"\nSample keys: {sample.keys()}")
-    print(f"Data shape: {sample['data'].shape}")  # [17, 128, 128, 6]
-    print(f"Channel mask: {sample['channel_mask']}")
-    print(f"Boundary left shape: {sample['boundary_left'].shape}")  # [17, 128, 1, 2]
-    print(f"Boundary bottom shape: {sample['boundary_bottom'].shape}")  # [17, 1, 128, 2]
-    print(f"Nu: {sample['nu']}")
+    print(f"\nSample shapes:")
+    print(f"  data: {sample['data'].shape}")
+    print(f"  boundary_left: {sample['boundary_left'].shape}")
+    print(f"  nu: {sample['nu']}")
 
-    # Verify u + v = 1.5 constraint
-    u = sample['data'][..., 0]
-    v = sample['data'][..., 1]
-    constraint_error = torch.abs(u + v - 1.5).max()
-    print(f"\nConstraint error (u+v=1.5): {constraint_error:.2e}")
+    # Verify sampling balance
+    print(f"\n{'='*60}")
+    print(f"Sampling Balance Check")
+    print(f"{'='*60}")
+    sample_counts = {}
+    for sample_idx, start_t in dataset.clips:
+        sample_counts[sample_idx] = sample_counts.get(sample_idx, 0) + 1
+
+    counts = list(sample_counts.values())
+    print(f"Clips per sample - min: {min(counts)}, max: {max(counts)}, expected: {dataset.clips_per_sample}")
+
+    # Test sampler and same-sample batching
+    print(f"\n{'='*60}")
+    print(f"Same-Sample Batching Test")
+    print(f"{'='*60}")
+    sampler = BurgersSampler(dataset, batch_size=batch_size, shuffle=True, seed=42)
+
+    # Verify each batch contains clips from same sample
+    all_same_sample = True
+    for batch_idx, batch in enumerate(sampler):
+        sample_indices_in_batch = set()
+        for clip_idx in batch:
+            sample_idx, _ = dataset.clips[clip_idx]
+            sample_indices_in_batch.add(sample_idx)
+
+        if len(sample_indices_in_batch) != 1:
+            print(f"ERROR: Batch {batch_idx} has clips from multiple samples: {sample_indices_in_batch}")
+            all_same_sample = False
+
+        if batch_idx < 3:  # Show first 3 batches
+            sample_idx = list(sample_indices_in_batch)[0]
+            start_times = [dataset.clips[clip_idx][1] for clip_idx in batch]
+            print(f"Batch {batch_idx}: sample={sample_idx}, start_times={start_times}")
+
+    if all_same_sample:
+        print(f"\n✓ All {len(sampler)} batches contain clips from same sample only!")
+    else:
+        print(f"\n✗ Some batches have mixed samples!")
+
+    # Test epoch change
+    print(f"\n{'='*60}")
+    print(f"Epoch Change Test")
+    print(f"{'='*60}")
+    sampler.set_epoch(1)
+    first_batch_epoch1 = list(sampler)[0]
+    sampler.set_epoch(0)
+    first_batch_epoch0 = list(sampler)[0]
+    print(f"Epoch 0 first batch: {first_batch_epoch0}")
+    print(f"Epoch 1 first batch: {first_batch_epoch1}")
+    print(f"Different after epoch change: {first_batch_epoch0 != first_batch_epoch1}")
 
     print("\nDataset test passed!")

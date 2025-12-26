@@ -1,5 +1,10 @@
 # Burgers2D LoRA Finetuning Configuration
 # Pure PDE Loss Training (no ground truth supervision)
+#
+# Training Budget (with default settings):
+#   - 90 train samples x 100 clips/sample = 9000 clips/epoch
+#   - batch_size=4 -> 2250 steps/epoch
+#   - 10 epochs -> ~22500 total steps
 
 # Model
 model:
@@ -50,6 +55,7 @@ dataset:
   temporal_length: 16  # Will load 17 frames (16+1)
   train_ratio: 0.9
   seed: 42
+  clips_per_sample: 100  # K=100 clips per sample per epoch (方案C)
 
 # Physics parameters
 physics:
@@ -64,7 +70,7 @@ dataloader:
 
 # Training
 training:
-  max_steps: 5000
+  max_epochs: 10  # Epoch-based training with balanced sampling
   warmup_steps: 100
   learning_rate: 1.0e-4
   min_lr: 1.0e-6
@@ -78,7 +84,7 @@ training:
 
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1
-  eval_every_steps: 50
+  # Note: Validation runs at end of each epoch (no eval_every_steps)
 
 # Logging
 logging:
