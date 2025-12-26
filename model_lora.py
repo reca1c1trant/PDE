@@ -87,8 +87,18 @@ def create_pde_model_with_lora(
         task_type=None,  # Custom model, not a standard task
     )
 
+    # Disable gradient checkpointing before wrapping with PEFT
+    # (PEFT's prepare_model_for_gradient_checkpointing fails because
+    # LlamaModel has no embedding layer when we use inputs_embeds)
+    if hasattr(model.transformer, 'gradient_checkpointing_disable'):
+        model.transformer.gradient_checkpointing_disable()
+
     # Wrap transformer with LoRA
     model.transformer = get_peft_model(model.transformer, peft_config)
+
+    # Re-enable gradient checkpointing on the base model if needed
+    if config.get('model', {}).get('gradient_checkpointing', False):
+        model.transformer.base_model.model.gradient_checkpointing_enable()
 
     # Freeze encoder and decoder
     for param in model.encoder_2d.parameters():

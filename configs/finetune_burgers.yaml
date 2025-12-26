@@ -8,7 +8,7 @@
 
 # Model
 model:
-  pretrained_path: "./checkpoints_e2e_medium_v2/best.pt"
+  pretrained_path: "./checkpoints_e2e_medium/best.pt"
 
   # Must match pretrained model config
   in_channels: 6
@@ -55,7 +55,7 @@ dataset:
   temporal_length: 16  # Will load 17 frames (16+1)
   train_ratio: 0.9
   seed: 42
-  clips_per_sample: 100  # K=100 clips per sample per epoch (方案C)
+  clips_per_sample: 120  # K=100 clips per sample per epoch (方案C)
 
 # Physics parameters
 physics:
@@ -64,7 +64,7 @@ physics:
 
 # DataLoader
 dataloader:
-  batch_size: 4
+  batch_size: 8
   num_workers: 4
   pin_memory: true
 

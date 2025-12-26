@@ -85,7 +85,7 @@ def create_dataloaders(config: dict):
         split='val',
         train_ratio=config['dataset']['train_ratio'],
         seed=config['dataset']['seed'],
-        clips_per_sample=clips_per_sample // 10,  # Fewer clips for validation
+        clips_per_sample=clips_per_sample,  # Fewer clips for validation
     )
 
     batch_size = config['dataloader']['batch_size']

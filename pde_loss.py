@@ -24,7 +24,7 @@ import torch
 def pad_with_boundaries(interior, boundary_left, boundary_right, boundary_bottom, boundary_top):
     """
     使用边界值对内部网格进行padding，外推ghost cells
-    
+
     Parameters:
     -----------
     interior : torch.Tensor [B, T, H, W]
@@ -37,40 +37,43 @@ def pad_with_boundaries(interior, boundary_left, boundary_right, boundary_bottom
         下边界 (y=0)
     boundary_top : torch.Tensor [B, T, 1, W]
         上边界 (y=1)
-    
+
     Returns:
     --------
     padded : torch.Tensor [B, T, H+2, W+2]
         Padding后的网格（包含ghost cells）
+
+    Note:
+        Uses torch.cat instead of index assignment to preserve gradients.
     """
     B, T, H, W = interior.shape
-    
-    # 外推ghost cells
-    ghost_left = 2 * boundary_left.squeeze(-1) - interior[..., 0]
-    ghost_right = 2 * boundary_right.squeeze(-1) - interior[..., -1]
-    ghost_bottom = 2 * boundary_bottom.squeeze(-2) - interior[..., 0, :]
-    ghost_top = 2 * boundary_top.squeeze(-2) - interior[..., -1, :]
-    
-    # 构造padded grid [B, T, H+2, W+2]
-    padded = torch.zeros(B, T, H+2, W+2, device=interior.device, dtype=interior.dtype)
-    
-    # 填充内部 [1:H+1, 1:W+1]
-    padded[:, :, 1:H+1, 1:W+1] = interior
-    
-    # 填充左右ghost columns
-    padded[:, :, 1:H+1, 0] = ghost_left
-    padded[:, :, 1:H+1, W+1] = ghost_right
-    
-    # 填充上下ghost rows
-    padded[:, :, 0, 1:W+1] = ghost_bottom
-    padded[:, :, H+1, 1:W+1] = ghost_top
-    
+
+    # 外推ghost cells [B, T, H] or [B, T, W]
+    ghost_left = 2 * boundary_left.squeeze(-1) - interior[..., 0]      # [B, T, H]
+    ghost_right = 2 * boundary_right.squeeze(-1) - interior[..., -1]   # [B, T, H]
+    ghost_bottom = 2 * boundary_bottom.squeeze(-2) - interior[..., 0, :]  # [B, T, W]
+    ghost_top = 2 * boundary_top.squeeze(-2) - interior[..., -1, :]       # [B, T, W]
+
     # 四个角点
-    padded[:, :, 0, 0] = (ghost_left[:, :, 0] + ghost_bottom[:, :, 0]) / 2
-    padded[:, :, 0, W+1] = (ghost_right[:, :, 0] + ghost_bottom[:, :, -1]) / 2
-    padded[:, :, H+1, 0] = (ghost_left[:, :, -1] + ghost_top[:, :, 0]) / 2
-    padded[:, :, H+1, W+1] = (ghost_right[:, :, -1] + ghost_top[:, :, -1]) / 2
-    
+    corner_bl = (ghost_left[:, :, 0:1] + ghost_bottom[:, :, 0:1]) / 2   # [B, T, 1]
+    corner_br = (ghost_right[:, :, 0:1] + ghost_bottom[:, :, -1:]) / 2  # [B, T, 1]
+    corner_tl = (ghost_left[:, :, -1:] + ghost_top[:, :, 0:1]) / 2      # [B, T, 1]
+    corner_tr = (ghost_right[:, :, -1:] + ghost_top[:, :, -1:]) / 2     # [B, T, 1]
+
+    # 构建中间行（包含左右ghost）: [B, T, H, W+2]
+    ghost_left_col = ghost_left.unsqueeze(-1)    # [B, T, H, 1]
+    ghost_right_col = ghost_right.unsqueeze(-1)  # [B, T, H, 1]
+    middle_rows = torch.cat([ghost_left_col, interior, ghost_right_col], dim=-1)  # [B, T, H, W+2]
+
+    # 构建底部行: [B, T, 1, W+2]
+    bottom_row = torch.cat([corner_bl.unsqueeze(-1), ghost_bottom.unsqueeze(-2), corner_br.unsqueeze(-1)], dim=-1)
+
+    # 构建顶部行: [B, T, 1, W+2]
+    top_row = torch.cat([corner_tl.unsqueeze(-1), ghost_top.unsqueeze(-2), corner_tr.unsqueeze(-1)], dim=-1)
+
+    # 拼接成完整的padded grid: [B, T, H+2, W+2]
+    padded = torch.cat([bottom_row, middle_rows, top_row], dim=-2)
+
     return padded
 
 
