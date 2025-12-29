@@ -97,8 +97,11 @@ def create_pde_model_with_lora(
     model.transformer = get_peft_model(model.transformer, peft_config)
 
     # Re-enable gradient checkpointing on the base model if needed
+    # Use use_reentrant=False for proper gradient flow with LoRA
     if config.get('model', {}).get('gradient_checkpointing', False):
-        model.transformer.base_model.model.gradient_checkpointing_enable()
+        model.transformer.base_model.model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
 
     # Freeze encoder and decoder
     for param in model.encoder_2d.parameters():

@@ -361,10 +361,20 @@ def main():
                 with accelerator.accumulate(model):
                     output = model(input_data)
 
+                    # Debug: check gradient flow (only first step)
+                    if global_step == 0 and accelerator.is_main_process:
+                        logger.info(f"[DEBUG] output.requires_grad: {output.requires_grad}")
+                        logger.info(f"[DEBUG] output.grad_fn: {output.grad_fn}")
+
                     # Compute PDE loss
                     pde_loss, loss_u, loss_v = compute_pde_loss(
                         output, input_data, batch, config, accelerator
                     )
+
+                    # Debug: check loss gradient
+                    if global_step == 0 and accelerator.is_main_process:
+                        logger.info(f"[DEBUG] pde_loss.requires_grad: {pde_loss.requires_grad}")
+                        logger.info(f"[DEBUG] pde_loss.grad_fn: {pde_loss.grad_fn}")
 
                     train_loss = lambda_pde * pde_loss
 
