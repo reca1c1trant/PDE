@@ -84,7 +84,7 @@ training:
 
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1
-  # Note: Validation runs at end of each epoch (no eval_every_steps)
+  eval_interval: 100  # Validate every 100 steps
 
 # Logging
 logging:
