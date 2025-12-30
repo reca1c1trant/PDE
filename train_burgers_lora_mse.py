@@ -147,7 +147,7 @@ def compute_mse_loss(output: torch.Tensor, target: torch.Tensor) -> torch.Tensor
     target_uv = target[..., :2].float()  # [B, 16, H, W, 2]
 
     mse_loss = torch.mean((pred_uv - target_uv) ** 2)
-    return mse_loss
+    return mse_loss*1000
 
 
 def compute_pde_loss(output, input_data, batch, config, accelerator):
