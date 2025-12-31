@@ -7,9 +7,14 @@ Features:
 - LoRA applied to Transformer layers only
 - Encoder and Decoder frozen
 - Validation every 100 steps
+- Resume from checkpoint support
 
 Usage:
+    # Fresh start
     torchrun --nproc_per_node=8 train_burgers_lora_mse.py --config configs/finetune_burgers.yaml
+
+    # Resume from checkpoint
+    torchrun --nproc_per_node=8 train_burgers_lora_mse.py --config configs/finetune_burgers_resume.yaml
 """
 
 import os
@@ -49,7 +54,7 @@ else:
     logging.disable(logging.CRITICAL)
 
 from dataset_burgers import BurgersDataset, BurgersSampler, burgers_collate_fn
-from model_lora import PDELoRAModel, save_lora_checkpoint
+from model_lora import PDELoRAModel, save_lora_checkpoint, load_lora_checkpoint
 from pde_loss import burgers_pde_loss_upwind
 
 logger = logging.getLogger(__name__)
@@ -330,12 +335,58 @@ def main():
     # Training state
     global_step = 0
     best_mse_loss = float('inf')
+    start_epoch = 0
+
+    # Resume from checkpoint if specified
+    resume_path = config.get('resume', {}).get('checkpoint_path', None)
+    reset_scheduler = config.get('resume', {}).get('reset_scheduler', False)
+
+    if resume_path is not None and Path(resume_path).exists():
+        if accelerator.is_main_process:
+            logger.info(f"{'='*60}")
+            logger.info(f"Resuming from checkpoint: {resume_path}")
+            logger.info(f"Reset scheduler: {reset_scheduler}")
+            logger.info(f"{'='*60}")
+
+        # Load checkpoint (need to unwrap model first)
+        unwrapped_model = accelerator.unwrap_model(model)
+
+        # If reset_scheduler=True, don't restore scheduler state
+        checkpoint = load_lora_checkpoint(
+            model=unwrapped_model.model,
+            checkpoint_path=resume_path,
+            optimizer=optimizer,
+            scheduler=None if reset_scheduler else scheduler,
+        )
+
+        # Restore training state
+        global_step = checkpoint.get('global_step', 0)
+        if 'metrics' in checkpoint and 'mse_loss' in checkpoint['metrics']:
+            best_mse_loss = checkpoint['metrics']['mse_loss']
+
+        # Calculate start epoch
+        start_epoch = global_step // steps_per_epoch
+
+        # If reset_scheduler, create new scheduler with new total_steps
+        if reset_scheduler:
+            remaining_steps = total_steps - global_step
+            scheduler = get_lr_scheduler(optimizer, config, total_steps=remaining_steps)
+            if accelerator.is_main_process:
+                logger.info(f"Created new scheduler: warmup + cosine decay for {remaining_steps} steps")
+                logger.info(f"New LR: {config['training']['learning_rate']} -> {config['training'].get('min_lr', 1e-6)}")
+
+        if accelerator.is_main_process:
+            logger.info(f"Resumed from step {global_step}, epoch {start_epoch}")
+            logger.info(f"Best MSE loss so far: {best_mse_loss:.6f}")
+            logger.info(f"{'='*60}")
 
     console = Console()
 
     if accelerator.is_main_process:
         logger.info(f"Steps per epoch: {steps_per_epoch}")
         logger.info(f"Total steps: {total_steps}")
+        if resume_path:
+            logger.info(f"Starting from epoch {start_epoch}, step {global_step}")
 
     model.train()
 
@@ -349,12 +400,22 @@ def main():
         console=console,
         disable=not accelerator.is_main_process,
     ) as progress:
-        train_task = progress.add_task("Training", total=total_steps)
+        train_task = progress.add_task("Training", total=total_steps, completed=global_step)
 
-        for epoch in range(max_epochs):
+        for epoch in range(start_epoch, max_epochs):
             train_sampler.set_epoch(epoch)
 
+            # Calculate how many steps to skip in this epoch (for resume)
+            steps_done_in_epoch = global_step - epoch * steps_per_epoch if epoch == start_epoch else 0
+            batch_idx = 0
+
             for batch in train_loader:
+                # Skip already processed batches (for resume)
+                if batch_idx < steps_done_in_epoch:
+                    batch_idx += 1
+                    continue
+                batch_idx += 1
+
                 data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
 
                 input_data = data[:, :-1]   # [B, 16, H, W, 6]
