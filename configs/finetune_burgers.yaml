@@ -70,7 +70,7 @@ dataloader:
 
 # Training
 training:
-  max_epochs: 10  # Epoch-based training with balanced sampling
+  max_epochs: 20  # Epoch-based training with balanced sampling
   warmup_steps: 100
   learning_rate: 1.0e-4
   min_lr: 1.0e-6
@@ -90,5 +90,5 @@ training:
 logging:
   project: "pde-burgers-lora"
   entity: "reca1c1trant-ntu"  # Update with your wandb entity
-  save_dir: "./checkpoints_burgers_lora"
+  save_dir: "./checkpoints_burgers_lora_v2"
   log_interval: 10
