@@ -213,7 +213,7 @@ def main():
         split='val',
         train_ratio=0.9,
         seed=42,
-        clips_per_sample=120,  # Same as training
+        clips_per_sample=None,  # Use all available clips for evaluation
     )
 
     batch_size = 8

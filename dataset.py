@@ -66,15 +66,20 @@ class PDEDataset(Dataset):
         split: str = 'train',
         train_ratio: float = 0.9,
         seed: int = 42,
-        clips_per_sample: int = 88,
+        clips_per_sample: Optional[int] = 88,
     ):
+        """
+        Args:
+            clips_per_sample: Number of clips per sample per epoch.
+                              If None, use all available clips (for validation).
+        """
         super().__init__()
         self.data_dir = Path(data_dir)
         self.temporal_length = temporal_length + 1  # 17 frames for causal AR
         self.split = split
         self.train_ratio = train_ratio
         self.seed = seed
-        self.clips_per_sample = clips_per_sample
+        self.clips_per_sample = clips_per_sample  # None means use all
 
         # Build index: stores (file_path, sample_key, dim_type, total_timesteps)
         self.samples: List[Tuple[Path, str, str, int]] = []
@@ -87,8 +92,9 @@ class PDEDataset(Dataset):
         self.epoch = 0
         self._generate_clips()
 
+        clips_info = "all" if clips_per_sample is None else str(clips_per_sample)
         logger.info(f"PDEDataset ({split}): {len(self.samples)} samples, "
-                   f"{self.clips_per_sample} clips/sample, {len(self.clips)} total clips/epoch")
+                   f"{clips_info} clips/sample, {len(self.clips)} total clips")
         self._log_statistics()
 
     def _build_index(self):
@@ -171,7 +177,9 @@ class PDEDataset(Dataset):
     def _generate_clips(self):
         """
         Generate clips for current epoch.
-        Each sample contributes exactly clips_per_sample clips.
+
+        If clips_per_sample is set: each sample contributes exactly K clips (random sampling).
+        If clips_per_sample is None: each sample contributes ALL available clips.
 
         Clips are stored grouped by sample for same-sample batching.
         """
@@ -183,12 +191,17 @@ class PDEDataset(Dataset):
         clip_idx = 0
         for sample_idx, (_, _, _, total_t) in enumerate(self.samples):
             max_start = total_t - self.temporal_length
+            num_available = max_start + 1
 
-            # Sample K start times (with replacement if K > max_start + 1)
-            if self.clips_per_sample <= max_start + 1:
-                starts = rng.choice(max_start + 1, self.clips_per_sample, replace=False)
+            if self.clips_per_sample is None:
+                # Use ALL available clips (for validation)
+                starts = list(range(num_available))
             else:
-                starts = rng.choice(max_start + 1, self.clips_per_sample, replace=True)
+                # Sample K start times (with replacement if K > num_available)
+                if self.clips_per_sample <= num_available:
+                    starts = rng.choice(num_available, self.clips_per_sample, replace=False)
+                else:
+                    starts = rng.choice(num_available, self.clips_per_sample, replace=True)
 
             self.clips_by_sample[sample_idx] = []
             for start_t in starts:
@@ -322,8 +335,9 @@ class DimensionGroupedSampler(Sampler):
         self.seed = seed
         self.epoch = 0
 
-        # Validate: clips_per_sample must be divisible by batch_size
-        if dataset.clips_per_sample % batch_size != 0:
+        # Validate: clips_per_sample must be divisible by batch_size (only when fixed K)
+        # When clips_per_sample is None (use all), skip this check - incomplete batches are dropped
+        if dataset.clips_per_sample is not None and dataset.clips_per_sample % batch_size != 0:
             raise ValueError(
                 f"clips_per_sample ({dataset.clips_per_sample}) must be "
                 f"divisible by batch_size ({batch_size})"
@@ -349,11 +363,12 @@ class DimensionGroupedSampler(Sampler):
         self._compute_batches()
 
         if rank == 0:
+            clips_info = "all" if dataset.clips_per_sample is None else str(dataset.clips_per_sample)
             logger.info("DimensionGroupedSampler initialized:")
             for dim_type, indices in self.dim_groups.items():
                 if len(indices) > 0:
                     logger.info(f"  {dim_type}: {len(indices)} samples")
-            logger.info(f"  Clips per sample: {dataset.clips_per_sample}")
+            logger.info(f"  Clips per sample: {clips_info}")
             logger.info(f"  Batch size: {batch_size}")
             logger.info(f"  Total batches: {len(self._all_batches)}, per rank: {self.num_batches_per_rank}")
             logger.info(f"  Each batch from same sample: YES")

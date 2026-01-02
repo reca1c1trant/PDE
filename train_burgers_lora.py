@@ -79,13 +79,14 @@ def create_dataloaders(config: dict):
         clips_per_sample=clips_per_sample,
     )
 
+    # Validation uses ALL clips (clips_per_sample=None)
     val_dataset = BurgersDataset(
         data_path=config['dataset']['path'],
         temporal_length=config['dataset']['temporal_length'],
         split='val',
         train_ratio=config['dataset']['train_ratio'],
         seed=config['dataset']['seed'],
-        clips_per_sample=clips_per_sample,  # Fewer clips for validation
+        clips_per_sample=None,  # Use all available clips for validation
     )
 
     batch_size = config['dataloader']['batch_size']
