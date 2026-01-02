@@ -123,12 +123,15 @@ def load_config(config_path: str) -> dict:
 
 
 def create_dataloaders(config: dict):
+    clips_per_sample = config['dataset'].get('clips_per_sample', 88)
+
     train_dataset = PDEDataset(
         data_dir=config['dataset']['path'],
         temporal_length=config['dataset']['temporal_length'],
         split='train',
         train_ratio=config['dataset']['train_ratio'],
-        seed=config['dataset']['seed']
+        seed=config['dataset']['seed'],
+        clips_per_sample=clips_per_sample
     )
 
     val_dataset = PDEDataset(
@@ -136,15 +139,15 @@ def create_dataloaders(config: dict):
         temporal_length=config['dataset']['temporal_length'],
         split='val',
         train_ratio=config['dataset']['train_ratio'],
-        seed=config['dataset']['seed']
+        seed=config['dataset']['seed'],
+        clips_per_sample=clips_per_sample
     )
 
     batch_size = config['dataloader']['batch_size']
     seed = config['dataset']['seed']
-    same_sample = config['dataloader'].get('same_sample_per_batch', False)
 
-    train_sampler = DimensionGroupedSampler(train_dataset, batch_size, shuffle=True, seed=seed, same_sample_per_batch=same_sample)
-    val_sampler = DimensionGroupedSampler(val_dataset, batch_size, shuffle=False, seed=seed, same_sample_per_batch=False)
+    train_sampler = DimensionGroupedSampler(train_dataset, batch_size, shuffle=True, seed=seed)
+    val_sampler = DimensionGroupedSampler(val_dataset, batch_size, shuffle=False, seed=seed)
 
     train_loader = DataLoader(
         train_dataset,

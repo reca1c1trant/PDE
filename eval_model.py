@@ -1,5 +1,5 @@
 """
-Evaluate pretrained model and LoRA finetuned model on Burgers validation set.
+Evaluate and compare two LoRA finetuned models on Burgers validation set.
 
 Metrics:
 - PDE loss (burgers_pde_loss_upwind)
@@ -7,7 +7,7 @@ Metrics:
 - MSE
 
 Usage:
-    python eval_models.py
+    python eval_model.py
 """
 
 import torch
@@ -152,11 +152,17 @@ def evaluate_model(model, val_loader, device, model_name="Model"):
 def main():
     # Paths
     pretrained_path = "./checkpoints_e2e_medium/best.pt"
-    lora_path = "./checkpoints_burgers_lora/best_lora.pt"
+    lora_path_v1 = "./checkpoints_burgers_lora/best_lora.pt"
+    lora_path_v2 = "./checkpoints_burgers_lora_v2/best_lora.pt"
     data_path = "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
 
     # Check paths
-    for path, name in [(pretrained_path, "Pretrained"), (lora_path, "LoRA"), (data_path, "Data")]:
+    for path, name in [
+        (pretrained_path, "Pretrained"),
+        (lora_path_v1, "LoRA v1"),
+        (lora_path_v2, "LoRA v2"),
+        (data_path, "Data")
+    ]:
         if not Path(path).exists():
             print(f"ERROR: {name} not found: {path}")
             return
@@ -222,37 +228,38 @@ def main():
 
     print(f"\nValidation set: {len(val_dataset)} clips, {len(val_sampler)} batches")
 
-    # Evaluate pretrained model
+    # Evaluate LoRA v1 model
     print("\n" + "="*60)
-    print("Loading Pretrained Model...")
+    print("Loading LoRA v1 Model...")
     print("="*60)
-    pretrained_model = load_pretrained_model(pretrained_path, config, device)
-    pretrained_results = evaluate_model(pretrained_model, val_loader, device, "Pretrained")
-    del pretrained_model
+    lora_v1_model = load_lora_model(pretrained_path, lora_path_v1, config, device)
+    lora_v1_results = evaluate_model(lora_v1_model, val_loader, device, "LoRA v1")
+    del lora_v1_model
     torch.cuda.empty_cache()
 
-    # Evaluate LoRA model
+    # Evaluate LoRA v2 model
     print("\n" + "="*60)
-    print("Loading LoRA Finetuned Model...")
+    print("Loading LoRA v2 Model...")
     print("="*60)
-    lora_model = load_lora_model(pretrained_path, lora_path, config, device)
-    lora_results = evaluate_model(lora_model, val_loader, device, "LoRA Finetuned")
-    del lora_model
+    lora_v2_model = load_lora_model(pretrained_path, lora_path_v2, config, device)
+    lora_v2_results = evaluate_model(lora_v2_model, val_loader, device, "LoRA v2")
+    del lora_v2_model
     torch.cuda.empty_cache()
 
     # Print results
     print("\n" + "="*60)
     print("RESULTS")
     print("="*60)
-    print(f"{'Metric':<15} {'Pretrained':>15} {'LoRA Finetuned':>15} {'Improvement':>15}")
+    print(f"{'Metric':<15} {'LoRA v1':>15} {'LoRA v2':>15} {'v2 vs v1':>15}")
     print("-"*60)
 
     for metric in ['mse', 'rmse', 'pde_loss']:
-        pre_val = pretrained_results[metric]
-        lora_val = lora_results[metric]
-        improvement = (pre_val - lora_val) / pre_val * 100 if pre_val != 0 else 0
+        v1_val = lora_v1_results[metric]
+        v2_val = lora_v2_results[metric]
+        # Negative improvement means v2 is better (lower is better for all metrics)
+        improvement = (v1_val - v2_val) / v1_val * 100 if v1_val != 0 else 0
 
-        print(f"{metric.upper():<15} {pre_val:>15.6f} {lora_val:>15.6f} {improvement:>14.2f}%")
+        print(f"{metric.upper():<15} {v1_val:>15.6f} {v2_val:>15.6f} {improvement:>14.2f}%")
 
     print("="*60)
 

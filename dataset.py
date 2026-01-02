@@ -1,6 +1,11 @@
 """
 PDE Dataset Implementation with Dimension Grouping and Scalar/Vector Separation
 Supports 1D, 2D, and 3D PDE data with efficient lazy loading.
+
+Sampling Strategy:
+- Each sample contributes K clips per epoch (clips_per_sample)
+- Each batch contains clips from the SAME sample only
+- Ensures balanced usage across all samples
 """
 
 import h5py
@@ -18,89 +23,100 @@ logger = logging.getLogger(__name__)
 class PDEDataset(Dataset):
     """
     Dataset for PDE data with mixed dimensions (1D/2D/3D) and scalar/vector separation.
-    
+
     Data format:
         - scalar: [T, *spatial, C_s] where C_s ∈ [0, 3] (pressure, density, temperature, etc.)
         - vector: [T, *spatial, C_v] where C_v ∈ [1, 3] (velocity components)
-        
+
     Spatial dimensions:
         - 1D: H=1024
         - 2D: H=W=128
         - 3D: H=W=D=128
-    
+
     Output:
         - data: [T, *spatial, 6] where channels are [vx, vy, vz, p, ρ, T]
                 First 3 channels: vector (padded to 3)
                 Last 3 channels: scalar (padded to 3)
         - channel_mask: [6] indicating which channels are real (1) vs padded (0)
-    
+
+    Sampling Strategy:
+        - Each sample contributes exactly `clips_per_sample` clips per epoch
+        - Clips are stored grouped by sample for same-sample batching
+        - Each epoch regenerates clips with new random start times
+
     Args:
         data_dir (str): Directory containing .h5 files
         temporal_length (int): Number of temporal steps to sample (default: 16)
         split (str): 'train' or 'val'
         train_ratio (float): Ratio of training data (default: 0.9)
         seed (int): Random seed for train/val split
+        clips_per_sample (int): Number of clips per sample per epoch (default: 88)
     """
-    
+
     SPATIAL_DIMS = {
         '1D': (1024,),
         '2D': (128, 128),
         '3D': (128, 128, 128)
     }
-    
+
     def __init__(
         self,
         data_dir: str,
         temporal_length: int = 16,
         split: str = 'train',
         train_ratio: float = 0.9,
-        seed: int = 42
+        seed: int = 42,
+        clips_per_sample: int = 88,
     ):
         super().__init__()
         self.data_dir = Path(data_dir)
-        self.temporal_length = temporal_length+1
+        self.temporal_length = temporal_length + 1  # 17 frames for causal AR
         self.split = split
         self.train_ratio = train_ratio
         self.seed = seed
-        
+        self.clips_per_sample = clips_per_sample
+
         # Build index: stores (file_path, sample_key, dim_type, total_timesteps)
         self.samples: List[Tuple[Path, str, str, int]] = []
         self._build_index()
-        
+
         # Split into train/val
         self._split_dataset()
-        
-        logger.info(f"Loaded {len(self.samples)} samples for {split} set")
+
+        # Generate initial clips
+        self.epoch = 0
+        self._generate_clips()
+
+        logger.info(f"PDEDataset ({split}): {len(self.samples)} samples, "
+                   f"{self.clips_per_sample} clips/sample, {len(self.clips)} total clips/epoch")
         self._log_statistics()
-    
+
     def _build_index(self):
         """Build index of all samples across all h5 files."""
         h5_files = sorted(self.data_dir.glob("*.hdf5"))
-        
 
-        
         if not h5_files:
             raise ValueError(f"No .hdf5 files found in {self.data_dir}")
-        
+
         logger.info(f"Found {len(h5_files)} hdf5 files")
-        
+
         for file_path in h5_files:
             with h5py.File(file_path, 'r') as f:
                 for sample_key in f.keys():
                     # Use vector to infer dimension (vector is guaranteed non-empty)
                     vector_shape = f[sample_key]['vector'].shape
                     scalar_shape = f[sample_key]['scalar'].shape
-                    
+
                     # Verify spatial dimensions match (if scalar not empty)
                     if scalar_shape[-1] > 0:
                         assert scalar_shape[:-1] == vector_shape[:-1], \
                             f"Spatial dims mismatch in {file_path}:{sample_key} - " \
                             f"scalar {scalar_shape[:-1]} vs vector {vector_shape[:-1]}"
-                    
+
                     # Infer dimension type from vector
                     dim_type = self._infer_dim_type(vector_shape)
                     total_timesteps = vector_shape[0]
-                    
+
                     # Only add if enough temporal steps
                     if total_timesteps >= self.temporal_length:
                         self.samples.append((
@@ -114,14 +130,14 @@ class PDEDataset(Dataset):
                             f"Skipping {file_path}:{sample_key} - "
                             f"only {total_timesteps} timesteps (need {self.temporal_length})"
                         )
-    
+
     def _infer_dim_type(self, shape: Tuple[int, ...]) -> str:
         """
         Infer dimension type from data shape.
         Shape format: [T, *spatial, C]
         """
         ndim = len(shape) - 2  # Exclude T and C
-        
+
         if ndim == 1:
             assert shape[1] == self.SPATIAL_DIMS['1D'][0], \
                 f"1D data should have H={self.SPATIAL_DIMS['1D'][0]}, got {shape[1]}"
@@ -136,128 +152,159 @@ class PDEDataset(Dataset):
             return '3D'
         else:
             raise ValueError(f"Unsupported data shape: {shape}")
-    
+
     def _split_dataset(self):
         """Split samples into train and validation sets."""
         np.random.seed(self.seed)
         indices = np.random.permutation(len(self.samples))
         split_idx = int(len(self.samples) * self.train_ratio)
-        
+
         if self.split == 'train':
             selected_indices = indices[:split_idx]
         elif self.split == 'val':
             selected_indices = indices[split_idx:]
         else:
             raise ValueError(f"Unknown split: {self.split}")
-        
+
         self.samples = [self.samples[i] for i in selected_indices]
-    
+
+    def _generate_clips(self):
+        """
+        Generate clips for current epoch.
+        Each sample contributes exactly clips_per_sample clips.
+
+        Clips are stored grouped by sample for same-sample batching.
+        """
+        rng = np.random.RandomState(self.seed + self.epoch)
+
+        self.clips = []  # List of (sample_idx, start_t)
+        self.clips_by_sample: Dict[int, List[int]] = {}  # sample_idx -> list of clip indices
+
+        clip_idx = 0
+        for sample_idx, (_, _, _, total_t) in enumerate(self.samples):
+            max_start = total_t - self.temporal_length
+
+            # Sample K start times (with replacement if K > max_start + 1)
+            if self.clips_per_sample <= max_start + 1:
+                starts = rng.choice(max_start + 1, self.clips_per_sample, replace=False)
+            else:
+                starts = rng.choice(max_start + 1, self.clips_per_sample, replace=True)
+
+            self.clips_by_sample[sample_idx] = []
+            for start_t in starts:
+                self.clips.append((sample_idx, int(start_t)))
+                self.clips_by_sample[sample_idx].append(clip_idx)
+                clip_idx += 1
+
+        # NOTE: Do NOT shuffle here. DimensionGroupedSampler handles shuffling.
+
+    def set_epoch(self, epoch: int):
+        """Set epoch for reproducible shuffling. Call before each epoch."""
+        self.epoch = epoch
+        self._generate_clips()
+
     def _log_statistics(self):
         """Log dataset statistics."""
         dim_counts = {'1D': 0, '2D': 0, '3D': 0}
         for _, _, dim_type, _ in self.samples:
             dim_counts[dim_type] += 1
-        
+
         logger.info(f"Dataset statistics ({self.split}):")
         for dim_type, count in dim_counts.items():
-            logger.info(f"  {dim_type}: {count} samples")
-    
+            if count > 0:
+                logger.info(f"  {dim_type}: {count} samples")
+
     def _pad_to_3_channels(self, data: np.ndarray) -> Tuple[np.ndarray, int]:
         """
         Pad data to 3 channels along last dimension.
-        
-        Args:
-            data: Array with shape [..., C] where C ∈ [0, 3]
-        
-        Returns:
-            padded: Array with shape [..., 3]
-            n_real: Number of real channels (before padding)
-        
-        Examples:
-            - [..., 2] → [..., 3] by padding [0] at the end
-            - [..., 0] → [..., 3] by creating full zeros
-            - [..., 3] → [..., 3] unchanged
         """
         C = data.shape[-1]
-        
-        if C == 0:  # Empty array
-            # Create full zeros with same shape but C=3
+
+        if C == 0:
             padded = np.zeros((*data.shape[:-1], 3), dtype=np.float32)
             n_real = 0
         elif C < 3:
-            # Pad at the end of last dimension
             pad_width = [(0, 0)] * (data.ndim - 1) + [(0, 3 - C)]
             padded = np.pad(data, pad_width, mode='constant', constant_values=0)
             n_real = C
-        else:  # C == 3
+        else:
             padded = data.astype(np.float32)
             n_real = 3
-        
+
         return padded, n_real
-    
+
     def __len__(self) -> int:
-        return len(self.samples)
-    
+        return len(self.clips)
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
         Returns a dictionary containing:
             - data: [T, *spatial, 6] with channels [vx, vy, vz, p, ρ, T]
             - channel_mask: [6] indicating real (1) vs padded (0) channels
-        
-        Randomly samples consecutive temporal steps.
+
+        Uses pre-generated clip (sample_idx, start_t) from _generate_clips().
         """
-        file_path, sample_key, dim_type, total_timesteps = self.samples[idx]
-        
-        # Randomly select starting temporal index
-        max_start = total_timesteps - self.temporal_length
-        start_t = np.random.randint(0, max_start + 1) if max_start > 0 else 0
+        sample_idx, start_t = self.clips[idx]
+        file_path, sample_key, dim_type, total_timesteps = self.samples[sample_idx]
+
         end_t = start_t + self.temporal_length
-        
+
         # Load data lazily
         with h5py.File(file_path, 'r') as f:
             scalar = np.array(f[sample_key]['scalar'][start_t:end_t], dtype=np.float32)
             vector = np.array(f[sample_key]['vector'][start_t:end_t], dtype=np.float32)
-        
+
         # Pad to 3 channels each
         scalar_padded, n_scalar = self._pad_to_3_channels(scalar)
         vector_padded, n_vector = self._pad_to_3_channels(vector)
-        
+
         # Concatenate: [vector (3), scalar (3)]
-        # Channels: [vx, vy, vz, p, ρ, T]
         data = np.concatenate([vector_padded, scalar_padded], axis=-1)
-        
+
         # Convert to torch tensor
         data_tensor = torch.from_numpy(data)
-        
+
         # Create channel mask
         channel_mask = torch.zeros(6, dtype=torch.float32)
-        channel_mask[:n_vector] = 1.0  # First 3 channels for vector
-        channel_mask[3:3+n_scalar] = 1.0  # Last 3 channels for scalar
-        
+        channel_mask[:n_vector] = 1.0
+        channel_mask[3:3+n_scalar] = 1.0
+
         return {
             'data': data_tensor,
             'channel_mask': channel_mask
         }
-    
+
     def get_dim_type(self, idx: int) -> str:
-        """Get dimension type for a sample."""
-        return self.samples[idx][2]
+        """Get dimension type for a clip."""
+        sample_idx, _ = self.clips[idx]
+        return self.samples[sample_idx][2]
+
+    def get_sample_idx(self, clip_idx: int) -> int:
+        """Get sample index for a clip."""
+        return self.clips[clip_idx][0]
 
 
 class DimensionGroupedSampler(Sampler):
     """
     Distributed-compatible sampler that groups samples by dimension type.
-    Ensures each batch contains only samples of the same dimension.
+
+    IMPORTANT: Ensures each batch contains clips from the SAME sample only.
+    This is critical for consistent training where all items in a batch
+    come from the same physical simulation.
+
+    Sampling logic:
+    1. Group samples by dimension (1D/2D/3D)
+    2. For each dimension group, shuffle sample order
+    3. For each sample, shuffle its K clips, then divide into batches
+    4. Result: each batch contains clips from one sample only
 
     Args:
         dataset (PDEDataset): The dataset to sample from
         batch_size (int): Batch size per GPU
-        shuffle (bool): Whether to shuffle within each dimension group
-        num_replicas (int): Number of distributed processes (default: auto-detect)
-        rank (int): Current process rank (default: auto-detect)
+        shuffle (bool): Whether to shuffle
+        num_replicas (int): Number of distributed processes
+        rank (int): Current process rank
         seed (int): Random seed for shuffling
-        same_sample_per_batch (bool): If True, each batch contains the same sample
-                                      repeated batch_size times (different start_t)
     """
 
     def __init__(
@@ -268,14 +315,19 @@ class DimensionGroupedSampler(Sampler):
         num_replicas: Optional[int] = None,
         rank: Optional[int] = None,
         seed: int = 42,
-        same_sample_per_batch: bool = False
     ):
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
         self.epoch = 0
-        self.same_sample_per_batch = same_sample_per_batch
+
+        # Validate: clips_per_sample must be divisible by batch_size
+        if dataset.clips_per_sample % batch_size != 0:
+            raise ValueError(
+                f"clips_per_sample ({dataset.clips_per_sample}) must be "
+                f"divisible by batch_size ({batch_size})"
+            )
 
         # Auto-detect distributed settings
         if num_replicas is None:
@@ -288,71 +340,79 @@ class DimensionGroupedSampler(Sampler):
         self.num_replicas = num_replicas
         self.rank = rank
 
-        # Group indices by dimension type
+        # Group sample indices by dimension type
         self.dim_groups: Dict[str, List[int]] = {'1D': [], '2D': [], '3D': []}
-        for idx in range(len(dataset)):
-            dim_type = dataset.get_dim_type(idx)
-            self.dim_groups[dim_type].append(idx)
+        for sample_idx, (_, _, dim_type, _) in enumerate(dataset.samples):
+            self.dim_groups[dim_type].append(sample_idx)
 
-        # Pre-compute total batches (for __len__)
+        # Pre-compute batches
         self._compute_batches()
 
         if rank == 0:
-            logger.info("Dimension groups for sampling:")
+            logger.info("DimensionGroupedSampler initialized:")
             for dim_type, indices in self.dim_groups.items():
-                logger.info(f"  {dim_type}: {len(indices)} samples")
-            logger.info(f"Batch mode: {'same_sample' if same_sample_per_batch else 'different_samples'}")
-            logger.info(f"Distributed: {num_replicas} replicas, {len(self._all_batches)} total batches, {self.num_batches_per_rank} per rank")
+                if len(indices) > 0:
+                    logger.info(f"  {dim_type}: {len(indices)} samples")
+            logger.info(f"  Clips per sample: {dataset.clips_per_sample}")
+            logger.info(f"  Batch size: {batch_size}")
+            logger.info(f"  Total batches: {len(self._all_batches)}, per rank: {self.num_batches_per_rank}")
+            logger.info(f"  Each batch from same sample: YES")
 
     def _compute_batches(self):
-        """Pre-compute all batches and distribute across ranks."""
-        # Use fixed seed for deterministic batch creation
+        """
+        Compute batches ensuring each batch contains clips from same sample.
+
+        Process:
+        1. For each dimension group, shuffle sample order
+        2. For each sample: shuffle its clips, then divide into batches
+        3. Each batch = batch_size clips from ONE sample
+        """
         rng = np.random.RandomState(self.seed + self.epoch)
 
         batches = []
-        for _, indices in self.dim_groups.items():
-            if len(indices) == 0:
+        for dim_type, sample_indices in self.dim_groups.items():
+            if len(sample_indices) == 0:
                 continue
 
-            # Shuffle within dimension group
+            # Shuffle sample order within this dimension
             if self.shuffle:
-                indices = rng.permutation(indices).tolist()
+                sample_indices = rng.permutation(sample_indices).tolist()
             else:
-                indices = list(indices)
+                sample_indices = list(sample_indices)
 
-            if self.same_sample_per_batch:
-                # 同一样本重复batch_size次，__getitem__会随机取不同start_t
-                for idx in indices:
-                    batch = [idx] * self.batch_size
-                    batches.append(batch)
-            else:
-                # 原逻辑：不同样本组成batch
-                if len(indices) < self.batch_size:
-                    continue
-                num_full_batches = len(indices) // self.batch_size
-                for i in range(num_full_batches):
-                    start = i * self.batch_size
-                    end = start + self.batch_size
-                    batch = indices[start:end]
-                    batches.append(batch)
+            for sample_idx in sample_indices:
+                # Get this sample's clip indices
+                clip_indices = list(self.dataset.clips_by_sample[sample_idx])
 
+                # Shuffle clips within this sample
+                if self.shuffle:
+                    rng.shuffle(clip_indices)
+
+                # Divide into batches (all clips in a batch are from same sample)
+                for i in range(0, len(clip_indices), self.batch_size):
+                    batch = clip_indices[i:i + self.batch_size]
+                    if len(batch) == self.batch_size:
+                        batches.append(batch)
+
+        # Shuffle all batches across dimensions
         if self.shuffle:
             rng.shuffle(batches)
 
         self._all_batches = batches
+        self.num_batches_per_rank = len(batches) // self.num_replicas
 
-        # Ensure all ranks have same number of batches (drop extras)
-        total_batches = len(batches)
-        self.num_batches_per_rank = total_batches // self.num_replicas
+        if self.rank == 0:
+            logger.info(f"DimensionGroupedSampler: {len(batches)} batches total, "
+                       f"{self.num_batches_per_rank} per rank")
 
     def set_epoch(self, epoch: int):
-        """Set epoch for shuffling (call before each epoch)."""
+        """Set epoch for shuffling. Also updates dataset's epoch."""
         self.epoch = epoch
+        self.dataset.set_epoch(epoch)
         self._compute_batches()
 
     def __iter__(self):
         """Generate batches for this rank only."""
-        # Each rank gets a subset of batches
         start_idx = self.rank * self.num_batches_per_rank
         end_idx = start_idx + self.num_batches_per_rank
 
@@ -367,20 +427,10 @@ class DimensionGroupedSampler(Sampler):
 def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     """
     Collate function that stacks batch of dicts.
-    
-    Args:
-        batch: List of dicts with keys ['data', 'channel_mask']
-               - data: [T, *spatial, 6]
-               - channel_mask: [6]
-    
-    Returns:
-        Dict with:
-            - data: [B, T, *spatial, 6]
-            - channel_mask: [B, 6]
     """
     data = torch.stack([item['data'] for item in batch], dim=0)
     channel_mask = torch.stack([item['channel_mask'] for item in batch], dim=0)
-    
+
     return {
         'data': data,
         'channel_mask': channel_mask
@@ -388,86 +438,55 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
 
 
 if __name__ == "__main__":
-    """
-    Debug script to test dataset and dataloader.
-    """
-    # Example usage
-    data_dir = "/home/msai/song0304/code/PDE/data"  # Change this
-    
-    # Create datasets
+    """Test dataset and sampling."""
+    data_dir = "/home/msai/song0304/code/PDE/data"
+
+    # Test dataset
+    batch_size = 8
+    clips_per_sample = 88  # Must be divisible by batch_size
+
     train_dataset = PDEDataset(
         data_dir=data_dir,
         temporal_length=16,
         split='train',
         train_ratio=0.9,
-        seed=42
+        seed=42,
+        clips_per_sample=clips_per_sample
     )
-    
-    val_dataset = PDEDataset(
-        data_dir=data_dir,
-        temporal_length=16,
-        split='val',
-        train_ratio=0.9,
-        seed=42
-    )
-    
-    # Create samplers
-    train_sampler = DimensionGroupedSampler(
-        dataset=train_dataset,
-        batch_size=16,
-        shuffle=True
-    )
-    
-    val_sampler = DimensionGroupedSampler(
-        dataset=val_dataset,
-        batch_size=16,
-        shuffle=False
-    )
-    
-    # Create dataloaders
-    from torch.utils.data import DataLoader
-    
-    train_loader = DataLoader(
-        train_dataset,
-        batch_sampler=train_sampler,
-        collate_fn=collate_fn,
-        num_workers=4,
-        pin_memory=True
-    )
-    
-    val_loader = DataLoader(
-        val_dataset,
-        batch_sampler=val_sampler,
-        collate_fn=collate_fn,
-        num_workers=4,
-        pin_memory=True
-    )
-    
-    # Test loading
-    logger.info("\n" + "="*50)
-    logger.info("Testing data loading...")
-    logger.info("="*50)
-    
-    for i, batch in enumerate(train_loader):
-        logger.info(f"\nBatch {i+1}:")
-        logger.info(f"  Data shape: {batch['data'].shape}")
-        logger.info(f"  Data dtype: {batch['data'].dtype}")
-        logger.info(f"  Data device: {batch['data'].device}")
-        logger.info(f"  Channel mask shape: {batch['channel_mask'].shape}")
-        # logger.info(f"  Channel mask:\n{batch['channel_mask']}")
-        
-        # Show channel-wise statistics
-        data = batch['data']
-        logger.info(f"\n  Channel-wise statistics:")
-        channel_names = ['vx', 'vy', 'vz', 'scalar_1', 'scalar_2', 'scalar_3']
-        for ch_idx, ch_name in enumerate(channel_names):
-            ch_data = data[..., ch_idx]
-            logger.info(f"    {ch_name}: min={ch_data.min():.4f}, max={ch_data.max():.4f}, "
-                       f"mean={ch_data.mean():.4f}, std={ch_data.std():.4f}")
-        
-        if i >= 2:  # Only show first 3 batches
-            break
-    
-    logger.info("\n" + "="*50)
-    logger.info("Data loading test completed successfully!")
-    logger.info("="*50)
+
+    print(f"\n{'='*60}")
+    print(f"Dataset Statistics")
+    print(f"{'='*60}")
+    print(f"Number of samples: {len(train_dataset.samples)}")
+    print(f"Clips per sample: {train_dataset.clips_per_sample}")
+    print(f"Total clips: {len(train_dataset)}")
+
+    # Test sampler
+    print(f"\n{'='*60}")
+    print(f"Same-Sample Batching Test")
+    print(f"{'='*60}")
+    sampler = DimensionGroupedSampler(train_dataset, batch_size=batch_size, shuffle=True, seed=42)
+
+    # Verify each batch contains clips from same sample
+    all_same_sample = True
+    for batch_idx, batch in enumerate(sampler):
+        sample_indices_in_batch = set()
+        for clip_idx in batch:
+            sample_idx = train_dataset.get_sample_idx(clip_idx)
+            sample_indices_in_batch.add(sample_idx)
+
+        if len(sample_indices_in_batch) != 1:
+            print(f"ERROR: Batch {batch_idx} has clips from multiple samples: {sample_indices_in_batch}")
+            all_same_sample = False
+
+        if batch_idx < 3:
+            sample_idx = list(sample_indices_in_batch)[0]
+            start_times = [train_dataset.clips[clip_idx][1] for clip_idx in batch]
+            print(f"Batch {batch_idx}: sample={sample_idx}, start_times={start_times}")
+
+    if all_same_sample:
+        print(f"\n✓ All {len(sampler)} batches contain clips from same sample only!")
+    else:
+        print(f"\n✗ Some batches have mixed samples!")
+
+    print("\nDataset test passed!")

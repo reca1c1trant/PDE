@@ -10,13 +10,13 @@ dataset:
   temporal_length: 16
   train_ratio: 0.9
   seed: 42
+  clips_per_sample: 88  # 101 - 17 + 1 = 85 max starts, use 88 with some replacement
 
 # DataLoader
 dataloader:
   batch_size: 8
   num_workers: 4
   pin_memory: true
-  same_sample_per_batch: true
 
 # Model
 model:

@@ -3,7 +3,7 @@
 
 # Resume settings
 resume:
-  checkpoint_path: "./checkpoints_burgers_lora_v2/best_lora.pt"
+  checkpoint_path: "./checkpoints_burgers_lora/best_lora.pt"
   reset_scheduler: true  # Reset LR scheduler with new warmup
 
 # Model (must match original training)
@@ -66,11 +66,11 @@ dataloader:
 
 # Training - extended epochs with new LR
 training:
-  max_epochs: 40  # Extended from 20 to 40
+  max_epochs: 20  # Extended from 20 to 40
   warmup_steps: 100  # New warmup from 1e-5
   learning_rate: 1.0e-5  # Start from 1e-5 (previous min was 1e-6)
-  min_lr: 1.0e-6
-  weight_decay: 1.0e-4
+  min_lr: 1.0e-7
+  weight_decay: 1.0e-5
   betas: [0.9, 0.999]
   grad_clip: 1.0
 
