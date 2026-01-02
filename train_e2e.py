@@ -123,7 +123,7 @@ def load_config(config_path: str) -> dict:
 
 
 def create_dataloaders(config: dict):
-    clips_per_sample = config['dataset'].get('clips_per_sample', 88)
+    clips_per_sample = config['dataset'].get('clips_per_sample', 80)
 
     train_dataset = PDEDataset(
         data_dir=config['dataset']['path'],
@@ -166,28 +166,23 @@ def create_dataloaders(config: dict):
         pin_memory=config['dataloader']['pin_memory']
     )
 
-    return train_loader, val_loader
+    return train_loader, val_loader, train_sampler, val_sampler
 
 
-def infinite_dataloader(dataloader):
-    while True:
-        for batch in dataloader:
-            yield batch
-
-
-def get_lr_scheduler(optimizer, config):
+def get_lr_scheduler(optimizer, config, total_steps: int):
+    """Create learning rate scheduler with warmup and cosine decay."""
     from torch.optim.lr_scheduler import LambdaLR
+    import math
 
     warmup_steps = config['training'].get('warmup_steps', 200)
-    max_steps = config['training']['max_steps']
     min_lr_ratio = config['training'].get('min_lr', 1e-6) / config['training']['learning_rate']
 
     def lr_lambda(step):
         if step < warmup_steps:
             return step / warmup_steps
         else:
-            progress = (step - warmup_steps) / (max_steps - warmup_steps)
-            return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + torch.cos(torch.tensor(progress * 3.14159)).item())
+            progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+            return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
 
     return LambdaLR(optimizer, lr_lambda)
 
@@ -266,6 +261,9 @@ def main():
     hidden_size = config['model']['transformer']['hidden_size']
     num_layers = config['model']['transformer']['num_hidden_layers']
     warmup_steps = config['training'].get('warmup_steps', 200)
+    max_epochs = config['training']['max_epochs']
+    clips_per_sample = config['dataset'].get('clips_per_sample', 80)
+    eval_interval = config['training'].get('eval_interval', 100)
 
     # DDP kwargs
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
@@ -277,24 +275,32 @@ def main():
         kwargs_handlers=[ddp_kwargs]
     )
 
-    max_steps = config['training']['max_steps']
-    eval_every_steps = config['training']['eval_every_steps']
-    save_every_steps = config['training'].get('save_every_steps', 0)  # 0 = only save best model
     log_interval = config['logging']['log_interval']
     early_stopping_patience = config['training'].get('early_stopping_patience', 20)
+    grad_clip = config['training'].get('grad_clip', 1.0)
+
+    # Create dataloaders
+    train_loader, val_loader, train_sampler, val_sampler = create_dataloaders(config)
+
+    # Calculate total steps for scheduler
+    steps_per_epoch = len(train_loader)
+    total_steps = max_epochs * steps_per_epoch
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
-        logger.info(f"End-to-End Training")
+        logger.info(f"End-to-End Training (Epoch-based)")
         logger.info(f"{'='*60}")
         logger.info(f"Config: {args.config}")
         logger.info(f"Model: {model_name} (hidden={hidden_size}, layers={num_layers})")
-        logger.info(f"Max Steps: {max_steps}")
-        logger.info(f"Warmup Steps: {warmup_steps} (no model saving during warmup)")
-        logger.info(f"Loss: nRMSE (per-sample, per-channel, matching metrics.py)")
+        logger.info(f"Max Epochs: {max_epochs}")
+        logger.info(f"Clips per Sample: {clips_per_sample}")
+        logger.info(f"Steps per Epoch: {steps_per_epoch}")
+        logger.info(f"Total Steps: {total_steps}")
+        logger.info(f"Warmup Steps: {warmup_steps}")
+        logger.info(f"Eval Interval: {eval_interval} steps")
+        logger.info(f"Loss: nRMSE (per-sample, per-channel)")
         logger.info(f"{'='*60}")
 
-    train_loader, val_loader = create_dataloaders(config)
     model = PDECausalModel(config)
 
     optimizer = torch.optim.AdamW(
@@ -304,7 +310,7 @@ def main():
         betas=tuple(config['training'].get('betas', [0.9, 0.999]))
     )
 
-    scheduler = get_lr_scheduler(optimizer, config)
+    scheduler = get_lr_scheduler(optimizer, config, total_steps)
     model, optimizer = accelerator.prepare(model, optimizer)
 
     # Init WandB
@@ -327,12 +333,14 @@ def main():
     global_step = 0
     best_val_nrmse = float('inf')
     patience_counter = 0
-
-    train_iter = infinite_dataloader(train_loader)
     console = Console()
+    early_stop = False
+
+    if accelerator.is_main_process:
+        logger.info(f"Steps per epoch: {steps_per_epoch}")
+        logger.info(f"Total steps: {total_steps}")
 
     model.train()
-    val_nrmse, val_rmse = 0.0, 0.0  # Initialize for periodic checkpoint
 
     with Progress(
         SpinnerColumn(),
@@ -344,105 +352,106 @@ def main():
         console=console,
         disable=not accelerator.is_main_process,
     ) as progress:
-        train_task = progress.add_task("Training", total=max_steps)
+        train_task = progress.add_task("Training", total=total_steps)
 
-        while global_step < max_steps:
-            batch = next(train_iter)
-            data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
-            channel_mask = batch['channel_mask'].to(device=accelerator.device)
+        for epoch in range(max_epochs):
+            if early_stop:
+                break
 
-            input_data = data[:, :-1]
-            target_data = data[:, 1:]
+            # Set epoch for sampler (regenerates clips with new random starts)
+            train_sampler.set_epoch(epoch)
 
-            # Check if in warmup phase (no model saving during warmup)
-            in_warmup = global_step < warmup_steps
+            for batch in train_loader:
+                data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+                channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
-            with accelerator.accumulate(model):
-                output = model(input_data)
+                input_data = data[:, :-1]
+                target_data = data[:, 1:]
 
-                # Compute nRMSE loss (per-sample, per-channel)
-                nrmse_loss, rmse_loss = compute_nrmse_loss(
-                    output.float(), target_data.float(), channel_mask
-                )
+                # Check if in warmup phase
+                in_warmup = global_step < warmup_steps
 
-                # Use nRMSE as training loss (全程使用 nRMSE)
-                train_loss = nrmse_loss
+                with accelerator.accumulate(model):
+                    output = model(input_data)
 
-                accelerator.backward(train_loss)
+                    # Compute nRMSE loss
+                    nrmse_loss, rmse_loss = compute_nrmse_loss(
+                        output.float(), target_data.float(), channel_mask
+                    )
 
-                if config['training'].get('grad_clip'):
-                    accelerator.clip_grad_norm_(model.parameters(), config['training']['grad_clip'])
+                    train_loss = nrmse_loss
+                    accelerator.backward(train_loss)
 
-                optimizer.step()
-                optimizer.zero_grad()
+                    if grad_clip:
+                        accelerator.clip_grad_norm_(model.parameters(), grad_clip)
 
-            scheduler.step()
-            global_step += 1
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-            # Reduce loss across GPUs for logging
-            nrmse_reduced = accelerator.reduce(nrmse_loss.detach(), reduction='mean')
-            rmse_reduced = accelerator.reduce(rmse_loss.detach(), reduction='mean')
+                scheduler.step()
+                global_step += 1
 
-            # Update progress bar
-            phase_str = "[warmup]" if in_warmup else "[train]"
-            progress.update(train_task, advance=1,
-                          description=f"{phase_str} nRMSE={nrmse_reduced.item():.4f} RMSE={rmse_reduced.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}")
+                # Reduce loss across GPUs for logging
+                nrmse_reduced = accelerator.reduce(nrmse_loss.detach(), reduction='mean')
+                rmse_reduced = accelerator.reduce(rmse_loss.detach(), reduction='mean')
 
-            # Log to wandb (nRMSE first, then RMSE)
-            if global_step % log_interval == 0:
-                accelerator.log({
-                    'train/nrmse': nrmse_reduced.item(),
-                    'train/rmse': rmse_reduced.item(),
-                    'train/lr': scheduler.get_last_lr()[0],
-                }, step=global_step)
+                # Update progress bar
+                phase_str = "[warmup]" if in_warmup else f"[E{epoch+1}]"
+                progress.update(train_task, advance=1,
+                              description=f"{phase_str} nRMSE={nrmse_reduced.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}")
 
-            # Evaluate
-            if global_step % eval_every_steps == 0:
-                accelerator.wait_for_everyone()
-                val_nrmse, val_rmse = validate(model, val_loader, accelerator)
+                # Log to wandb
+                if global_step % log_interval == 0:
+                    accelerator.log({
+                        'train/nrmse': nrmse_reduced.item(),
+                        'train/rmse': rmse_reduced.item(),
+                        'train/lr': scheduler.get_last_lr()[0],
+                        'train/epoch': epoch + 1,
+                    }, step=global_step)
 
-                # Log to wandb (nRMSE first, then RMSE)
-                accelerator.log({
-                    'val/nrmse': val_nrmse,
-                    'val/rmse': val_rmse,
-                }, step=global_step)
+                # Validate every eval_interval steps
+                if global_step % eval_interval == 0:
+                    accelerator.wait_for_everyone()
+                    val_nrmse, val_rmse = validate(model, val_loader, accelerator)
 
-                if accelerator.is_main_process:
-                    console.print(f"[green]Step {global_step} {phase_str}:[/green] val_nrmse={val_nrmse:.6f}, val_rmse={val_rmse:.6f}")
+                    # Log validation metrics
+                    accelerator.log({
+                        'val/nrmse': val_nrmse,
+                        'val/rmse': val_rmse,
+                    }, step=global_step)
 
-                # Post-warmup: enable best model saving and early stopping
-                if not in_warmup:
-                    if val_nrmse < best_val_nrmse:
-                        best_val_nrmse = val_nrmse
-                        patience_counter = 0
-                        save_checkpoint(model, optimizer, scheduler, global_step, val_rmse, val_nrmse, best_val_nrmse, config, save_dir, accelerator, 'best.pt')
-                        if accelerator.is_main_process:
-                            console.print(f"[yellow]Saved best model[/yellow] (val_nrmse: {val_nrmse:.6f})")
-                    else:
-                        patience_counter += 1
-                        if accelerator.is_main_process:
-                            console.print(f"[dim]Patience: {patience_counter}/{early_stopping_patience}[/dim]")
-
-                    if patience_counter >= early_stopping_patience:
-                        if accelerator.is_main_process:
-                            console.print(f"[red]Early stopping triggered![/red]")
-                        break
-                else:
                     if accelerator.is_main_process:
-                        console.print(f"[dim](warmup phase - no model saving)[/dim]")
+                        console.print(f"\n[green]Step {global_step}/{total_steps} {phase_str}:[/green] val_nrmse={val_nrmse:.6f}, val_rmse={val_rmse:.6f}")
 
-            # Save periodic checkpoint (also skip during warmup)
-            if save_every_steps > 0 and global_step % save_every_steps == 0 and not in_warmup:
-                save_checkpoint(model, optimizer, scheduler, global_step,
-                              val_rmse, val_nrmse,
-                              best_val_nrmse, config, save_dir, accelerator, 'latest.pt')
-                if accelerator.is_main_process:
-                    console.print(f"[cyan]Saved checkpoint[/cyan] at step {global_step}")
+                    # Post-warmup: enable best model saving and early stopping
+                    if not in_warmup:
+                        if val_nrmse < best_val_nrmse:
+                            best_val_nrmse = val_nrmse
+                            patience_counter = 0
+                            save_checkpoint(model, optimizer, scheduler, global_step, val_rmse, val_nrmse, best_val_nrmse, config, save_dir, accelerator, 'best.pt')
+                            if accelerator.is_main_process:
+                                console.print(f"[yellow]Saved best model[/yellow] (val_nrmse: {val_nrmse:.6f})")
+                        else:
+                            patience_counter += 1
+                            if accelerator.is_main_process:
+                                console.print(f"[dim]Patience: {patience_counter}/{early_stopping_patience}[/dim]")
+
+                        if patience_counter >= early_stopping_patience:
+                            if accelerator.is_main_process:
+                                console.print(f"[red]Early stopping triggered![/red]")
+                            early_stop = True
+                            break
+                    else:
+                        if accelerator.is_main_process:
+                            console.print(f"[dim](warmup phase - no model saving)[/dim]")
+
+                    model.train()
 
     accelerator.end_training()
 
     if accelerator.is_main_process:
         table = Table(title="Training Complete", show_header=False, border_style="green")
+        table.add_row("Total Epochs", str(epoch + 1))
         table.add_row("Total Steps", str(global_step))
         table.add_row("Best Val nRMSE", f"{best_val_nrmse:.6f}")
         table.add_row("Checkpoint", str(save_dir / "best.pt"))

@@ -144,13 +144,14 @@ def main():
     model, model_dtype = load_model(checkpoint_path, model_config, device)
     print("Model loaded")
 
-    # Create dataset (full temporal length)
+    # Create dataset (full temporal length, all clips for complete evaluation)
     base_dataset = PDEDataset(
         data_dir=test_config['dataset']['path'],
-        temporal_length=16,  
+        temporal_length=16,
         split='val',
         train_ratio=test_config['dataset'].get('train_ratio', 0.9),
         seed=seed,
+        clips_per_sample=None,  # Use all available clips for evaluation
     )
 
     # Test config
