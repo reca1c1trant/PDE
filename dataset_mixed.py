@@ -389,13 +389,18 @@ class AdaptiveSampler(Sampler):
             if len(sample_indices) == 0:
                 continue
 
+            # Filter to only samples that have clips this epoch (ratio-based selection)
+            active_samples = [idx for idx in sample_indices if idx in self.dataset.clips_by_sample]
+            if len(active_samples) == 0:
+                continue
+
             # Shuffle sample order
             if self.shuffle:
-                sample_indices = rng.permutation(sample_indices).tolist()
+                active_samples = rng.permutation(active_samples).tolist()
             else:
-                sample_indices = list(sample_indices)
+                active_samples = list(active_samples)
 
-            for sample_idx in sample_indices:
+            for sample_idx in active_samples:
                 clip_indices = list(self.dataset.clips_by_sample[sample_idx])
                 if len(clip_indices) == 0:
                     continue
