@@ -1,0 +1,70 @@
+# Mixed Dataset Training with Adaptive Temporal Length
+# - New dataset (T=21): temporal_length=8, ratio=1.0 (100%)
+# - Old dataset (T=101): temporal_length=16, ratio=0.2 (20%)
+
+model_name: "pde_e2e_mixed"
+
+# Dataset - Mixed sources with ratios
+dataset:
+  sources:
+    - path: "./2D_CFD_2000_final.hdf5"  # New dataset
+      ratio: 1.0  # Use 100%
+    - path: "./data/"  # Old dataset directory
+      ratio: 0.2  # Use 20%
+
+  temporal_threshold: 24  # T < 24 → temporal_length=8, else 16
+  train_ratio: 0.9
+  seed: 42
+
+# DataLoader
+dataloader:
+  batch_size: 8
+  num_workers: 4
+  pin_memory: true
+
+# Model (same as e2e_medium)
+model:
+  in_channels: 6
+  noise_level: 0.05
+  use_flash_attention: false
+  gradient_checkpointing: true
+
+  encoder:
+    version: "v2"
+    channels: [64, 128, 256]
+    use_resblock: true
+
+  transformer:
+    hidden_size: 768
+    num_hidden_layers: 10
+    num_attention_heads: 12
+    num_key_value_heads: 4
+    intermediate_size: 3072
+    hidden_act: "silu"
+    max_position_embeddings: 4096
+    rms_norm_eps: 1.0e-5
+    rope_theta: 500000.0
+    attention_dropout: 0.0
+
+# Training
+training:
+  max_epochs: 20
+  warmup_steps: 200
+  learning_rate: 5.0e-4
+  weight_decay: 5.0e-4
+  betas: [0.9, 0.999]
+  grad_clip: 5.0
+  min_lr: 5.0e-6
+
+  mixed_precision: "bf16"
+  gradient_accumulation_steps: 1
+
+  eval_interval: 100
+  early_stopping_patience: 20
+
+# Logging
+logging:
+  project: "pde-e2e-mixed"
+  entity: "reca1c1trant-ntu"
+  save_dir: "./checkpoints_mixed"
+  log_interval: 10
