@@ -148,7 +148,7 @@ class MixedPDEDataset(Dataset):
             raise ValueError(f"Unsupported shape: {shape}")
 
     def _split_dataset(self):
-        """Split samples into train/val, respecting source ratios."""
+        """Split samples into train/val. Ratio is applied per-epoch in _generate_clips."""
         rng = np.random.RandomState(self.seed)
 
         # Group by source
@@ -164,18 +164,12 @@ class MixedPDEDataset(Dataset):
             # Shuffle within source
             indices = rng.permutation(indices).tolist()
 
-            # Train/val split
+            # Train/val split only (ratio applied per-epoch)
             split_idx = int(len(indices) * self.train_ratio)
             if self.split == 'train':
                 src_indices = indices[:split_idx]
             else:
                 src_indices = indices[split_idx:]
-
-            # Apply ratio (for train only, val uses all)
-            ratio = self.samples[indices[0]]['ratio'] if indices else 1.0
-            if self.split == 'train' and ratio < 1.0:
-                n_select = max(1, int(len(src_indices) * ratio))
-                src_indices = rng.choice(src_indices, n_select, replace=False).tolist()
 
             selected_indices.extend(src_indices)
 
@@ -184,15 +178,44 @@ class MixedPDEDataset(Dataset):
     def _generate_clips(self):
         """
         Generate all clips for current epoch.
-        Each clip stores: sample_idx, start_t, temporal_length
+
+        For training:
+        - ratio=1.0 sources: use all samples
+        - ratio<1.0 sources: randomly select ratio% samples (different each epoch)
+
+        For validation: always use all samples (ratio ignored).
         """
         rng = np.random.RandomState(self.seed + self.epoch)
 
         self.clips: List[Dict] = []
         self.clips_by_sample: Dict[int, List[int]] = {}
 
-        clip_idx = 0
+        # Group samples by source for ratio-based selection
+        by_source: Dict[str, List[int]] = {}
         for sample_idx, sample in enumerate(self.samples):
+            src = sample['source_path']
+            if src not in by_source:
+                by_source[src] = []
+            by_source[src].append(sample_idx)
+
+        # Select samples based on ratio (train only)
+        selected_samples: List[int] = []
+        for src, sample_indices in by_source.items():
+            ratio = self.samples[sample_indices[0]]['ratio'] if sample_indices else 1.0
+
+            if self.split == 'train' and ratio < 1.0:
+                # Randomly select ratio% of samples (different each epoch)
+                n_select = max(1, int(len(sample_indices) * ratio))
+                chosen = rng.choice(sample_indices, n_select, replace=False).tolist()
+                selected_samples.extend(chosen)
+            else:
+                # Use all samples
+                selected_samples.extend(sample_indices)
+
+        # Generate clips for selected samples
+        clip_idx = 0
+        for sample_idx in selected_samples:
+            sample = self.samples[sample_idx]
             temporal_length = sample['temporal_length']
             total_t = sample['total_timesteps']
             required = temporal_length + 1
