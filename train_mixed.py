@@ -92,6 +92,28 @@ def parse_args():
     return parser.parse_args()
 
 
+def load_pretrained_weights(model, checkpoint_path: str, logger):
+    """Load pretrained model weights only (ignore optimizer, scheduler, etc.)."""
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+
+    if 'model_state_dict' in checkpoint:
+        state_dict = checkpoint['model_state_dict']
+    else:
+        state_dict = checkpoint
+
+    # Handle DDP/FSDP wrapped state dict
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith('module.'):
+            k = k[7:]
+        if k.startswith('_orig_mod.'):
+            k = k[10:]
+        new_state_dict[k] = v
+
+    model.load_state_dict(new_state_dict, strict=False)
+    logger.info(f"Loaded pretrained weights from {checkpoint_path}")
+
+
 def load_config(config_path: str) -> dict:
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
@@ -272,6 +294,13 @@ def main():
         logger.info(f"{'='*60}")
 
     model = PDECausalModel(config)
+
+    # Load pretrained weights if specified (weights only, fresh optimizer/scheduler)
+    resume_path = config.get('resume', None)
+    if resume_path:
+        if accelerator.is_main_process:
+            logger.info(f"Loading pretrained weights from: {resume_path}")
+        load_pretrained_weights(model, resume_path, logger)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),

@@ -4,12 +4,15 @@
 
 model_name: "pde_e2e_mixed"
 
+# Resume from pretrained checkpoint (weights only, fresh optimizer/scheduler)
+resume: "./checkpoints_e2e_medium_full_v3/best.pt"
+
 # Dataset - Mixed sources with ratios
 dataset:
   sources:
-    - path: "./2D_CFD_2000_final.hdf5"  # New dataset
+    - path: "./data/2D_CFD_2000_final.hdf5"  # New dataset (T=21)
       ratio: 1.0  # Use 100%
-    - path: "./data/"  # Old dataset directory
+    - path: "./data/2D_diff-react_NA_NA.hdf5"  # Old dataset (T=101)
       ratio: 0.2  # Use 20%
 
   temporal_threshold: 24  # T < 24 → temporal_length=8, else 16
