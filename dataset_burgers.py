@@ -209,7 +209,8 @@ class BurgersSampler(Sampler):
     1. Shuffle sample order (which sample comes first)
     2. For each sample, shuffle its K clips
     3. Divide each sample's clips into batches of size batch_size
-    4. Result: each batch contains clips from one sample only
+    4. Last incomplete batch: pad from previous clips (no discarding)
+    5. Result: each batch contains clips from one sample only
     """
 
     def __init__(
@@ -227,13 +228,8 @@ class BurgersSampler(Sampler):
         self.seed = seed
         self.epoch = 0
 
-        # Validate: clips_per_sample must be divisible by batch_size (only when fixed K)
-        # When clips_per_sample is None (use all), skip this check - incomplete batches are dropped
-        if dataset.clips_per_sample is not None and dataset.clips_per_sample % batch_size != 0:
-            raise ValueError(
-                f"clips_per_sample ({dataset.clips_per_sample}) must be "
-                f"divisible by batch_size ({batch_size})"
-            )
+        # No longer require clips_per_sample to be divisible by batch_size
+        # Incomplete batches will be padded from previous clips
 
         # Distributed settings
         import os
@@ -254,7 +250,8 @@ class BurgersSampler(Sampler):
         Process:
         1. Shuffle sample order
         2. For each sample: shuffle its clips, then divide into batches
-        3. Each batch = batch_size clips from ONE sample
+        3. Last incomplete batch: pad from previous clips of same sample
+        4. Each batch = batch_size clips from ONE sample
         """
         rng = np.random.RandomState(self.seed + self.epoch)
 
@@ -267,24 +264,44 @@ class BurgersSampler(Sampler):
         for sample_idx in sample_indices:
             # Get this sample's clip indices
             clip_indices = list(self.dataset.clips_by_sample[sample_idx])
+            if len(clip_indices) == 0:
+                continue
 
             # Shuffle clips within this sample
             if self.shuffle:
                 rng.shuffle(clip_indices)
 
-            # Divide into batches (all clips in a batch are from same sample)
-            for i in range(0, len(clip_indices), self.batch_size):
+            # Divide into batches with padding for incomplete ones
+            num_clips = len(clip_indices)
+            for i in range(0, num_clips, self.batch_size):
                 batch = clip_indices[i:i + self.batch_size]
-                if len(batch) == self.batch_size:
-                    batches.append(batch)
+
+                # Pad last incomplete batch from previous clips
+                if len(batch) < self.batch_size:
+                    need = self.batch_size - len(batch)
+                    # Sample from previous clips (indices 0 to i)
+                    pool = clip_indices[:i] if i > 0 else batch
+                    if len(pool) >= need:
+                        pad_clips = rng.choice(pool, need, replace=False).tolist()
+                    else:
+                        # Not enough, sample with replacement
+                        pad_clips = rng.choice(pool, need, replace=True).tolist()
+                    batch = batch + pad_clips
+
+                batches.append(batch)
 
         self._all_batches = batches
-        self.num_batches_per_rank = len(batches) // self.num_replicas
+
+        # Distribute across ranks (drop remainder for equal distribution)
+        total_batches = len(batches)
+        self.num_batches_per_rank = total_batches // self.num_replicas
+        usable = self.num_batches_per_rank * self.num_replicas
+        self._all_batches = self._all_batches[:usable]
 
         if self.rank == 0:
-            logger.info(f"BurgersSampler: {len(batches)} batches total, "
+            logger.info(f"BurgersSampler: {len(self._all_batches)} batches total, "
                        f"{self.num_batches_per_rank} per rank, "
-                       f"each batch from same sample")
+                       f"each batch from same sample (with padding)")
 
     def set_epoch(self, epoch: int):
         """Set epoch for shuffling. Also updates dataset's epoch."""
@@ -326,9 +343,9 @@ if __name__ == "__main__":
         print(f"Test file not found: {data_path}")
         sys.exit(0)
 
-    # Test dataset
-    batch_size = 4
-    clips_per_sample = 100  # Must be divisible by batch_size
+    # Test dataset with clips_per_sample NOT divisible by batch_size (to test padding)
+    batch_size = 8
+    clips_per_sample = 100  # 100 % 8 = 4, so last batch needs padding
 
     dataset = BurgersDataset(
         data_path,
@@ -344,6 +361,7 @@ if __name__ == "__main__":
     print(f"Clips per sample: {dataset.clips_per_sample}")
     print(f"Total clips: {len(dataset)}")
     print(f"Expected: {len(dataset.samples)} × {dataset.clips_per_sample} = {len(dataset.samples) * dataset.clips_per_sample}")
+    print(f"clips_per_sample % batch_size = {clips_per_sample % batch_size} (will need padding)")
 
     # Test one clip
     sample = dataset[0]
@@ -363,14 +381,15 @@ if __name__ == "__main__":
     counts = list(sample_counts.values())
     print(f"Clips per sample - min: {min(counts)}, max: {max(counts)}, expected: {dataset.clips_per_sample}")
 
-    # Test sampler and same-sample batching
+    # Test sampler and same-sample batching (with padding)
     print(f"\n{'='*60}")
-    print(f"Same-Sample Batching Test")
+    print(f"Same-Sample Batching Test (with Padding)")
     print(f"{'='*60}")
     sampler = BurgersSampler(dataset, batch_size=batch_size, shuffle=True, seed=42)
 
-    # Verify each batch contains clips from same sample
+    # Verify each batch contains clips from same sample and has correct size
     all_same_sample = True
+    all_correct_size = True
     for batch_idx, batch in enumerate(sampler):
         sample_indices_in_batch = set()
         for clip_idx in batch:
@@ -381,15 +400,24 @@ if __name__ == "__main__":
             print(f"ERROR: Batch {batch_idx} has clips from multiple samples: {sample_indices_in_batch}")
             all_same_sample = False
 
+        if len(batch) != batch_size:
+            print(f"ERROR: Batch {batch_idx} has size {len(batch)} != {batch_size}")
+            all_correct_size = False
+
         if batch_idx < 3:  # Show first 3 batches
             sample_idx = list(sample_indices_in_batch)[0]
             start_times = [dataset.clips[clip_idx][1] for clip_idx in batch]
-            print(f"Batch {batch_idx}: sample={sample_idx}, start_times={start_times}")
+            print(f"Batch {batch_idx}: sample={sample_idx}, size={len(batch)}, start_times={start_times}")
 
     if all_same_sample:
         print(f"\n✓ All {len(sampler)} batches contain clips from same sample only!")
     else:
         print(f"\n✗ Some batches have mixed samples!")
+
+    if all_correct_size:
+        print(f"✓ All batches have correct size {batch_size} (padding works!)")
+    else:
+        print(f"✗ Some batches have incorrect size!")
 
     # Test epoch change
     print(f"\n{'='*60}")

@@ -84,7 +84,8 @@ training:
 
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1
-  eval_interval: 100  # Validate every 100 steps
+  eval_interval: 100  # Validate every N steps
+  early_stopping_patience: 10  # Stop if no improvement for N validations
 
 # Logging
 logging:

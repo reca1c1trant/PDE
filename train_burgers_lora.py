@@ -122,13 +122,15 @@ def get_lr_scheduler(optimizer, config, total_steps: int):
     import math
 
     warmup_steps = config['training'].get('warmup_steps', 100)
-    min_lr_ratio = config['training'].get('min_lr', 1e-6) / config['training']['learning_rate']
+    min_lr = config['training'].get('min_lr', 1e-6)
+    base_lr = config['training']['learning_rate']
+    min_lr_ratio = min_lr / base_lr
 
     def lr_lambda(step):
         if step < warmup_steps:
             return step / warmup_steps
         else:
-            progress = (step - warmup_steps) / (total_steps - warmup_steps)
+            progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
             return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
 
     return LambdaLR(optimizer, lr_lambda)
@@ -266,6 +268,8 @@ def main():
     lambda_pde = config['training'].get('lambda_pde', 1.0)
     grad_clip = config['training'].get('grad_clip', 1.0)
     clips_per_sample = config['dataset'].get('clips_per_sample', 100)
+    eval_interval = config['training'].get('eval_interval', 100)
+    early_stopping_patience = config['training'].get('early_stopping_patience', 10)
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
@@ -275,6 +279,8 @@ def main():
         logger.info(f"Max Epochs: {max_epochs}")
         logger.info(f"Clips per Sample: {clips_per_sample}")
         logger.info(f"Warmup Steps: {warmup_steps}")
+        logger.info(f"Eval Interval: {eval_interval} steps")
+        logger.info(f"Early Stopping Patience: {early_stopping_patience}")
         logger.info(f"Loss: Pure PDE Residual (lambda_pde={lambda_pde})")
         logger.info(f"Grad Clip: {grad_clip}")
         logger.info(f"{'='*60}")
@@ -326,6 +332,8 @@ def main():
     # Training state
     global_step = 0
     best_pde_loss = float('inf')
+    patience_counter = 0
+    early_stop = False
 
     console = Console()
 
@@ -348,6 +356,9 @@ def main():
         train_task = progress.add_task("Training", total=total_steps)
 
         for epoch in range(max_epochs):
+            if early_stop:
+                break
+
             # Set epoch for reproducible shuffling
             train_sampler.set_epoch(epoch)
 
@@ -355,9 +366,15 @@ def main():
             epoch_steps = 0
 
             for batch in train_loader:
+                if early_stop:
+                    break
+
                 data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
 
                 input_data = data[:, :-1]  # [B, 16, H, W, 6]
+
+                # Check if in warmup phase
+                in_warmup = global_step < warmup_steps
 
                 with accelerator.accumulate(model):
                     output = model(input_data)
@@ -389,7 +406,6 @@ def main():
                 epoch_pde_loss += pde_loss_reduced.item()
 
                 # Update progress bar
-                in_warmup = global_step < warmup_steps
                 phase_str = "[warmup]" if in_warmup else f"[E{epoch+1}]"
                 progress.update(
                     train_task, advance=1,
@@ -406,51 +422,80 @@ def main():
                         'train/epoch': epoch + 1,
                     }, step=global_step)
 
-            # End of epoch: validate
-            accelerator.wait_for_everyone()
+                # Step-based validation (every eval_interval steps)
+                if global_step % eval_interval == 0:
+                    accelerator.wait_for_everyone()
+                    val_pde_loss, val_constraint_error = validate(
+                        model, val_loader, config, accelerator
+                    )
 
-            avg_epoch_loss = epoch_pde_loss / epoch_steps
-            val_pde_loss, val_constraint_error = validate(
-                model, val_loader, config, accelerator
-            )
+                    accelerator.log({
+                        'val/pde_loss': val_pde_loss,
+                        'val/constraint_error': val_constraint_error,
+                    }, step=global_step)
 
-            accelerator.log({
-                'epoch/train_pde_loss': avg_epoch_loss,
-                'epoch/val_pde_loss': val_pde_loss,
-                'epoch/val_constraint_error': val_constraint_error,
-                'epoch': epoch + 1,
-            }, step=global_step)
+                    if accelerator.is_main_process:
+                        console.print(
+                            f"\n[green]Step {global_step}/{total_steps} {phase_str}:[/green] "
+                            f"val_pde={val_pde_loss:.6f}, constraint_err={val_constraint_error:.6f}"
+                        )
 
-            if accelerator.is_main_process:
-                console.print(
-                    f"\n[green]Epoch {epoch+1}/{max_epochs}:[/green] "
-                    f"train_pde={avg_epoch_loss:.6f}, val_pde={val_pde_loss:.6f}, "
-                    f"constraint_err={val_constraint_error:.6f}"
-                )
+                    # Post-warmup: enable best model saving and early stopping
+                    if not in_warmup:
+                        if val_pde_loss < best_pde_loss:
+                            best_pde_loss = val_pde_loss
+                            patience_counter = 0
 
-            # Save best model (after warmup)
-            if global_step >= warmup_steps and val_pde_loss < best_pde_loss:
-                best_pde_loss = val_pde_loss
+                            if accelerator.is_main_process:
+                                unwrapped_model = accelerator.unwrap_model(model)
+                                save_lora_checkpoint(
+                                    model=unwrapped_model.model,
+                                    optimizer=optimizer,
+                                    scheduler=scheduler,
+                                    global_step=global_step,
+                                    metrics={'pde_loss': val_pde_loss, 'constraint_error': val_constraint_error},
+                                    save_path=str(save_dir / 'best_lora.pt'),
+                                    config=config,
+                                )
+                                console.print(f"[yellow]Saved best model[/yellow] (pde_loss: {val_pde_loss:.6f})")
+                        else:
+                            patience_counter += 1
+                            if accelerator.is_main_process:
+                                console.print(f"[dim]Patience: {patience_counter}/{early_stopping_patience}[/dim]")
+
+                            if patience_counter >= early_stopping_patience:
+                                if accelerator.is_main_process:
+                                    console.print(f"[red]Early stopping triggered![/red]")
+                                early_stop = True
+                                break
+                    else:
+                        if accelerator.is_main_process:
+                            console.print(f"[dim](warmup phase - no model saving)[/dim]")
+
+                    model.train()
+
+            # End of epoch summary
+            if epoch_steps > 0:
+                avg_epoch_loss = epoch_pde_loss / epoch_steps
+                accelerator.log({
+                    'epoch/train_pde_loss': avg_epoch_loss,
+                    'epoch': epoch + 1,
+                }, step=global_step)
 
                 if accelerator.is_main_process:
-                    unwrapped_model = accelerator.unwrap_model(model)
-                    save_lora_checkpoint(
-                        model=unwrapped_model.model,
-                        optimizer=optimizer,
-                        scheduler=scheduler,
-                        global_step=global_step,
-                        metrics={'pde_loss': val_pde_loss, 'constraint_error': val_constraint_error},
-                        save_path=str(save_dir / 'best_lora.pt'),
-                        config=config,
+                    console.print(
+                        f"\n[blue]Epoch {epoch+1}/{max_epochs} completed:[/blue] "
+                        f"avg_train_pde={avg_epoch_loss:.6f}"
                     )
-                    console.print(f"[yellow]Saved best model[/yellow] (pde_loss: {val_pde_loss:.6f})")
 
     accelerator.end_training()
 
     if accelerator.is_main_process:
         table = Table(title="Training Complete", show_header=False, border_style="green")
+        table.add_row("Total Epochs", str(epoch + 1))
         table.add_row("Total Steps", str(global_step))
         table.add_row("Best Val PDE Loss", f"{best_pde_loss:.6f}")
+        table.add_row("Early Stopped", "Yes" if early_stop else "No")
         table.add_row("Checkpoint", str(save_dir / "best_lora.pt"))
         console.print(table)
 
