@@ -8,7 +8,7 @@
 
 # Model
 model:
-  pretrained_path: "./checkpoints_e2e_medium/best.pt"
+  pretrained_path: "./checkpoints_e2e_medium_full_v3/best.pt"
 
   # Must match pretrained model config
   in_channels: 6
@@ -55,7 +55,7 @@ dataset:
   temporal_length: 16  # Will load 17 frames (16+1)
   train_ratio: 0.9
   seed: 42
-  clips_per_sample: 976  # K=100 clips per sample per epoch (方案C)
+  clips_per_sample: null  # K=100 clips per sample per epoch (方案C)
 
 # Physics parameters
 physics:
@@ -70,13 +70,13 @@ dataloader:
 
 # Training
 training:
-  max_epochs: 20  # Epoch-based training with balanced sampling
-  warmup_steps: 100
+  max_epochs: 15  # Epoch-based training with balanced sampling
+  warmup_steps: 200
   learning_rate: 1.0e-4
   min_lr: 1.0e-6
   weight_decay: 1.0e-4
   betas: [0.9, 0.999]
-  grad_clip: 1.0
+  grad_clip: 5.0
 
   # Loss weights
   lambda_data: 0.0   # Not used (no ground truth)
@@ -85,11 +85,11 @@ training:
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1
   eval_interval: 100  # Validate every N steps
-  early_stopping_patience: 10  # Stop if no improvement for N validations
+  early_stopping_patience: 20  # Stop if no improvement for N validations
 
 # Logging
 logging:
   project: "pde-burgers-lora"
   entity: "reca1c1trant-ntu"  # Update with your wandb entity
-  save_dir: "./checkpoints_burgers_lora_v2"
+  save_dir: "./checkpoints_burgers_lora_v3"
   log_interval: 10
