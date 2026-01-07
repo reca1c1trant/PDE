@@ -140,21 +140,24 @@ def evaluate_dataset(
     seed = test_config.get('seed', 42)
     rng = random.Random(seed)
 
-    # Create dataset
+    # Test parameters
+    input_steps = test_config.get('input_steps', 16)
+
+    # Create dataset (temporal_length = input_steps, PDEDataset will +1 internally)
     base_dataset = PDEDataset(
         data_dir=dataset_config['path'],
-        temporal_length=16,
+        temporal_length=input_steps,  # 根据 input_steps 动态设置
         split='val',
         train_ratio=dataset_config.get('train_ratio', 0.9),
         seed=dataset_config.get('seed', 42),
         clips_per_sample=None,
     )
-
-    # Test parameters
-    input_steps = test_config.get('input_steps', 16)
     batch_size = test_config.get('batch_size', 8)
-    num_samples = test_config.get('num_samples', len(base_dataset))
-    num_samples = min(num_samples, len(base_dataset))
+    num_samples = test_config.get('num_samples')
+    if num_samples is None:
+        num_samples = len(base_dataset)
+    else:
+        num_samples = min(num_samples, len(base_dataset))
 
     # Domain size
     Lx = dataset_config.get('Lx', 1.0)

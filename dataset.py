@@ -99,10 +99,14 @@ class PDEDataset(Dataset):
 
     def _build_index(self):
         """Build index of all samples across all h5 files."""
-        h5_files = sorted(self.data_dir.glob("*.hdf5"))
+        # Support both single file and directory
+        if self.data_dir.is_file():
+            h5_files = [self.data_dir]
+        else:
+            h5_files = sorted(self.data_dir.glob("*.hdf5")) + sorted(self.data_dir.glob("*.h5"))
 
         if not h5_files:
-            raise ValueError(f"No .hdf5 files found in {self.data_dir}")
+            raise ValueError(f"No .hdf5/.h5 files found in {self.data_dir}")
 
         logger.info(f"Found {len(h5_files)} hdf5 files")
 
