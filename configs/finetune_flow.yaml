@@ -1,0 +1,96 @@
+# Flow Mixing LoRA Finetuning Configuration
+# Pure PDE Loss Training (default, no ground truth supervision)
+#
+# Training Budget (with default settings):
+#   - 135 train samples x 100 clips/sample = 13500 clips/epoch
+#   - batch_size=8 -> 1687 steps/epoch
+#   - 10 epochs -> ~16870 total steps
+
+# Model
+model:
+  pretrained_path: "./checkpoints_e2e_medium_full_v3/best.pt"
+
+  # Must match pretrained model config
+  in_channels: 6
+  noise_level: 0.0  # Disable noise for finetuning
+  use_flash_attention: false
+  gradient_checkpointing: true
+
+  # Encoder config (must match pretrained)
+  encoder:
+    version: "v2"
+    channels: [64, 128, 256]
+    use_resblock: true
+
+  # Transformer config (must match pretrained)
+  transformer:
+    hidden_size: 768
+    num_hidden_layers: 10
+    num_attention_heads: 12
+    num_key_value_heads: 4
+    intermediate_size: 3072
+    hidden_act: "silu"
+    max_position_embeddings: 4096
+    rms_norm_eps: 1.0e-5
+    rope_theta: 500000.0
+    attention_dropout: 0.0
+
+  # LoRA config
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+      - "gate_proj"
+      - "up_proj"
+      - "down_proj"
+
+# Dataset
+dataset:
+  path: "./flow_mixing_vtmax0.3_0.5_res128_t1000_n150.h5"
+  temporal_length: 16  # Will load 17 frames (16+1)
+  train_ratio: 0.9
+  seed: 42
+  clips_per_sample: 100  # K clips per sample per epoch
+
+# Physics parameters
+physics:
+  dt: 0.001001001  # 1/999, time step
+  Lx: 1.0          # Domain size x
+  Ly: 1.0          # Domain size y
+
+# DataLoader
+dataloader:
+  batch_size: 8
+  num_workers: 4
+  pin_memory: true
+
+# Training
+training:
+  max_epochs: 15
+  warmup_steps: 200
+  learning_rate: 1.0e-4
+  min_lr: 1.0e-6
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  grad_clip: 5.0
+
+  # Loss weights
+  lambda_pde: 1.0    # PDE residual loss weight
+  lambda_rmse: 0.0   # RMSE loss weight (default: 0, pure unsupervised)
+
+  mixed_precision: "bf16"
+  gradient_accumulation_steps: 1
+  eval_interval: 100  # Validate every N steps
+  early_stopping_patience: 20  # Stop if no improvement for N validations
+
+# Logging
+logging:
+  project: "pde-flow-lora"
+  entity: "reca1c1trant-ntu"  # Update with your wandb entity
+  save_dir: "./checkpoints_flow_lora"
+  log_interval: 10
