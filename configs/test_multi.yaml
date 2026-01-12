@@ -20,12 +20,12 @@ datasets:
     path: "./data/2D_diff-react_NA_NA.hdf5"
     train_ratio: 0.9
     seed: 42
-    Lx: 1.0
-    Ly: 1.0
+    Lx: 2.0
+    Ly: 2.0
 
 # Test parameters (shared across all datasets)
 test:
-  input_steps: 16       # Use 16 timesteps as input
+  input_steps: 1       # Use 1 timesteps as input
   batch_size: 8         # Random time slices per sample
   num_samples: null     # null = use all val samples
   seed: 42              # Random seed for reproducibility

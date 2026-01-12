@@ -130,9 +130,13 @@ def evaluate_dataset(
     dataset_config: dict,
     test_config: dict,
     dataset_name: str,
+    unload_model_after: bool = True,
 ) -> dict:
     """
     Evaluate model on a single dataset.
+
+    Args:
+        unload_model_after: If True, move model to CPU after inference to free GPU memory
 
     Returns:
         dict with metrics results
@@ -219,30 +223,89 @@ def evaluate_dataset(
             all_preds.append(pred_valid.cpu())
             all_gts.append(gt_valid.cpu())
 
-    # Compute metrics
-    all_preds = torch.cat(all_preds, dim=0)
+    # Free GPU memory before computing metrics
+    if unload_model_after:
+        model.cpu()
+        torch.cuda.empty_cache()
+        print("Model moved to CPU, GPU memory freed.")
+
+    # Compute metrics in batches to avoid OOM
+    all_preds = torch.cat(all_preds, dim=0)  # [N, H, W, C_valid]
     all_gts = torch.cat(all_gts, dim=0)
 
-    all_preds = all_preds.unsqueeze(-2).to(device=device)
-    all_gts = all_gts.unsqueeze(-2).to(device=device)
+    print(f"Computing metrics on {all_preds.shape[0]} predictions...")
 
-    err_RMSE, err_nRMSE, err_CSV, err_Max, err_BD, err_F = metric_func(
-        all_preds.float(), all_gts.float(),
-        if_mean=True, Lx=Lx, Ly=Ly, Lz=1.0,
-        iLow=4, iHigh=12, initial_step=0
-    )
+    # Add time dimension for metric_func
+    all_preds = all_preds.unsqueeze(-2)  # [N, H, W, 1, C_valid]
+    all_gts = all_gts.unsqueeze(-2)
 
-    # Per-channel nRMSE
-    C_valid = all_preds.shape[-1]
-    per_channel_nRMSE = []
-    for ch_idx in range(C_valid):
-        _, ch_nRMSE, _, _, _, _ = metric_func(
-            all_preds[..., ch_idx:ch_idx+1].float(),
-            all_gts[..., ch_idx:ch_idx+1].float(),
+    # Compute metrics in batches on GPU
+    metrics_batch_size = 1000  # Process 1000 samples at a time
+    N = all_preds.shape[0]
+
+    # Accumulate metrics
+    total_RMSE = 0.0
+    total_nRMSE = 0.0
+    total_CSV = 0.0
+    total_Max = 0.0
+    total_BD = 0.0
+    total_F = None  # [3] for low/mid/high freq
+    num_batches = 0
+
+    for i in range(0, N, metrics_batch_size):
+        batch_preds = all_preds[i:i+metrics_batch_size].to(device=device)
+        batch_gts = all_gts[i:i+metrics_batch_size].to(device=device)
+
+        err_RMSE, err_nRMSE, err_CSV, err_Max, err_BD, err_F = metric_func(
+            batch_preds.float(), batch_gts.float(),
             if_mean=True, Lx=Lx, Ly=Ly, Lz=1.0,
             iLow=4, iHigh=12, initial_step=0
         )
-        per_channel_nRMSE.append(ch_nRMSE.cpu().item())
+
+        total_RMSE += err_RMSE.item()
+        total_nRMSE += err_nRMSE.item()
+        total_CSV += err_CSV.item()
+        total_Max = max(total_Max, err_Max.item())
+        total_BD += err_BD.item()
+        if total_F is None:
+            total_F = err_F.cpu().clone()
+        else:
+            total_F += err_F.cpu()
+        num_batches += 1
+
+        # Free batch memory
+        del batch_preds, batch_gts
+        torch.cuda.empty_cache()
+
+    # Average over batches
+    err_RMSE = total_RMSE / num_batches
+    err_nRMSE = total_nRMSE / num_batches
+    err_CSV = total_CSV / num_batches
+    err_BD = total_BD / num_batches
+    err_F = total_F / num_batches  # [3] tensor
+
+    # Per-channel nRMSE (also in batches)
+    C_valid = all_preds.shape[-1]
+    per_channel_nRMSE = []
+    for ch_idx in range(C_valid):
+        ch_nRMSE_sum = 0.0
+        ch_batches = 0
+        for i in range(0, N, metrics_batch_size):
+            batch_preds = all_preds[i:i+metrics_batch_size, ..., ch_idx:ch_idx+1].to(device=device)
+            batch_gts = all_gts[i:i+metrics_batch_size, ..., ch_idx:ch_idx+1].to(device=device)
+
+            _, ch_nRMSE, _, _, _, _ = metric_func(
+                batch_preds.float(), batch_gts.float(),
+                if_mean=True, Lx=Lx, Ly=Ly, Lz=1.0,
+                iLow=4, iHigh=12, initial_step=0
+            )
+            ch_nRMSE_sum += ch_nRMSE.item()
+            ch_batches += 1
+
+            del batch_preds, batch_gts
+            torch.cuda.empty_cache()
+
+        per_channel_nRMSE.append(ch_nRMSE_sum / ch_batches)
 
     # Channel names
     full_names = ['vx', 'vy', 'vz', 'p', 'rho', 'T']
@@ -251,9 +314,18 @@ def evaluate_dataset(
     # Print results
     print(f"\nResults for {dataset_name}:")
     print("-" * 50)
-    print(f"{'nRMSE (overall)':<25} {err_nRMSE.item():.4e}")
-    print(f"{'RMSE':<25} {err_RMSE.item():.4e}")
-    print(f"{'Max Error':<25} {err_Max.item():.4e}")
+    print(f"{'Metric':<30} {'Value':<15}")
+    print("-" * 50)
+    print(f"{'RMSE':<30} {err_RMSE:.4e}")
+    print(f"{'nRMSE':<30} {err_nRMSE:.4e}")
+    print(f"{'Max Error':<30} {total_Max:.4e}")
+    print(f"{'Conserved Variables RMSE':<30} {err_CSV:.4e}")
+    print(f"{'Boundary RMSE':<30} {err_BD:.4e}")
+    print("-" * 50)
+    print("Fourier Space RMSE:")
+    freq_labels = ['  Low Frequency', '  Mid Frequency', '  High Frequency']
+    for i, label in enumerate(freq_labels):
+        print(f"{label:<30} {err_F[i].item():.4e}")
     print("-" * 50)
     print("Per-channel nRMSE:")
     for i, name in enumerate(channel_names):
@@ -262,9 +334,14 @@ def evaluate_dataset(
 
     return {
         'name': dataset_name,
-        'nRMSE': err_nRMSE.item(),
-        'RMSE': err_RMSE.item(),
-        'Max': err_Max.item(),
+        'nRMSE': err_nRMSE,
+        'RMSE': err_RMSE,
+        'Max': total_Max,
+        'CSV': err_CSV,
+        'BD': err_BD,
+        'F_low': err_F[0].item(),
+        'F_mid': err_F[1].item(),
+        'F_high': err_F[2].item(),
         'per_channel_nRMSE': dict(zip(channel_names, per_channel_nRMSE)),
         'num_samples': all_preds.shape[0],
     }
@@ -316,8 +393,17 @@ def main():
 
     # Evaluate each dataset
     all_results = []
-    for ds_config in datasets:
+    for idx, ds_config in enumerate(datasets):
         ds_name = ds_config.get('name', Path(ds_config['path']).stem)
+
+        # Reload model to GPU if it was moved to CPU (for subsequent datasets)
+        if next(model.parameters()).device != device:
+            model.to(device)
+            print(f"Model reloaded to {device}")
+
+        # Only unload model after last dataset
+        is_last = (idx == len(datasets) - 1)
+
         result = evaluate_dataset(
             model=model,
             model_dtype=model_dtype,
@@ -325,30 +411,44 @@ def main():
             dataset_config=ds_config,
             test_config=test_params,
             dataset_name=ds_name,
+            unload_model_after=True,  # Always unload to free memory for metrics
         )
         all_results.append(result)
 
     # Print summary
-    print("\n" + "=" * 70)
-    print("                      EVALUATION SUMMARY")
-    print("                     [Script Version 3.0]")
-    print("=" * 70)
+    print("\n" + "=" * 90)
+    print("                              EVALUATION SUMMARY")
+    print("                             [Script Version 3.1]")
+    print("=" * 90)
     print(f"Checkpoint: {checkpoint_path}")
     print(f"Datasets evaluated: {len(all_results)}")
     print()
-    print(f"{'Dataset':<25} {'nRMSE':<15} {'RMSE':<15} {'Samples':<10}")
-    print("-" * 70)
+
+    # Main metrics table
+    print(f"{'Dataset':<20} {'nRMSE':<12} {'RMSE':<12} {'Max':<12} {'CSV':<12} {'BD':<12} {'Samples':<8}")
+    print("-" * 90)
     for r in all_results:
-        print(f"{r['name']:<25} {r['nRMSE']:<15.4e} {r['RMSE']:<15.4e} {r['num_samples']:<10}")
-    print("-" * 70)
+        print(f"{r['name']:<20} {r['nRMSE']:<12.4e} {r['RMSE']:<12.4e} {r['Max']:<12.4e} {r['CSV']:<12.4e} {r['BD']:<12.4e} {r['num_samples']:<8}")
+    print("-" * 90)
 
     # Average across datasets
     if len(all_results) > 1:
         avg_nRMSE = sum(r['nRMSE'] for r in all_results) / len(all_results)
-        print(f"{'Average':<25} {avg_nRMSE:<15.4e}")
-        print("-" * 70)
+        avg_RMSE = sum(r['RMSE'] for r in all_results) / len(all_results)
+        avg_CSV = sum(r['CSV'] for r in all_results) / len(all_results)
+        avg_BD = sum(r['BD'] for r in all_results) / len(all_results)
+        print(f"{'Average':<20} {avg_nRMSE:<12.4e} {avg_RMSE:<12.4e} {'-':<12} {avg_CSV:<12.4e} {avg_BD:<12.4e}")
+        print("-" * 90)
 
-    print("=" * 70)
+    # Fourier space metrics
+    print()
+    print("Fourier Space RMSE (Low / Mid / High frequency):")
+    print("-" * 90)
+    for r in all_results:
+        print(f"  {r['name']:<18} {r['F_low']:<12.4e} {r['F_mid']:<12.4e} {r['F_high']:<12.4e}")
+    print("-" * 90)
+
+    print("=" * 90)
 
 
 if __name__ == "__main__":
