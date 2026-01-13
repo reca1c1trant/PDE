@@ -1,0 +1,69 @@
+# FNO Training Configuration - Burgers Equation
+#
+# FNO (Fourier Neural Operator) advantages:
+# - Operates in frequency domain (natural for PDE solving)
+# - No downsampling (preserves full resolution 128×128)
+# - Much fewer parameters (~2M vs 80M for Llama)
+# - Designed specifically for PDE operator learning
+#
+# Training Budget:
+#   - 90 train samples × 100 clips/sample = 9000 clips/epoch
+#   - batch_size=8 → ~1125 steps/epoch
+#   - 100 epochs → ~112500 total steps
+
+# Task
+task: burgers
+
+# FNO Model Configuration
+model:
+  modes: 12           # Number of Fourier modes to keep (higher = more detail)
+  width: 64           # Hidden channel width (64 gives ~2.5M params)
+  n_layers: 4         # Number of Fourier layers
+  activation: gelu    # Activation function
+
+# Dataset
+dataset:
+  path: "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
+  temporal_length: 16   # Will load 17 frames (16+1)
+  train_ratio: 0.9
+  seed: 42
+  clips_per_sample: 100  # K clips per sample per epoch
+
+# Physics parameters (for PDE loss)
+physics:
+  dt: 0.001001001  # 1/999, time step
+  Lx: 1.0          # Domain size x
+  Ly: 1.0          # Domain size y
+
+# DataLoader
+dataloader:
+  batch_size: 8
+  num_workers: 4
+  pin_memory: true
+
+# Training
+training:
+  max_epochs: 100
+  warmup_steps: 500
+  learning_rate: 1.0e-3    # FNO typically uses higher LR
+  min_lr: 1.0e-6
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  grad_clip: 1.0
+
+  # Loss weights
+  lambda_pde: 1.0    # PDE residual loss weight
+  lambda_rmse: 0.0   # RMSE loss weight (0 = pure physics-informed)
+
+  # Use fp32 for FFT operations (more stable)
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+  eval_interval: 100    # Validate every N steps
+  early_stopping_patience: 30
+
+# Logging
+logging:
+  project: "pde-fno"
+  entity: "reca1c1trant-ntu"
+  save_dir: "./checkpoints_fno_burgers"
+  log_interval: 10
