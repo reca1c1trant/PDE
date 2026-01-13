@@ -14,9 +14,10 @@ from pathlib import Path
 
 
 def test_flow_mixing_pde():
-    """Test Flow Mixing PDE loss on ground truth."""
+    """Test Flow Mixing PDE loss on ground truth (all samples, all clips)."""
     from dataset_flow import FlowMixingDataset
     from pde_loss_flow import flow_mixing_pde_loss
+    from tqdm import tqdm
 
     data_path = "./flow_mixing_vtmax0.3_0.5_res128_t1000_n150.h5"
     if not Path(data_path).exists():
@@ -27,24 +28,35 @@ def test_flow_mixing_pde():
     print("Testing Flow Mixing PDE Loss on Ground Truth")
     print("=" * 60)
 
-    # Load dataset
+    # Load dataset with ALL clips
     dataset = FlowMixingDataset(
         data_path=data_path,
         temporal_length=16,
         split='train',
-        clips_per_sample=10,
+        clips_per_sample=None,  # All clips
     )
 
-    # Test on several samples
-    pde_losses = []
-    for i in range(min(5, len(dataset))):
+    print(f"Total samples: {len(dataset.samples)}")
+    print(f"Total clips: {len(dataset)}")
+    print()
+
+    # Accumulate stats
+    total_pde_loss = 0.0
+    total_time_loss = 0.0
+    total_advection_loss = 0.0
+    residual_min = float('inf')
+    residual_max = float('-inf')
+    residual_abs_sum = 0.0
+    total_residual_count = 0
+
+    for i in tqdm(range(len(dataset)), desc="Processing clips"):
         sample = dataset[i]
 
         # Ground truth data [T=17, H, W, 6]
-        data = sample['data'].unsqueeze(0)  # [1, 17, H, W, 6]
+        data = sample['data'].unsqueeze(0)
         vtmax = sample['vtmax'].item()
 
-        # Boundaries [T=17, H, 1, 1] etc -> [1, T, H, 1, 1]
+        # Boundaries
         bnd_left = sample['boundary_left'].unsqueeze(0)
         bnd_right = sample['boundary_right'].unsqueeze(0)
         bnd_bottom = sample['boundary_bottom'].unsqueeze(0)
@@ -64,25 +76,36 @@ def test_flow_mixing_pde():
             dt=1/999,
         )
 
-        pde_losses.append(pde_loss.item())
+        total_pde_loss += pde_loss.item()
+        total_time_loss += loss_time.item()
+        total_advection_loss += loss_advection.item()
+        residual_min = min(residual_min, residual.min().item())
+        residual_max = max(residual_max, residual.max().item())
+        residual_abs_sum += residual.abs().sum().item()
+        total_residual_count += residual.numel()
 
-        print(f"Sample {i}: vtmax={vtmax:.4f}")
-        print(f"  PDE Loss: {pde_loss.item():.6e}")
-        print(f"  Time derivative loss: {loss_time.item():.6e}")
-        print(f"  Advection loss: {loss_advection.item():.6e}")
-        print(f"  Residual: min={residual.min().item():.6e}, max={residual.max().item():.6e}, mean={residual.abs().mean().item():.6e}")
-        print()
-
-    avg_loss = np.mean(pde_losses)
-    print(f"Average PDE Loss on GT: {avg_loss:.6e}")
-    print(f"Expected: ~0 (if correct)")
+    n = len(dataset)
+    print()
+    print("=" * 60)
+    print("Results (All Clips)")
+    print("=" * 60)
+    print(f"Total clips evaluated: {n}")
+    print(f"Average PDE Loss: {total_pde_loss / n:.6e}")
+    print(f"Average Time Loss: {total_time_loss / n:.6e}")
+    print(f"Average Advection Loss: {total_advection_loss / n:.6e}")
+    print(f"Residual min: {residual_min:.6e}")
+    print(f"Residual max: {residual_max:.6e}")
+    print(f"Residual abs mean: {residual_abs_sum / total_residual_count:.6e}")
+    print()
+    print(f"Expected: PDE Loss ~0 (if implementation is correct)")
     print()
 
 
 def test_burgers_pde():
-    """Test Burgers PDE loss on ground truth."""
+    """Test Burgers PDE loss on ground truth (all samples, all clips)."""
     from dataset_burgers import BurgersDataset
     from pde_loss import burgers_pde_loss_upwind
+    from tqdm import tqdm
 
     data_path = "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
     if not Path(data_path).exists():
@@ -93,21 +116,32 @@ def test_burgers_pde():
     print("Testing Burgers PDE Loss on Ground Truth")
     print("=" * 60)
 
-    # Load dataset
+    # Load dataset with ALL clips
     dataset = BurgersDataset(
         data_path=data_path,
         temporal_length=16,
         split='train',
-        clips_per_sample=10,
+        clips_per_sample=None,  # All clips
     )
 
-    # Test on several samples
-    pde_losses = []
-    for i in range(min(5, len(dataset))):
+    print(f"Total samples: {len(dataset.samples)}")
+    print(f"Total clips: {len(dataset)}")
+    print()
+
+    # Accumulate stats
+    total_pde_loss = 0.0
+    total_loss_u = 0.0
+    total_loss_v = 0.0
+    residual_u_min = float('inf')
+    residual_u_max = float('-inf')
+    residual_v_min = float('inf')
+    residual_v_max = float('-inf')
+
+    for i in tqdm(range(len(dataset)), desc="Processing clips"):
         sample = dataset[i]
 
         # Ground truth data [T=17, H, W, 6]
-        data = sample['data'].unsqueeze(0)  # [1, 17, H, W, 6]
+        data = sample['data'].unsqueeze(0)
         nu = sample['nu'].item()
 
         # Boundaries
@@ -130,19 +164,27 @@ def test_burgers_pde():
             dt=1/999,
         )
 
-        pde_losses.append(pde_loss.item())
+        total_pde_loss += pde_loss.item()
+        total_loss_u += loss_u.item()
+        total_loss_v += loss_v.item()
+        residual_u_min = min(residual_u_min, residual_u.min().item())
+        residual_u_max = max(residual_u_max, residual_u.max().item())
+        residual_v_min = min(residual_v_min, residual_v.min().item())
+        residual_v_max = max(residual_v_max, residual_v.max().item())
 
-        print(f"Sample {i}: nu={nu:.4f}")
-        print(f"  PDE Loss: {pde_loss.item():.6e}")
-        print(f"  Loss u: {loss_u.item():.6e}")
-        print(f"  Loss v: {loss_v.item():.6e}")
-        print(f"  Residual u: min={residual_u.min().item():.6e}, max={residual_u.max().item():.6e}")
-        print(f"  Residual v: min={residual_v.min().item():.6e}, max={residual_v.max().item():.6e}")
-        print()
-
-    avg_loss = np.mean(pde_losses)
-    print(f"Average PDE Loss on GT: {avg_loss:.6e}")
-    print(f"Expected: ~0 (if correct)")
+    n = len(dataset)
+    print()
+    print("=" * 60)
+    print("Results (All Clips)")
+    print("=" * 60)
+    print(f"Total clips evaluated: {n}")
+    print(f"Average PDE Loss: {total_pde_loss / n:.6e}")
+    print(f"Average Loss u: {total_loss_u / n:.6e}")
+    print(f"Average Loss v: {total_loss_v / n:.6e}")
+    print(f"Residual u: min={residual_u_min:.6e}, max={residual_u_max:.6e}")
+    print(f"Residual v: min={residual_v_min:.6e}, max={residual_v_max:.6e}")
+    print()
+    print(f"Expected: PDE Loss ~0 (if implementation is correct)")
     print()
 
 
