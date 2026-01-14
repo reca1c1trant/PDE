@@ -59,6 +59,10 @@ class SpectralConv2d(nn.Module):
             [B, out_channels, H, W] tensor
         """
         B, C, H, W = x.shape
+        orig_dtype = x.dtype
+
+        # FFT requires float32 (not bf16)
+        x = x.float()
 
         # Compute 2D FFT
         x_ft = torch.fft.rfft2(x)
@@ -82,7 +86,8 @@ class SpectralConv2d(nn.Module):
         # Inverse FFT
         x = torch.fft.irfft2(out_ft, s=(H, W))
 
-        return x
+        # Convert back to original dtype
+        return x.to(orig_dtype)
 
 
 class FNOLayer(nn.Module):
@@ -180,7 +185,9 @@ class SpectralEncoderBlock(nn.Module):
         x = self.fno(x)
 
         # Extract spectral skip (FFT coefficients)
-        x_fft = torch.fft.rfft2(x)
+        # FFT requires float32
+        x_float = x.float()
+        x_fft = torch.fft.rfft2(x_float)
         modes = self.spectral_skip_modes
         spectral_skip = x_fft[:, :, :modes, :modes//2+1].clone()
 

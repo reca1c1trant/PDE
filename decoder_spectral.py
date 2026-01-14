@@ -52,8 +52,11 @@ class SpectralFusion(nn.Module):
         Returns:
             fused: [B, C_out, H, W]
         """
-        # IFFT to spatial domain
+        orig_dtype = decoder_feat.dtype
+
+        # IFFT to spatial domain (FFT requires float32)
         skip_spatial = torch.fft.irfft2(spectral_skip, s=output_size)
+        skip_spatial = skip_spatial.to(orig_dtype)
 
         # Concat and fuse
         concat = torch.cat([decoder_feat, skip_spatial], dim=1)
