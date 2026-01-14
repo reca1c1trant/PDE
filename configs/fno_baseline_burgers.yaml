@@ -1,0 +1,61 @@
+# FNO Baseline Training Configuration - Burgers Equation
+#
+# Pure Fourier Neural Operator as baseline comparison.
+# Much simpler and smaller than SUT-FNO.
+#
+# Model size: ~2-3M params (vs SUT-FNO ~87M)
+# Training: Much faster due to smaller model
+
+# Model Configuration
+model:
+  in_channels: 6
+  out_channels: 6
+  width: 64                            # Hidden channel width
+  modes: 32                            # Fourier modes to keep
+  n_layers: 4                          # Number of FNO blocks
+
+# Dataset
+dataset:
+  path: "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
+  temporal_length: 16                  # Will load 17 frames (16+1)
+  train_ratio: 0.9
+  seed: 42
+  clips_per_sample: 100                # K clips per sample per epoch
+
+# Physics parameters
+physics:
+  dt: 0.001001001                      # 1/999, time step
+  Lx: 1.0                              # Domain size x
+  Ly: 1.0                              # Domain size y
+
+# DataLoader
+dataloader:
+  batch_size: 16                       # Larger batch size (smaller model)
+  num_workers: 4
+  pin_memory: true
+
+# Training
+training:
+  max_epochs: 50
+  warmup_steps: 200
+  learning_rate: 1.0e-3                # Higher LR for smaller model
+  min_lr: 1.0e-5
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  grad_clip: 1.0
+
+  # Loss weights
+  lambda_pde: 1.0                      # PDE residual loss weight
+  lambda_rmse: 1.0                     # RMSE loss weight
+
+  mixed_precision: "bf16"
+  gradient_accumulation_steps: 1
+  eval_interval: 100
+  early_stopping_patience: 30
+
+# Logging
+logging:
+  project: "pde-fno-baseline"
+  entity: "reca1c1trant-ntu"
+  save_dir: "./checkpoints_fno_baseline_burgers"
+  log_interval: 10
