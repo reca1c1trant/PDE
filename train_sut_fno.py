@@ -240,7 +240,7 @@ def main():
     config = load_config(args.config)
     set_seed(config['dataset']['seed'])
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
     accelerator = Accelerator(
         mixed_precision=config['training'].get('mixed_precision', 'bf16'),
