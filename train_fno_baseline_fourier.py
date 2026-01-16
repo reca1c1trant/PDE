@@ -1,15 +1,15 @@
 """
-FNO Baseline Training Script.
+FNO Baseline Training Script with Fourier PDE Loss.
 
-Train pure FNO model on Burgers equation as a baseline comparison.
-Much simpler and faster than SUT-FNO.
+Same as train_fno_baseline.py, but uses Fourier derivatives for PDE loss
+instead of finite difference (more accurate, spectral precision).
 
 Usage:
     # Single GPU
-    python train_fno_baseline.py --config configs/fno_baseline_burgers.yaml
+    python train_fno_baseline_fourier.py --config configs/fno_baseline_burgers.yaml
 
     # Multi-GPU
-    torchrun --nproc_per_node=8 train_fno_baseline.py --config configs/fno_baseline_burgers.yaml
+    torchrun --nproc_per_node=8 train_fno_baseline_fourier.py --config configs/fno_baseline_burgers.yaml
 """
 
 import os
@@ -56,7 +56,7 @@ else:
 
 from model_fno_baseline import create_fno_baseline
 from dataset_burgers import BurgersDataset, BurgersSampler, burgers_collate_fn
-from pde_loss import burgers_pde_loss_upwind
+from pde_loss_fourier import burgers_pde_loss_fourier  # Use Fourier PDE loss
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ def get_lr_scheduler(optimizer, config: dict, total_steps: int):
     from torch.optim.lr_scheduler import LambdaLR
     import math
 
-    warmup_steps = config['training'].get('warmup_steps', 500)
+    warmup_steps = config['training'].get('warmup_steps', 200)
     min_lr = config['training'].get('min_lr', 1e-6)
     base_lr = config['training']['learning_rate']
     min_lr_ratio = min_lr / base_lr
@@ -133,42 +133,32 @@ def get_lr_scheduler(optimizer, config: dict, total_steps: int):
     return LambdaLR(optimizer, lr_lambda)
 
 
-def compute_pde_loss(output, input_data, batch, config, accelerator):
-    """Compute PDE residual loss for Burgers equation.
+def compute_pde_loss_fourier(output, input_data, batch, config, accelerator):
+    """Compute PDE residual loss using Fourier derivatives (spectral accuracy)."""
+    # Combine t0 frame with predictions for full sequence
+    t0_frame = input_data[:, 0:1]  # [B, 1, H, W, 2]
+    pred_with_t0 = torch.cat([t0_frame, output], dim=1)  # [B, T, H, W, 2]
 
-    Note: input is already 2 channels (u, v) only.
-    """
-    t0_frame = input_data[:, 0:1]
-    pred_with_t0 = torch.cat([t0_frame, output], dim=1)
-    pred_uv = pred_with_t0.float()  # Already 2 channels
-
-    boundary_left = batch['boundary_left'].to(accelerator.device).float()
-    boundary_right = batch['boundary_right'].to(accelerator.device).float()
-    boundary_bottom = batch['boundary_bottom'].to(accelerator.device).float()
-    boundary_top = batch['boundary_top'].to(accelerator.device).float()
-    nu = batch['nu'].to(accelerator.device).float()
-
+    # Get physics parameters
+    nu = batch['nu'].to(accelerator.device).float().mean().item()
     dt = config.get('physics', {}).get('dt', 1/999)
-    nu_mean = nu.mean().item()
+    dx = config.get('physics', {}).get('Lx', 1.0) / pred_with_t0.shape[2]
+    dy = config.get('physics', {}).get('Ly', 1.0) / pred_with_t0.shape[3]
 
-    pde_loss, loss_u, loss_v, _, _ = burgers_pde_loss_upwind(
-        pred=pred_uv,
-        boundary_left=boundary_left,
-        boundary_right=boundary_right,
-        boundary_bottom=boundary_bottom,
-        boundary_top=boundary_top,
-        nu=nu_mean,
-        dt=dt
+    # Compute Fourier PDE loss
+    pde_loss, loss_u, loss_v = burgers_pde_loss_fourier(
+        pred=pred_with_t0.float(),
+        nu=nu,
+        dt=dt,
+        dx=dx,
+        dy=dy,
     )
 
     return pde_loss, loss_u, loss_v
 
 
 def compute_rmse_loss(output, target):
-    """Compute RMSE loss between output and ground truth.
-
-    Note: input is already 2 channels (u, v) only.
-    """
+    """Compute RMSE loss between output and ground truth."""
     mse = torch.mean((output - target) ** 2)
     rmse = torch.sqrt(mse + 1e-8)
     return rmse
@@ -184,7 +174,7 @@ def validate(model, val_loader, config, accelerator):
     num_batches = torch.zeros(1, device=accelerator.device)
 
     for batch in val_loader:
-        # Only use first 2 channels (u, v) for Burgers equation
+        # Only use first 2 channels (u, v)
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         data = data[..., :2]  # [B, T, H, W, 2]
         input_data = data[:, :-1]
@@ -192,7 +182,7 @@ def validate(model, val_loader, config, accelerator):
 
         output = model(data)
 
-        pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator)
+        pde_loss, _, _ = compute_pde_loss_fourier(output, input_data, batch, config, accelerator)
         rmse_loss = compute_rmse_loss(output, target)
 
         total_pde_loss += pde_loss.detach()
@@ -264,11 +254,11 @@ def main():
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
-        logger.info(f"FNO Baseline Training - Burgers Equation")
+        logger.info(f"FNO Baseline + Fourier PDE Loss - Burgers Equation")
         logger.info(f"{'='*60}")
         logger.info(f"Config: {args.config}")
+        logger.info(f"PDE Loss: Fourier derivatives (spectral accuracy)")
         logger.info(f"Max Epochs: {max_epochs}")
-        logger.info(f"Warmup Steps: {warmup_steps}")
         logger.info(f"Learning Rate: {config['training']['learning_rate']}")
         logger.info(f"Loss: lambda_pde={lambda_pde}, lambda_rmse={lambda_rmse}")
         logger.info(f"{'='*60}")
@@ -310,19 +300,19 @@ def main():
 
     # Init WandB
     if accelerator.is_main_process:
-        run_name = f"fno-baseline-pde{lambda_pde}-rmse{lambda_rmse}"
+        run_name = f"fno-fourier-pde{lambda_pde}-rmse{lambda_rmse}"
         accelerator.init_trackers(
             project_name=config['logging']['project'],
             config=config,
             init_kwargs={"wandb": {
                 "entity": config['logging'].get('entity'),
                 "name": run_name,
-                "tags": ["fno-baseline", "burgers"],
+                "tags": ["fno-baseline", "fourier-pde", "burgers"],
             }}
         )
 
-    # Save directory
-    save_dir = Path(config['logging']['save_dir'])
+    # Save directory - use different folder for Fourier version
+    save_dir = Path(config['logging']['save_dir'].replace('_burgers', '_burgers_fourier'))
     if accelerator.is_main_process:
         save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -337,6 +327,7 @@ def main():
     if accelerator.is_main_process:
         logger.info(f"Steps per epoch: {steps_per_epoch}")
         logger.info(f"Total steps: {total_steps}")
+        logger.info(f"Save dir: {save_dir}")
 
     model.train()
 
@@ -350,7 +341,7 @@ def main():
         console=console,
         disable=not accelerator.is_main_process,
     ) as progress:
-        train_task = progress.add_task("FNO Baseline", total=total_steps)
+        train_task = progress.add_task("FNO + Fourier PDE", total=total_steps)
 
         for epoch in range(max_epochs):
             if early_stop:
@@ -366,7 +357,7 @@ def main():
                 if early_stop:
                     break
 
-                # Only use first 2 channels (u, v) for Burgers equation
+                # Only use first 2 channels (u, v)
                 data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
                 data = data[..., :2]  # [B, T, H, W, 2]
                 input_data = data[:, :-1]
@@ -377,8 +368,8 @@ def main():
                 with accelerator.accumulate(model):
                     output = model(data)
 
-                    # PDE loss
-                    pde_loss, loss_u, loss_v = compute_pde_loss(
+                    # Fourier PDE loss (spectral accuracy)
+                    pde_loss, loss_u, loss_v = compute_pde_loss_fourier(
                         output, input_data, batch, config, accelerator
                     )
 
@@ -494,7 +485,7 @@ def main():
     accelerator.end_training()
 
     if accelerator.is_main_process:
-        table = Table(title="FNO Baseline Training Complete", show_header=False, border_style="green")
+        table = Table(title="FNO + Fourier PDE Training Complete", show_header=False, border_style="green")
         table.add_row("Total Epochs", str(epoch + 1))
         table.add_row("Total Steps", str(global_step))
         table.add_row("Best Val Loss", f"{best_val_loss:.6f}")

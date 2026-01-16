@@ -135,8 +135,8 @@ class FNOBaseline(nn.Module):
         self.config = config
 
         model_cfg = config.get('model', {})
-        self.in_channels = model_cfg.get('in_channels', 6)
-        self.out_channels = model_cfg.get('out_channels', 6)
+        self.in_channels = model_cfg.get('in_channels', 2)  # u, v only
+        self.out_channels = model_cfg.get('out_channels', 2)
         self.width = model_cfg.get('width', 64)
         self.modes = model_cfg.get('modes', 32)
         self.n_layers = model_cfg.get('n_layers', 4)
@@ -243,8 +243,8 @@ if __name__ == "__main__":
     # Test config
     config = {
         'model': {
-            'in_channels': 6,
-            'out_channels': 6,
+            'in_channels': 2,   # u, v only
+            'out_channels': 2,
             'width': 64,
             'modes': 32,
             'n_layers': 4,
@@ -264,7 +264,7 @@ if __name__ == "__main__":
 
     # Test forward pass
     print(f"\nTesting forward pass...")
-    x = torch.randn(2, 17, 128, 128, 6).to(device)
+    x = torch.randn(2, 17, 128, 128, 2).to(device)  # Only 2 channels (u, v)
 
     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
         output = model(x)

@@ -8,8 +8,8 @@
 
 # Model Configuration
 model:
-  in_channels: 6
-  out_channels: 6
+  in_channels: 2                       # Only u, v channels (no padding)
+  out_channels: 2
   width: 64                            # Hidden channel width
   modes: 32                            # Fourier modes to keep
   n_layers: 4                          # Number of FNO blocks
