@@ -1,13 +1,15 @@
-# FNO Baseline V2 Training Configuration - Burgers Equation
+# FNO Baseline V2 Training Configuration - Flow Mixing Equation
 #
 # V2 improvements:
 # Model: Residual skip, Positional embedding, ChannelMLP (PINO-aligned)
 # Training: Normalized PDE loss, Progressive weight, Boundary loss
+#
+# Key difference from Burgers: in_channels=1, out_channels=1
 
 # Model Configuration
 model:
-  in_channels: 2                       # Only u, v channels
-  out_channels: 2
+  in_channels: 1                       # Flow only has u channel
+  out_channels: 1
   width: 64                            # Hidden channel width
   modes: 32                            # Fourier modes to keep
   n_layers: 8                          # Number of FNO blocks
@@ -21,8 +23,8 @@ model:
 
 # Dataset
 dataset:
-  path: "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
-  temporal_length: 8                  # Will load 17 frames (16+1)
+  path: "./flow_mixing_vtmax0.5_2.0_res128_t1000_n100.h5"
+  temporal_length: 8                   # Will load 9 frames (8+1)
   train_ratio: 0.9
   seed: 42
   clips_per_sample: null
@@ -43,7 +45,7 @@ dataloader:
 training:
   max_epochs: 20
   warmup_steps: 200                    # LR warmup
-  pde_warmup_steps: 1000               # V2: PDE weight warmup (0 → lambda_pde)
+  pde_warmup_steps: 1000               # PDE weight warmup (0 → lambda_pde)
   learning_rate: 1.0e-3
   min_lr: 1.0e-5
   weight_decay: 1.0e-4
@@ -53,7 +55,7 @@ training:
   # Loss weights
   lambda_rmse: 1.0                     # RMSE loss weight (constant)
   lambda_pde: 1.0                      # PDE loss weight (progressive: 0 → 1.0)
-  lambda_bc: 1.0                       # V2: Boundary loss weight
+  lambda_bc: 1.0                       # Boundary loss weight
 
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1
@@ -64,5 +66,5 @@ training:
 logging:
   project: "pde-fno-baseline-v2"
   entity: "reca1c1trant-ntu"
-  save_dir: "./checkpoints_fno_baseline_burgers_v2"
+  save_dir: "./checkpoints_fno_baseline_flow_v2"
   log_interval: 10
