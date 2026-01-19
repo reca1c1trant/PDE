@@ -543,7 +543,14 @@ def main():
                                 if accelerator.is_main_process:
                                     console.print(f"[red]Early stopping triggered![/red]")
                                 early_stop = True
-                                break
+
+                    # Sync early_stop across all ranks to prevent NCCL timeout
+                    early_stop_tensor = torch.tensor([1 if early_stop else 0], device=accelerator.device)
+                    early_stop_tensor = accelerator.reduce(early_stop_tensor, reduction='max')
+                    early_stop = early_stop_tensor.item() > 0
+
+                    if early_stop:
+                        break
 
                     model.train()
 

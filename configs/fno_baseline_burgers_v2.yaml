@@ -10,7 +10,7 @@ model:
   out_channels: 2
   width: 64                            # Hidden channel width
   modes: 32                            # Fourier modes to keep
-  n_layers: 4                          # Number of FNO blocks
+  n_layers: 8                          # Number of FNO blocks
 
   # Architecture options (PINO-aligned)
   use_positional_embedding: true       # Add (x, y) coordinate grid
@@ -22,10 +22,10 @@ model:
 # Dataset
 dataset:
   path: "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
-  temporal_length: 16                  # Will load 17 frames (16+1)
+  temporal_length: 8                  # Will load 17 frames (16+1)
   train_ratio: 0.9
   seed: 42
-  clips_per_sample: 100
+  clips_per_sample: null
 
 # Physics parameters
 physics:
@@ -41,7 +41,7 @@ dataloader:
 
 # Training
 training:
-  max_epochs: 50
+  max_epochs: 20
   warmup_steps: 200                    # LR warmup
   pde_warmup_steps: 1000               # V2: PDE weight warmup (0 → lambda_pde)
   learning_rate: 1.0e-3
@@ -58,7 +58,7 @@ training:
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1
   eval_interval: 100
-  early_stopping_patience: 30
+  early_stopping_patience: 300
 
 # Logging
 logging:
