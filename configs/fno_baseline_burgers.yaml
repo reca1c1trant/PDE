@@ -47,6 +47,7 @@ training:
   # Loss weights
   lambda_pde: 1.0                      # PDE residual loss weight
   lambda_rmse: 1.0                     # RMSE loss weight
+  lambda_bc: 1.0                       # Boundary loss weight (4 edges RMSE)
 
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1

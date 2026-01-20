@@ -235,3 +235,6 @@ ICMLTemplate/
 docs/
 
 *.pdf
+unet.py
+train_PINN_transient.py
+*.ipynb
