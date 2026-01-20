@@ -1,0 +1,71 @@
+# MLP Baseline Training Configuration - Flow Mixing Equation
+#
+# SIREN-style MLP as baseline comparison (inspired by n-PINN).
+# Uses sin activation function for smooth function approximation.
+#
+# PDE: du/dt + a*du/dx + b*du/dy = 0
+# where a(x,y), b(x,y) are spatially varying coefficients
+#
+# Features:
+# - 2nd order upwind scheme for PDE loss (n-PINN style)
+# - clips_per_sample: null (use full trajectory)
+
+# Model Configuration
+model:
+  type: mlp                               # Use MLP baseline (SIREN-style)
+  in_channels: 6                          # Padded to 6 channels (only 1 real)
+  out_channels: 6                         # Output channels
+  width: 64                               # Hidden channel width
+  n_layers: 4                             # Number of SIREN blocks
+  omega_0: 30.0                           # SIREN first layer frequency
+  use_positional_embedding: true          # Add (x, y) coordinates
+  use_residual: true                      # Residual connections
+  grid_h: 128
+  grid_w: 128
+
+# Dataset
+dataset:
+  path: "./flow_mixing_vtmax0.2_0.6_res128_t1000_n100.h5"
+  temporal_length: 16                     # Will load 17 frames (16+1)
+  train_ratio: 0.9
+  seed: 42
+  clips_per_sample: null                  # null = use full trajectory
+
+# Physics parameters
+physics:
+  dt: 0.001001001                         # 1/999, time step
+  Lx: 1.0                                 # Domain size x
+  Ly: 1.0                                 # Domain size y
+
+# DataLoader
+dataloader:
+  batch_size: 16                          # Batch size
+  num_workers: 4
+  pin_memory: true
+
+# Training
+training:
+  max_epochs: 50
+  warmup_steps: 200
+  learning_rate: 1.0e-3
+  min_lr: 1.0e-5
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  grad_clip: 1.0
+
+  # Loss weights
+  lambda_pde: 1.0                         # PDE residual loss weight (2nd order upwind)
+  lambda_rmse: 1.0                        # RMSE loss weight
+  lambda_bc: 1.0                          # Boundary loss weight (4 edges RMSE)
+
+  mixed_precision: "bf16"
+  gradient_accumulation_steps: 1
+  eval_interval: 100
+  early_stopping_patience: 30
+
+# Logging
+logging:
+  project: "pde-mlp-baseline-flow"
+  entity: "reca1c1trant-ntu"
+  save_dir: "./checkpoints_mlp_baseline_flow"
+  log_interval: 10

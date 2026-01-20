@@ -1,5 +1,5 @@
 """
-2D Flow Mixing PDE residual loss.
+2D Flow Mixing PDE residual loss - 二阶迎风格式版本
 
 PDE: ∂u/∂t + a·∂u/∂x + b·∂u/∂y = 0
 
@@ -11,10 +11,17 @@ where:
 
 Derivative computation:
 - Time derivative: backward difference (from index 1)
-- Spatial derivatives: upwind scheme (based on a, b signs)
+- Spatial derivatives: **二阶迎风格式** O(h²) (与 n-PINN 一致)
+
+二阶迎风格式公式 (借鉴 n-PINN d02 notebook cell-18):
+- 正向流动 (a/b > 0): (3u - 4u_left + u_left_left) / (2dx)
+- 负向流动 (a/b < 0): (-u_right_right + 4u_right - 3u) / (2dx)
+
+需要 2x 距离的 ghost cells 用于边界处理。
 
 Author: Ziye
 Date: January 2025
+Updated: January 2025 - 升级为二阶迎风 (n-PINN style)
 """
 
 import torch
@@ -76,7 +83,7 @@ def compute_flow_coefficients(
     return a, b
 
 
-def pad_with_boundaries(
+def pad_with_boundaries_2x(
     interior: torch.Tensor,
     boundary_left: torch.Tensor,
     boundary_right: torch.Tensor,
@@ -84,7 +91,11 @@ def pad_with_boundaries(
     boundary_top: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Pad interior grid with boundary values using ghost cell extrapolation.
+    Pad interior grid with 2 layers of ghost cells for 2nd order upwind.
+
+    Ghost cell extrapolation (linear):
+    - ghost1 = 2*boundary - interior[0]     (1x distance from boundary)
+    - ghost2 = 3*boundary - 2*interior[0]   (2x distance from boundary)
 
     Parameters:
     -----------
@@ -96,38 +107,76 @@ def pad_with_boundaries(
 
     Returns:
     --------
-    padded : torch.Tensor [B, T, H+2, W+2]
+    padded : torch.Tensor [B, T, H+4, W+4]
     """
     B, T, H, W = interior.shape
 
-    # Ghost cells via linear extrapolation
-    ghost_left = 2 * boundary_left.squeeze(-1) - interior[..., 0]      # [B, T, H]
-    ghost_right = 2 * boundary_right.squeeze(-1) - interior[..., -1]   # [B, T, H]
-    ghost_bottom = 2 * boundary_bottom.squeeze(-2) - interior[..., 0, :]  # [B, T, W]
-    ghost_top = 2 * boundary_top.squeeze(-2) - interior[..., -1, :]       # [B, T, W]
+    # Squeeze boundaries
+    bnd_left = boundary_left.squeeze(-1)      # [B, T, H]
+    bnd_right = boundary_right.squeeze(-1)    # [B, T, H]
+    bnd_bottom = boundary_bottom.squeeze(-2)  # [B, T, W]
+    bnd_top = boundary_top.squeeze(-2)        # [B, T, W]
 
-    # Corner points
-    corner_bl = (ghost_left[:, :, 0:1] + ghost_bottom[:, :, 0:1]) / 2
-    corner_br = (ghost_right[:, :, 0:1] + ghost_bottom[:, :, -1:]) / 2
-    corner_tl = (ghost_left[:, :, -1:] + ghost_top[:, :, 0:1]) / 2
-    corner_tr = (ghost_right[:, :, -1:] + ghost_top[:, :, -1:]) / 2
+    # Ghost cells for left/right (x-direction)
+    # ghost1 at distance dx from boundary, ghost2 at distance 2*dx
+    ghost_left_1 = 2 * bnd_left - interior[..., 0]          # [B, T, H]
+    ghost_left_2 = 3 * bnd_left - 2 * interior[..., 0]      # [B, T, H]
+    ghost_right_1 = 2 * bnd_right - interior[..., -1]       # [B, T, H]
+    ghost_right_2 = 3 * bnd_right - 2 * interior[..., -1]   # [B, T, H]
 
-    # Build middle rows [B, T, H, W+2]
-    ghost_left_col = ghost_left.unsqueeze(-1)
-    ghost_right_col = ghost_right.unsqueeze(-1)
-    middle_rows = torch.cat([ghost_left_col, interior, ghost_right_col], dim=-1)
+    # Ghost cells for bottom/top (y-direction)
+    ghost_bottom_1 = 2 * bnd_bottom - interior[..., 0, :]   # [B, T, W]
+    ghost_bottom_2 = 3 * bnd_bottom - 2 * interior[..., 0, :]
+    ghost_top_1 = 2 * bnd_top - interior[..., -1, :]        # [B, T, W]
+    ghost_top_2 = 3 * bnd_top - 2 * interior[..., -1, :]
 
-    # Bottom and top rows [B, T, 1, W+2]
-    bottom_row = torch.cat([corner_bl.unsqueeze(-1), ghost_bottom.unsqueeze(-2), corner_br.unsqueeze(-1)], dim=-1)
-    top_row = torch.cat([corner_tl.unsqueeze(-1), ghost_top.unsqueeze(-2), corner_tr.unsqueeze(-1)], dim=-1)
+    # Build padded tensor [B, T, H+4, W+4]
+    padded = torch.zeros(B, T, H + 4, W + 4, device=interior.device, dtype=interior.dtype)
 
-    # Assemble [B, T, H+2, W+2]
-    padded = torch.cat([bottom_row, middle_rows, top_row], dim=-2)
+    # Fill interior
+    padded[:, :, 2:H+2, 2:W+2] = interior
+
+    # Fill ghost cells (left/right columns)
+    padded[:, :, 2:H+2, 0] = ghost_left_2
+    padded[:, :, 2:H+2, 1] = ghost_left_1
+    padded[:, :, 2:H+2, W+2] = ghost_right_1
+    padded[:, :, 2:H+2, W+3] = ghost_right_2
+
+    # Fill ghost cells (bottom/top rows) - only interior width first
+    padded[:, :, 0, 2:W+2] = ghost_bottom_2
+    padded[:, :, 1, 2:W+2] = ghost_bottom_1
+    padded[:, :, H+2, 2:W+2] = ghost_top_1
+    padded[:, :, H+3, 2:W+2] = ghost_top_2
+
+    # Fill corners with average of neighboring ghost cells
+    # Bottom-left corner
+    padded[:, :, 0, 0] = (ghost_left_2[:, :, 0] + ghost_bottom_2[:, :, 0]) / 2
+    padded[:, :, 0, 1] = (ghost_left_1[:, :, 0] + ghost_bottom_2[:, :, 0]) / 2
+    padded[:, :, 1, 0] = (ghost_left_2[:, :, 0] + ghost_bottom_1[:, :, 0]) / 2
+    padded[:, :, 1, 1] = (ghost_left_1[:, :, 0] + ghost_bottom_1[:, :, 0]) / 2
+
+    # Bottom-right corner
+    padded[:, :, 0, W+2] = (ghost_right_1[:, :, 0] + ghost_bottom_2[:, :, -1]) / 2
+    padded[:, :, 0, W+3] = (ghost_right_2[:, :, 0] + ghost_bottom_2[:, :, -1]) / 2
+    padded[:, :, 1, W+2] = (ghost_right_1[:, :, 0] + ghost_bottom_1[:, :, -1]) / 2
+    padded[:, :, 1, W+3] = (ghost_right_2[:, :, 0] + ghost_bottom_1[:, :, -1]) / 2
+
+    # Top-left corner
+    padded[:, :, H+2, 0] = (ghost_left_2[:, :, -1] + ghost_top_1[:, :, 0]) / 2
+    padded[:, :, H+2, 1] = (ghost_left_1[:, :, -1] + ghost_top_1[:, :, 0]) / 2
+    padded[:, :, H+3, 0] = (ghost_left_2[:, :, -1] + ghost_top_2[:, :, 0]) / 2
+    padded[:, :, H+3, 1] = (ghost_left_1[:, :, -1] + ghost_top_2[:, :, 0]) / 2
+
+    # Top-right corner
+    padded[:, :, H+2, W+2] = (ghost_right_1[:, :, -1] + ghost_top_1[:, :, -1]) / 2
+    padded[:, :, H+2, W+3] = (ghost_right_2[:, :, -1] + ghost_top_1[:, :, -1]) / 2
+    padded[:, :, H+3, W+2] = (ghost_right_1[:, :, -1] + ghost_top_2[:, :, -1]) / 2
+    padded[:, :, H+3, W+3] = (ghost_right_2[:, :, -1] + ghost_top_2[:, :, -1]) / 2
 
     return padded
 
 
-def upwind_derivative_x(
+def upwind_derivative_x_2nd(
     u_padded: torch.Tensor,
     velocity: torch.Tensor,
     H: int,
@@ -135,11 +184,15 @@ def upwind_derivative_x(
     dx: float,
 ) -> torch.Tensor:
     """
-    Compute x-derivative using upwind scheme.
+    Compute x-derivative using 2nd order upwind scheme (n-PINN style).
+
+    Formula (from n-PINN d02 notebook cell-18):
+    - Positive flow (a > 0): (3u - 4u_left + u_left_left) / (2dx)
+    - Negative flow (a < 0): (-u_right_right + 4u_right - 3u) / (2dx)
 
     Parameters:
     -----------
-    u_padded : torch.Tensor [B, T, H+2, W+2]
+    u_padded : torch.Tensor [B, T, H+4, W+4]
     velocity : torch.Tensor [H, W] - coefficient a(x,y)
     H, W : int
     dx : float
@@ -148,22 +201,28 @@ def upwind_derivative_x(
     --------
     du_dx : torch.Tensor [B, T, H, W]
     """
-    u_center = u_padded[:, :, 1:H+1, 1:W+1]
-    u_left = u_padded[:, :, 1:H+1, 0:W]
-    u_right = u_padded[:, :, 1:H+1, 2:W+2]
+    # Extract stencil points from padded array (interior starts at index 2)
+    u_center = u_padded[:, :, 2:H+2, 2:W+2]       # u(i,j)
+    u_left = u_padded[:, :, 2:H+2, 1:W+1]         # u(i-1,j)
+    u_left_left = u_padded[:, :, 2:H+2, 0:W]      # u(i-2,j)
+    u_right = u_padded[:, :, 2:H+2, 3:W+3]        # u(i+1,j)
+    u_right_right = u_padded[:, :, 2:H+2, 4:W+4]  # u(i+2,j)
 
-    # Backward difference where velocity > 0
-    du_backward = (u_center - u_left) / dx
-    # Forward difference where velocity < 0
-    du_forward = (u_right - u_center) / dx
+    # 2nd order backward (for positive flow a > 0)
+    # (3u - 4u_left + u_left_left) / (2dx)
+    du_backward = (3 * u_center - 4 * u_left + u_left_left) / (2 * dx)
 
-    # Upwind selection
-    du_dx = torch.where(velocity > 0, du_backward, du_forward)
+    # 2nd order forward (for negative flow a < 0)
+    # (-u_right_right + 4u_right - 3u) / (2dx)
+    du_forward = (-u_right_right + 4 * u_right - 3 * u_center) / (2 * dx)
+
+    # Upwind selection based on coefficient sign
+    du_dx = torch.where(velocity >= 0, du_backward, du_forward)
 
     return du_dx
 
 
-def upwind_derivative_y(
+def upwind_derivative_y_2nd(
     u_padded: torch.Tensor,
     velocity: torch.Tensor,
     H: int,
@@ -171,11 +230,15 @@ def upwind_derivative_y(
     dy: float,
 ) -> torch.Tensor:
     """
-    Compute y-derivative using upwind scheme.
+    Compute y-derivative using 2nd order upwind scheme (n-PINN style).
+
+    Formula (from n-PINN d02 notebook cell-18):
+    - Positive flow (b > 0): (3u - 4u_bottom + u_bottom_bottom) / (2dy)
+    - Negative flow (b < 0): (-u_top_top + 4u_top - 3u) / (2dy)
 
     Parameters:
     -----------
-    u_padded : torch.Tensor [B, T, H+2, W+2]
+    u_padded : torch.Tensor [B, T, H+4, W+4]
     velocity : torch.Tensor [H, W] - coefficient b(x,y)
     H, W : int
     dy : float
@@ -184,16 +247,21 @@ def upwind_derivative_y(
     --------
     du_dy : torch.Tensor [B, T, H, W]
     """
-    u_center = u_padded[:, :, 1:H+1, 1:W+1]
-    u_bottom = u_padded[:, :, 0:H, 1:W+1]
-    u_top = u_padded[:, :, 2:H+2, 1:W+1]
+    # Extract stencil points (interior starts at index 2)
+    u_center = u_padded[:, :, 2:H+2, 2:W+2]         # u(i,j)
+    u_bottom = u_padded[:, :, 1:H+1, 2:W+2]         # u(i,j-1)
+    u_bottom_bottom = u_padded[:, :, 0:H, 2:W+2]    # u(i,j-2)
+    u_top = u_padded[:, :, 3:H+3, 2:W+2]            # u(i,j+1)
+    u_top_top = u_padded[:, :, 4:H+4, 2:W+2]        # u(i,j+2)
 
-    # Backward difference where velocity > 0
-    du_backward = (u_center - u_bottom) / dy
-    # Forward difference where velocity < 0
-    du_forward = (u_top - u_center) / dy
+    # 2nd order backward (for positive flow b > 0)
+    du_backward = (3 * u_center - 4 * u_bottom + u_bottom_bottom) / (2 * dy)
 
-    du_dy = torch.where(velocity > 0, du_backward, du_forward)
+    # 2nd order forward (for negative flow b < 0)
+    du_forward = (-u_top_top + 4 * u_top - 3 * u_center) / (2 * dy)
+
+    # Upwind selection based on coefficient sign
+    du_dy = torch.where(velocity >= 0, du_backward, du_forward)
 
     return du_dy
 
@@ -264,12 +332,12 @@ def flow_mixing_pde_loss(
     # Compute flow coefficients a(x,y), b(x,y) [H, W]
     a, b = compute_flow_coefficients(H, W, vtmax, device, dtype)
 
-    # Pad with boundaries [B, T, H+2, W+2]
-    u_padded = pad_with_boundaries(u, bnd_left, bnd_right, bnd_bottom, bnd_top)
+    # Pad with 2-layer ghost cells for 2nd order upwind [B, T, H+4, W+4]
+    u_padded = pad_with_boundaries_2x(u, bnd_left, bnd_right, bnd_bottom, bnd_top)
 
-    # Compute spatial derivatives using upwind scheme [B, T, H, W]
-    du_dx = upwind_derivative_x(u_padded, a, H, W, dx)
-    du_dy = upwind_derivative_y(u_padded, b, H, W, dy)
+    # Compute spatial derivatives using 2nd order upwind scheme [B, T, H, W]
+    du_dx = upwind_derivative_x_2nd(u_padded, a, H, W, dx)
+    du_dy = upwind_derivative_y_2nd(u_padded, b, H, W, dy)
 
     # Compute time derivative (backward difference, from t=1 to T-1)
     # u_t ≈ (u[t] - u[t-1]) / dt
