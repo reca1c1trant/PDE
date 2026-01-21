@@ -25,7 +25,7 @@ model:
 
 # Dataset
 dataset:
-  path: "./flow_mixing_vtmax0.2_0.6_res128_t1000_n100.h5"
+  path: "./flow_mixing_vtmax0.3_0.5_res128_t1000_n150.h5"
   temporal_length: 16                     # Will load 17 frames (16+1)
   train_ratio: 0.9
   seed: 42
@@ -39,7 +39,7 @@ physics:
 
 # DataLoader
 dataloader:
-  batch_size: 16                          # Batch size
+  batch_size: 64                          # Batch size
   num_workers: 4
   pin_memory: true
 
@@ -60,8 +60,8 @@ training:
 
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1
-  eval_interval: 100
-  early_stopping_patience: 30
+  eval_interval: 50
+  early_stopping_patience: 300
 
 # Logging
 logging:
