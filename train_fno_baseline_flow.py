@@ -1,15 +1,15 @@
 """
-FNO Baseline Training Script - Flow Mixing Equation.
+Baseline Training Script - Flow Mixing Equation.
 
-Train pure FNO or MLP model on Flow Mixing equation.
-Uses 2nd order upwind scheme for PDE loss (n-PINN style).
+Train UNet or MLP model on Flow Mixing equation.
+Supports both central difference (v2) and 2nd order upwind (v1) PDE loss.
 
 Usage:
     # Single GPU
-    python train_fno_baseline_flow.py --config configs/fno_baseline_flow.yaml
+    python train_fno_baseline_flow.py --config configs/unet_baseline_flow_v2.yaml
 
     # Multi-GPU
-    torchrun --nproc_per_node=8 train_fno_baseline_flow.py --config configs/fno_baseline_flow.yaml
+    torchrun --nproc_per_node=8 train_fno_baseline_flow.py --config configs/unet_baseline_flow_v2.yaml
 """
 
 import os
@@ -54,7 +54,7 @@ if IS_MAIN_PROCESS:
 else:
     logging.disable(logging.CRITICAL)
 
-from model_fno_baseline import create_fno_baseline
+from model_unet_baseline import create_unet_baseline
 from model_mlp_baseline import create_mlp_baseline
 from dataset_flow import FlowMixingDataset, FlowMixingSampler, flow_mixing_collate_fn
 from pde_loss_flow import flow_mixing_pde_loss
@@ -306,7 +306,7 @@ def save_checkpoint(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='configs/fno_baseline_flow.yaml')
+    parser.add_argument('--config', type=str, default='configs/unet_baseline_flow_v2.yaml')
     args = parser.parse_args()
 
     # Set NCCL timeout to avoid false timeouts
@@ -360,14 +360,16 @@ def main():
     steps_per_epoch = len(train_loader)
     total_steps = max_epochs * steps_per_epoch
 
-    # Create model (FNO or MLP baseline)
-    model_type = config.get('model', {}).get('type', 'fno')
+    # Create model (UNet or MLP baseline)
+    model_type = config.get('model', {}).get('type', 'unet')
     if model_type == 'mlp':
         model = create_mlp_baseline(config)
         model_name = "MLP Baseline (SIREN)"
+    elif model_type == 'unet':
+        model = create_unet_baseline(config)
+        model_name = "UNet Baseline (Tanh)"
     else:
-        model = create_fno_baseline(config)
-        model_name = "FNO Baseline"
+        raise ValueError(f"Unknown model type: {model_type}. Supported: 'unet', 'mlp'")
 
     # Log parameter counts
     if accelerator.is_main_process:

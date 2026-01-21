@@ -2,14 +2,14 @@
 LoRA Finetuning for 2D Flow Mixing Equation.
 
 Features:
-- Pure PDE residual loss (default, no ground truth supervision)
-- Optional RMSE loss via lambda_rmse config
+- PDE residual loss (v1: 2nd order upwind, v2: central difference)
+- RMSE loss for ground truth supervision
+- Boundary RMSE loss
 - LoRA applied to Transformer layers only
 - Encoder and Decoder frozen
-- Boundary conditions used for PDE loss computation
 
 Usage:
-    torchrun --nproc_per_node=8 train_flow_lora.py --config configs/finetune_flow.yaml
+    torchrun --nproc_per_node=8 train_flow_lora.py --config configs/finetune_flow_v2.yaml
 """
 
 import os
@@ -51,6 +51,7 @@ else:
 from dataset_flow import FlowMixingDataset, FlowMixingSampler, flow_mixing_collate_fn
 from model_lora import PDELoRAModel, save_lora_checkpoint
 from pde_loss_flow import flow_mixing_pde_loss
+from pde_loss_flow_v2 import flow_mixing_pde_loss_v2
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ def get_lr_scheduler(optimizer, config, total_steps: int):
     return LambdaLR(optimizer, lr_lambda)
 
 
-def compute_pde_loss(output, input_data, batch, config, accelerator):
+def compute_pde_loss(output, input_data, batch, config, accelerator, pde_version: str = "v1"):
     """
     Compute PDE residual loss for Flow Mixing equation.
 
@@ -143,6 +144,7 @@ def compute_pde_loss(output, input_data, batch, config, accelerator):
         batch: Batch dict with boundaries and vtmax
         config: Config dict
         accelerator: Accelerator instance
+        pde_version: "v1" for 2nd order upwind, "v2" for central difference
 
     Returns:
         pde_loss: Scalar PDE loss
@@ -169,16 +171,27 @@ def compute_pde_loss(output, input_data, batch, config, accelerator):
     # Use mean vtmax for batch
     vtmax_mean = vtmax.mean().item()
 
-    # Compute PDE loss
-    pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss(
-        pred=pred_u,
-        boundary_left=boundary_left,
-        boundary_right=boundary_right,
-        boundary_bottom=boundary_bottom,
-        boundary_top=boundary_top,
-        vtmax=vtmax_mean,
-        dt=dt
-    )
+    # Select PDE loss version
+    if pde_version == "v2":
+        pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss_v2(
+            pred=pred_u,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            vtmax=vtmax_mean,
+            dt=dt
+        )
+    else:
+        pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss(
+            pred=pred_u,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            vtmax=vtmax_mean,
+            dt=dt
+        )
 
     return pde_loss, loss_time, loss_advection
 
@@ -192,23 +205,68 @@ def compute_rmse_loss(output, target):
         target: Ground truth [B, 16, H, W, 6]
 
     Returns:
-        rmse_loss: RMSE loss (only on valid channel u)
+        rmse_loss: RMSE loss (all channels)
     """
-    # Only compute on channel 0 (u)
-    pred_u = output[..., 0]
-    target_u = target[..., 0]
-    mse = torch.mean((pred_u - target_u) ** 2)
+    mse = torch.mean((output - target) ** 2)
     rmse_loss = torch.sqrt(mse + 1e-8)
     return rmse_loss
 
 
+def compute_boundary_loss(output, target):
+    """
+    Compute boundary RMSE loss on 4 edges (excluding corners).
+
+    Args:
+        output: Model output [B, T, H, W, C]
+        target: Ground truth [B, T, H, W, C]
+
+    Returns:
+        boundary_rmse: Scalar tensor
+    """
+    # Left edge (excluding corners)
+    left_pred = output[:, :, 1:-1, 0, :]
+    left_target = target[:, :, 1:-1, 0, :]
+
+    # Right edge (excluding corners)
+    right_pred = output[:, :, 1:-1, -1, :]
+    right_target = target[:, :, 1:-1, -1, :]
+
+    # Bottom edge (excluding corners)
+    bottom_pred = output[:, :, 0, 1:-1, :]
+    bottom_target = target[:, :, 0, 1:-1, :]
+
+    # Top edge (excluding corners)
+    top_pred = output[:, :, -1, 1:-1, :]
+    top_target = target[:, :, -1, 1:-1, :]
+
+    # Concatenate all boundary points
+    bc_pred = torch.cat([
+        left_pred.reshape(-1),
+        right_pred.reshape(-1),
+        bottom_pred.reshape(-1),
+        top_pred.reshape(-1),
+    ])
+    bc_target = torch.cat([
+        left_target.reshape(-1),
+        right_target.reshape(-1),
+        bottom_target.reshape(-1),
+        top_target.reshape(-1),
+    ])
+
+    # RMSE
+    mse = torch.mean((bc_pred - bc_target) ** 2)
+    rmse = torch.sqrt(mse + 1e-8)
+    return rmse
+
+
 @torch.no_grad()
-def validate(model, val_loader, config, accelerator):
+def validate(model, val_loader, config, accelerator, pde_version: str = "v1"):
     """Validate model on validation set."""
     model.eval()
 
     total_pde_loss = torch.zeros(1, device=accelerator.device)
     total_rmse_loss = torch.zeros(1, device=accelerator.device)
+    total_bc_loss = torch.zeros(1, device=accelerator.device)
     num_batches = torch.zeros(1, device=accelerator.device)
 
     for batch in val_loader:
@@ -219,25 +277,30 @@ def validate(model, val_loader, config, accelerator):
 
         output = model(input_data)
 
-        pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator)
+        pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator, pde_version)
         rmse_loss = compute_rmse_loss(output.float(), target.float())
+        bc_loss = compute_boundary_loss(output.float(), target.float())
 
         total_pde_loss += pde_loss.detach()
         total_rmse_loss += rmse_loss.detach()
+        total_bc_loss += bc_loss.detach()
         num_batches += 1
 
     accelerator.wait_for_everyone()
 
     total_pde_loss = accelerator.reduce(total_pde_loss, reduction='sum')
     total_rmse_loss = accelerator.reduce(total_rmse_loss, reduction='sum')
+    total_bc_loss = accelerator.reduce(total_bc_loss, reduction='sum')
     num_batches = accelerator.reduce(num_batches, reduction='sum')
 
     model.train()
 
-    avg_pde_loss = (total_pde_loss / num_batches).item() if num_batches.item() > 0 else 0
-    avg_rmse_loss = (total_rmse_loss / num_batches).item() if num_batches.item() > 0 else 0
-
-    return avg_pde_loss, avg_rmse_loss
+    n = num_batches.item()
+    return (
+        (total_pde_loss / n).item() if n > 0 else 0,
+        (total_rmse_loss / n).item() if n > 0 else 0,
+        (total_bc_loss / n).item() if n > 0 else 0,
+    )
 
 
 def main():
@@ -258,24 +321,27 @@ def main():
     max_epochs = config['training'].get('max_epochs', 10)
     warmup_steps = config['training'].get('warmup_steps', 100)
     log_interval = config['logging']['log_interval']
-    lambda_pde = config['training'].get('lambda_pde', 1.0)
-    lambda_rmse = config['training'].get('lambda_rmse', 0.0)  # Default: no RMSE loss
+    lambda_pde = config['training'].get('lambda_pde', 0.01)
+    lambda_rmse = config['training'].get('lambda_rmse', 1.0)
+    lambda_bc = config['training'].get('lambda_bc', 1.0)
     grad_clip = config['training'].get('grad_clip', 1.0)
     clips_per_sample = config['dataset'].get('clips_per_sample', 100)
     eval_interval = config['training'].get('eval_interval', 100)
     early_stopping_patience = config['training'].get('early_stopping_patience', 10)
+    pde_version = config['training'].get('pde_version', 'v1')
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
         logger.info(f"Flow Mixing LoRA Finetuning")
         logger.info(f"{'='*60}")
         logger.info(f"Config: {args.config}")
+        logger.info(f"PDE Version: {pde_version} ({'central diff' if pde_version == 'v2' else '2nd upwind'})")
         logger.info(f"Max Epochs: {max_epochs}")
         logger.info(f"Clips per Sample: {clips_per_sample}")
         logger.info(f"Warmup Steps: {warmup_steps}")
         logger.info(f"Eval Interval: {eval_interval} steps")
         logger.info(f"Early Stopping Patience: {early_stopping_patience}")
-        logger.info(f"Loss: lambda_pde={lambda_pde}, lambda_rmse={lambda_rmse}")
+        logger.info(f"Loss: lambda_pde={lambda_pde}, lambda_rmse={lambda_rmse}, lambda_bc={lambda_bc}")
         logger.info(f"Grad Clip: {grad_clip}")
         logger.info(f"{'='*60}")
 
@@ -324,7 +390,7 @@ def main():
 
     # Training state
     global_step = 0
-    best_pde_loss = float('inf')
+    best_val_loss = float('inf')
     patience_counter = 0
     early_stop = False
 
@@ -356,6 +422,7 @@ def main():
 
             epoch_pde_loss = 0.0
             epoch_rmse_loss = 0.0
+            epoch_bc_loss = 0.0
             epoch_steps = 0
 
             for batch in train_loader:
@@ -374,16 +441,17 @@ def main():
 
                     # PDE loss
                     pde_loss, loss_time, loss_advection = compute_pde_loss(
-                        output, input_data, batch, config, accelerator
+                        output, input_data, batch, config, accelerator, pde_version
                     )
 
-                    # MSE loss (optional)
-                    rmse_loss = torch.tensor(0.0, device=accelerator.device)
-                    if lambda_rmse > 0:
-                        rmse_loss = compute_rmse_loss(output.float(), target.float())
+                    # RMSE loss
+                    rmse_loss = compute_rmse_loss(output.float(), target.float())
+
+                    # Boundary loss
+                    bc_loss = compute_boundary_loss(output.float(), target.float())
 
                     # Total loss
-                    train_loss = lambda_pde * pde_loss + lambda_rmse * rmse_loss
+                    train_loss = lambda_pde * pde_loss + lambda_rmse * rmse_loss + lambda_bc * bc_loss
 
                     accelerator.backward(train_loss)
 
@@ -399,54 +467,60 @@ def main():
 
                 # Reduce for logging
                 pde_loss_reduced = accelerator.reduce(pde_loss.detach(), reduction='mean')
+                rmse_loss_reduced = accelerator.reduce(rmse_loss.detach(), reduction='mean')
+                bc_loss_reduced = accelerator.reduce(bc_loss.detach(), reduction='mean')
                 loss_time_reduced = accelerator.reduce(loss_time.detach(), reduction='mean')
                 loss_advection_reduced = accelerator.reduce(loss_advection.detach(), reduction='mean')
 
                 epoch_pde_loss += pde_loss_reduced.item()
-                if lambda_rmse > 0:
-                    rmse_loss_reduced = accelerator.reduce(rmse_loss.detach(), reduction='mean')
-                    epoch_rmse_loss += rmse_loss_reduced.item()
+                epoch_rmse_loss += rmse_loss_reduced.item()
+                epoch_bc_loss += bc_loss_reduced.item()
 
                 # Update progress bar
                 phase_str = "[warmup]" if in_warmup else f"[E{epoch+1}]"
                 progress.update(
                     train_task, advance=1,
-                    description=f"{phase_str} PDE={pde_loss_reduced.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}"
+                    description=f"{phase_str} PDE={pde_loss_reduced.item():.4f} RMSE={rmse_loss_reduced.item():.4f} BC={bc_loss_reduced.item():.4f}"
                 )
 
                 # Log to wandb
                 if global_step % log_interval == 0:
+                    total_loss = lambda_pde * pde_loss_reduced + lambda_rmse * rmse_loss_reduced + lambda_bc * bc_loss_reduced
                     log_dict = {
                         'train/pde_loss': pde_loss_reduced.item(),
+                        'train/rmse_loss': rmse_loss_reduced.item(),
+                        'train/bc_loss': bc_loss_reduced.item(),
+                        'train/total_loss': total_loss.item(),
                         'train/loss_time': loss_time_reduced.item(),
                         'train/loss_advection': loss_advection_reduced.item(),
                         'train/lr': scheduler.get_last_lr()[0],
                         'train/epoch': epoch + 1,
                     }
-                    if lambda_rmse > 0:
-                        log_dict['train/rmse_loss'] = rmse_loss_reduced.item()
                     accelerator.log(log_dict, step=global_step)
 
                 # Step-based validation
                 if global_step % eval_interval == 0:
                     accelerator.wait_for_everyone()
-                    val_pde_loss, val_rmse_loss = validate(model, val_loader, config, accelerator)
+                    val_pde, val_rmse, val_bc = validate(model, val_loader, config, accelerator, pde_version)
 
+                    val_loss = lambda_pde * val_pde + lambda_rmse * val_rmse + lambda_bc * val_bc
                     accelerator.log({
-                        'val/pde_loss': val_pde_loss,
-                        'val/rmse_loss': val_rmse_loss,
+                        'val/pde_loss': val_pde,
+                        'val/rmse_loss': val_rmse,
+                        'val/bc_loss': val_bc,
+                        'val/total_loss': val_loss,
                     }, step=global_step)
 
                     if accelerator.is_main_process:
                         console.print(
                             f"\n[green]Step {global_step}/{total_steps} {phase_str}:[/green] "
-                            f"val_pde={val_pde_loss:.6f}, val_rmse={val_rmse_loss:.6f}"
+                            f"val_pde={val_pde:.6f}, val_rmse={val_rmse:.6f}, val_bc={val_bc:.6f}"
                         )
 
                     # Post-warmup: best model saving and early stopping
                     if not in_warmup:
-                        if val_pde_loss < best_pde_loss:
-                            best_pde_loss = val_pde_loss
+                        if val_loss < best_val_loss:
+                            best_val_loss = val_loss
                             patience_counter = 0
 
                             if accelerator.is_main_process:
@@ -456,11 +530,11 @@ def main():
                                     optimizer=optimizer,
                                     scheduler=scheduler,
                                     global_step=global_step,
-                                    metrics={'pde_loss': val_pde_loss, 'rmse_loss': val_rmse_loss},
+                                    metrics={'pde_loss': val_pde, 'rmse_loss': val_rmse, 'bc_loss': val_bc},
                                     save_path=str(save_dir / 'best_lora.pt'),
                                     config=config,
                                 )
-                                console.print(f"[yellow]Saved best model[/yellow] (pde_loss: {val_pde_loss:.6f})")
+                                console.print(f"[yellow]Saved best model[/yellow] (val_loss: {val_loss:.6f})")
                         else:
                             patience_counter += 1
                             if accelerator.is_main_process:
@@ -479,28 +553,29 @@ def main():
 
             # End of epoch summary
             if epoch_steps > 0:
-                avg_epoch_pde = epoch_pde_loss / epoch_steps
-                log_dict = {
-                    'epoch/train_pde_loss': avg_epoch_pde,
+                avg_pde = epoch_pde_loss / epoch_steps
+                avg_rmse = epoch_rmse_loss / epoch_steps
+                avg_bc = epoch_bc_loss / epoch_steps
+                accelerator.log({
+                    'epoch/train_pde_loss': avg_pde,
+                    'epoch/train_rmse_loss': avg_rmse,
+                    'epoch/train_bc_loss': avg_bc,
                     'epoch': epoch + 1,
-                }
-                if lambda_rmse > 0:
-                    log_dict['epoch/train_rmse_loss'] = epoch_rmse_loss / epoch_steps
-                accelerator.log(log_dict, step=global_step)
+                }, step=global_step)
 
                 if accelerator.is_main_process:
                     console.print(
                         f"\n[blue]Epoch {epoch+1}/{max_epochs} completed:[/blue] "
-                        f"avg_train_pde={avg_epoch_pde:.6f}"
+                        f"avg_pde={avg_pde:.6f}, avg_rmse={avg_rmse:.6f}, avg_bc={avg_bc:.6f}"
                     )
 
     accelerator.end_training()
 
     if accelerator.is_main_process:
-        table = Table(title="Training Complete", show_header=False, border_style="green")
+        table = Table(title="LoRA Training Complete", show_header=False, border_style="green")
         table.add_row("Total Epochs", str(epoch + 1))
         table.add_row("Total Steps", str(global_step))
-        table.add_row("Best Val PDE Loss", f"{best_pde_loss:.6f}")
+        table.add_row("Best Val Loss", f"{best_val_loss:.6f}")
         table.add_row("Early Stopped", "Yes" if early_stop else "No")
         table.add_row("Checkpoint", str(save_dir / "best_lora.pt"))
         console.print(table)
