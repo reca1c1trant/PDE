@@ -244,16 +244,81 @@ def plot_single_timestep(
     plt.close()
 
 
+def plot_multiple_samples(
+    results: list,
+    save_path: Optional[str] = None,
+):
+    """
+    Plot multiple samples in rows (each row: GT | Prediction | PDE Residual).
+
+    Args:
+        results: list of dicts with keys:
+            - gt: [H, W] ground truth
+            - pred: [H, W] prediction
+            - residual: [H, W] PDE residual
+            - vtmax: float
+            - sample_idx: int
+        save_path: path to save figure
+    """
+    n_samples = len(results)
+    fig, axes = plt.subplots(n_samples, 3, figsize=(15, 4 * n_samples))
+
+    if n_samples == 1:
+        axes = axes.reshape(1, -1)
+
+    extent = [0, 1, 0, 1]
+
+    for row, res in enumerate(results):
+        gt_np = res['gt']
+        pred_np = res['pred']
+        res_np = res['residual']
+        vtmax = res['vtmax']
+        sample_idx = res['sample_idx']
+
+        # Color range for GT and Pred
+        vmin = min(gt_np.min(), pred_np.min())
+        vmax = max(gt_np.max(), pred_np.max())
+
+        # 1. Ground Truth
+        im0 = axes[row, 0].imshow(gt_np, origin='lower', extent=extent, cmap='jet', vmin=vmin, vmax=vmax)
+        axes[row, 0].set_title(f'Ground Truth', fontsize=11)
+        axes[row, 0].set_ylabel(f'Sample {sample_idx}\nvtmax={vtmax:.2f}', fontsize=10)
+        axes[row, 0].set_xlabel('x')
+        plt.colorbar(im0, ax=axes[row, 0], fraction=0.046, pad=0.04)
+
+        # 2. Prediction
+        im1 = axes[row, 1].imshow(pred_np, origin='lower', extent=extent, cmap='jet', vmin=vmin, vmax=vmax)
+        pred_rmse = np.sqrt(np.mean((pred_np - gt_np)**2))
+        axes[row, 1].set_title(f'Prediction (RMSE={pred_rmse:.4f})', fontsize=11)
+        axes[row, 1].set_xlabel('x')
+        plt.colorbar(im1, ax=axes[row, 1], fraction=0.046, pad=0.04)
+
+        # 3. PDE Residual
+        res_max = np.abs(res_np).max() if np.abs(res_np).max() > 0 else 1.0
+        im2 = axes[row, 2].imshow(res_np, origin='lower', extent=extent, cmap='RdBu_r', vmin=-res_max, vmax=res_max)
+        pde_rmse = np.sqrt(np.mean(res_np**2))
+        axes[row, 2].set_title(f'PDE Residual (RMSE={pde_rmse:.4f})', fontsize=11)
+        axes[row, 2].set_xlabel('x')
+        plt.colorbar(im2, ax=axes[row, 2], fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved: {save_path}")
+
+    plt.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Flow Mixing Visualization")
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to model checkpoint')
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
     parser.add_argument('--output_dir', type=str, default='./vis_results', help='Output directory')
     parser.add_argument('--lora', action='store_true', help='Use LoRA checkpoint')
-    parser.add_argument('--sample_idx', type=int, default=0, help='Sample index')
-    parser.add_argument('--clip_idx', type=int, default=0, help='Clip index')
-    parser.add_argument('--timestep', type=int, default=-1, help='Timestep to visualize (-1 = last)')
+    parser.add_argument('--num_samples', type=int, default=None, help='Number of samples (overrides config)')
     parser.add_argument('--pde_version', type=str, default='v1', choices=['v1', 'v2'], help='PDE version')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--device', type=str, default='cuda', help='Device')
     args = parser.parse_args()
 
@@ -264,56 +329,104 @@ def main():
     print(f"Using device: {device}")
 
     config = load_config(args.config)
+
+    # Get num_samples from args or config
+    num_samples = args.num_samples
+    if num_samples is None:
+        num_samples = config.get('visualization', {}).get('num_samples', 3)
+
     print(f"Loading model from: {args.checkpoint}")
     model, is_lora = load_model(config, args.checkpoint, is_lora=args.lora, device=device)
 
-    print(f"Loading sample {args.sample_idx}, clip {args.clip_idx}...")
-    batch, dataset = get_sample(config, args.sample_idx, args.clip_idx)
-
-    print("Running inference...")
-    pred = run_inference(model, batch, device=device, is_lora=is_lora)
-
-    data = batch['data'].to(device)
-    gt = data[:, 1:]  # [B, 16, H, W, 6]
-    t0 = data[:, 0:1]
-    pred_with_t0 = torch.cat([t0, pred], dim=1)  # [B, 17, H, W, 6]
-
-    # Get vtmax
-    vtmax = batch['vtmax'][0].item()
-
-    # Compute PDE residual
-    print(f"Computing PDE residual (version: {args.pde_version})...")
-    residual, du_dt, advection = compute_pde_residual(
-        pred=pred_with_t0,
-        batch=batch,
-        config=config,
-        pde_version=args.pde_version,
-        device=device,
+    # Create dataset
+    dataset = FlowMixingDataset(
+        data_path=config['dataset']['path'],
+        temporal_length=config['dataset']['temporal_length'],
+        split='val',
+        train_ratio=config['dataset']['train_ratio'],
+        seed=config['dataset']['seed'],
+        clips_per_sample=None,
     )
 
-    # Plot: GT | Prediction | PDE Residual (one row)
+    # Random sample selection
+    np.random.seed(args.seed)
+    total_clips = len(dataset)
+    n_val_samples = len(dataset.samples)
+    clips_per_sample = total_clips // n_val_samples if n_val_samples > 0 else 1
+
+    # Select random samples and random start times
+    sample_indices = np.random.choice(n_val_samples, min(num_samples, n_val_samples), replace=False)
+
+    print(f"Visualizing {len(sample_indices)} samples...")
+
+    results = []
+    all_rmse = []
+    all_pde_rmse = []
+
+    for i, sample_idx in enumerate(sample_indices):
+        # Random clip within this sample
+        clip_idx = np.random.randint(0, clips_per_sample)
+        idx = sample_idx * clips_per_sample + clip_idx
+        idx = min(idx, total_clips - 1)
+
+        sample = dataset[idx]
+        batch = flow_mixing_collate_fn([sample])
+
+        # Run inference
+        pred = run_inference(model, batch, device=device, is_lora=is_lora)
+
+        data = batch['data'].to(device)
+        gt = data[:, 1:]  # [B, 16, H, W, 6]
+        t0 = data[:, 0:1]
+        pred_with_t0 = torch.cat([t0, pred], dim=1)
+
+        vtmax = batch['vtmax'][0].item()
+
+        # Compute PDE residual
+        residual, _, _ = compute_pde_residual(
+            pred=pred_with_t0,
+            batch=batch,
+            config=config,
+            pde_version=args.pde_version,
+            device=device,
+        )
+
+        # Get last timestep
+        gt_last = gt[0, -1, :, :, 0].cpu().numpy()
+        pred_last = pred[0, -1, :, :, 0].cpu().numpy()
+        res_last = residual[0, -1].cpu().numpy()
+
+        results.append({
+            'gt': gt_last,
+            'pred': pred_last,
+            'residual': res_last,
+            'vtmax': vtmax,
+            'sample_idx': sample_idx,
+        })
+
+        # Metrics
+        rmse = np.sqrt(np.mean((pred_last - gt_last)**2))
+        pde_rmse = np.sqrt(np.mean(res_last**2))
+        all_rmse.append(rmse)
+        all_pde_rmse.append(pde_rmse)
+
+        print(f"  Sample {sample_idx}: vtmax={vtmax:.2f}, RMSE={rmse:.4f}, PDE_RMSE={pde_rmse:.4f}")
+
+    # Plot all samples
     print("Plotting visualization...")
-    plot_single_timestep(
-        gt=gt,
-        pred=pred,
-        residual=residual,
-        timestep=args.timestep,
-        channel=0,
-        vtmax=vtmax,
+    plot_multiple_samples(
+        results=results,
         save_path=str(output_dir / 'visualization.png'),
     )
 
-    # Print metrics
-    rmse = torch.sqrt(torch.mean((pred - gt)**2)).item()
-    pde_rmse = torch.sqrt(torch.mean(residual**2)).item()
-
+    # Print summary
     print("\n" + "=" * 60)
     print("Visualization Complete")
     print("=" * 60)
     print(f"Output: {output_dir / 'visualization.png'}")
-    print(f"\nMetrics:")
-    print(f"  - RMSE (pred vs gt): {rmse:.6f}")
-    print(f"  - PDE Residual RMSE: {pde_rmse:.6f}")
+    print(f"\nAverage Metrics ({len(results)} samples):")
+    print(f"  - RMSE (pred vs gt): {np.mean(all_rmse):.6f}")
+    print(f"  - PDE Residual RMSE: {np.mean(all_pde_rmse):.6f}")
     print("=" * 60)
 
 

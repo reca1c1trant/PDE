@@ -68,3 +68,8 @@ logging:
   entity: "reca1c1trant-ntu"
   save_dir: "./checkpoints_mlp_baseline_flow_v2"
   log_interval: 10
+
+# Visualization
+visualization:
+  num_samples: 3  # 随机选取N个样本，每个样本随机起始时刻
+  seed: 42        # 可视化随机种子
