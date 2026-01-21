@@ -70,10 +70,12 @@ def compute_flow_coefficients(
     r_safe = torch.clamp(r, min=1e-10)
 
     # v_t = sech²(r) * tanh(r)
-    v_t = (1.0 / torch.cosh(r_safe))**2 * torch.tanh(r_safe)
+    # Clamp r to avoid overflow in cosh for large r
+    r_clamped = torch.clamp(r_safe, max=20.0)  # cosh(20) ~ 2.4e8, safe
+    v_t = (1.0 / torch.cosh(r_clamped))**2 * torch.tanh(r_clamped)
 
     # omega = v_t / (r * vtmax)
-    omega = v_t / (r_safe * vtmax)
+    omega = v_t / (r_safe * vtmax + 1e-10)
 
     # a = -v_t/vtmax * y/r = -omega * y
     # b = v_t/vtmax * x/r = omega * x

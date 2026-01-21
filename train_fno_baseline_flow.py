@@ -309,6 +309,10 @@ def main():
     parser.add_argument('--config', type=str, default='configs/fno_baseline_flow.yaml')
     args = parser.parse_args()
 
+    # Set NCCL timeout to avoid false timeouts
+    os.environ.setdefault('NCCL_TIMEOUT', '1800')  # 30 minutes
+    os.environ.setdefault('NCCL_BLOCKING_WAIT', '0')
+
     config = load_config(args.config)
     set_seed(config['dataset']['seed'])
 
@@ -471,6 +475,19 @@ def main():
 
                     # Total loss
                     train_loss = lambda_pde * pde_loss + lambda_rmse * rmse_loss + lambda_bc * bc_loss
+
+                    # NaN check - all ranks must agree to skip
+                    has_nan = torch.isnan(train_loss) or torch.isinf(train_loss)
+                    has_nan_tensor = torch.tensor([1.0 if has_nan else 0.0], device=accelerator.device)
+                    has_nan_any = accelerator.reduce(has_nan_tensor, reduction='sum')
+
+                    if has_nan_any.item() > 0:
+                        if accelerator.is_main_process:
+                            console.print(f"[red]NaN/Inf detected at step {global_step}, skipping batch[/red]")
+                        optimizer.zero_grad()
+                        scheduler.step()
+                        global_step += 1
+                        continue
 
                     accelerator.backward(train_loss)
 
