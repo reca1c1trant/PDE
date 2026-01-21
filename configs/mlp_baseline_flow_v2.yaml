@@ -1,0 +1,70 @@
+# MLP Baseline Training Configuration - Flow Mixing (V2)
+#
+# V2: 使用中心差分 (与 train_PINN_transient.py 相同)
+# lambda_pde = 0.01 (与 train_PINN_transient.py 相同)
+#
+# PDE: du/dt + a*du/dx + b*du/dy = 0
+# 空间导数: 中心差分 (uE - uW) / (2dx)
+
+# Model Configuration
+model:
+  type: mlp
+  in_channels: 6
+  out_channels: 6
+  width: 64
+  n_layers: 4
+  omega_0: 30.0
+  use_positional_embedding: true
+  use_residual: true
+  grid_h: 128
+  grid_w: 128
+
+# Dataset
+dataset:
+  path: "./flow_mixing_vtmax0.3_0.5_res128_t1000_n150.h5"
+  temporal_length: 16
+  train_ratio: 0.9
+  seed: 42
+  clips_per_sample: null
+
+# Physics parameters
+physics:
+  dt: 0.001001001
+  Lx: 1.0
+  Ly: 1.0
+
+# DataLoader
+dataloader:
+  batch_size: 64
+  num_workers: 4
+  pin_memory: true
+
+# Training
+training:
+  max_epochs: 50
+  warmup_steps: 200
+  learning_rate: 1.0e-3
+  min_lr: 1.0e-5
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  grad_clip: 1.0
+
+  # Loss weights (V2: same as train_PINN_transient.py)
+  lambda_pde: 0.01                        # PDE loss 权重很小 (train_PINN_transient style)
+  lambda_rmse: 1.0
+  lambda_bc: 1.0
+
+  # V2: use central difference instead of 2nd order upwind
+  pde_version: "v2"
+
+  mixed_precision: "bf16"
+  gradient_accumulation_steps: 1
+  eval_interval: 50
+  early_stopping_patience: 300
+
+# Logging
+logging:
+  project: "pde-mlp-baseline-flow"
+  entity: "reca1c1trant-ntu"
+  save_dir: "./checkpoints_mlp_baseline_flow_v2"
+  log_interval: 10

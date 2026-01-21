@@ -58,6 +58,7 @@ from model_fno_baseline import create_fno_baseline
 from model_mlp_baseline import create_mlp_baseline
 from dataset_flow import FlowMixingDataset, FlowMixingSampler, flow_mixing_collate_fn
 from pde_loss_flow import flow_mixing_pde_loss
+from pde_loss_flow_v2 import flow_mixing_pde_loss_v2
 
 logger = logging.getLogger(__name__)
 
@@ -134,11 +135,14 @@ def get_lr_scheduler(optimizer, config: dict, total_steps: int):
     return LambdaLR(optimizer, lr_lambda)
 
 
-def compute_pde_loss(output, input_data, batch, config, accelerator):
+def compute_pde_loss(output, input_data, batch, config, accelerator, pde_version="v1"):
     """Compute PDE residual loss for Flow Mixing equation.
 
     Flow Mixing: ∂u/∂t + a·∂u/∂x + b·∂u/∂y = 0
     Only uses first channel (u).
+
+    Args:
+        pde_version: "v1" for 2nd order upwind, "v2" for central difference
     """
     # Use only first channel for PDE loss
     t0_frame = input_data[:, 0:1, ..., :1]  # [B, 1, H, W, 1]
@@ -156,15 +160,29 @@ def compute_pde_loss(output, input_data, batch, config, accelerator):
     dt = config.get('physics', {}).get('dt', 1/999)
     vtmax_mean = vtmax.mean().item()
 
-    pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss(
-        pred=pred_u,
-        boundary_left=boundary_left,
-        boundary_right=boundary_right,
-        boundary_bottom=boundary_bottom,
-        boundary_top=boundary_top,
-        vtmax=vtmax_mean,
-        dt=dt
-    )
+    # Select PDE loss version
+    if pde_version == "v2":
+        # V2: Central difference (train_PINN_transient style)
+        pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss_v2(
+            pred=pred_u,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            vtmax=vtmax_mean,
+            dt=dt
+        )
+    else:
+        # V1: 2nd order upwind (n-PINN style)
+        pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss(
+            pred=pred_u,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            vtmax=vtmax_mean,
+            dt=dt
+        )
 
     return pde_loss, loss_time, loss_advection
 
@@ -223,7 +241,7 @@ def compute_boundary_loss(output, target):
 
 
 @torch.no_grad()
-def validate(model, val_loader, config, accelerator):
+def validate(model, val_loader, config, accelerator, pde_version="v1"):
     """Run validation and compute metrics."""
     model.eval()
 
@@ -239,7 +257,7 @@ def validate(model, val_loader, config, accelerator):
 
         output = model(data)
 
-        pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator)
+        pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator, pde_version)
         rmse_loss = compute_rmse_loss(output, target)
         bc_loss = compute_boundary_loss(output, target)
 
@@ -313,6 +331,7 @@ def main():
     eval_interval = config['training'].get('eval_interval', 100)
     early_stopping_patience = config['training'].get('early_stopping_patience', 30)
     log_interval = config['logging'].get('log_interval', 10)
+    pde_version = config['training'].get('pde_version', 'v1')  # v1=2nd upwind, v2=central diff
 
     # Get model type for logging
     model_type = config.get('model', {}).get('type', 'fno')
@@ -322,6 +341,7 @@ def main():
         logger.info(f"Baseline Training - Flow Mixing Equation")
         logger.info(f"{'='*60}")
         logger.info(f"Model Type: {model_type.upper()}")
+        logger.info(f"PDE Version: {pde_version} ({'central diff' if pde_version == 'v2' else '2nd upwind'})")
         logger.info(f"Config: {args.config}")
         logger.info(f"Max Epochs: {max_epochs}")
         logger.info(f"Warmup Steps: {warmup_steps}")
@@ -440,7 +460,7 @@ def main():
 
                     # PDE loss
                     pde_loss, loss_time, loss_advection = compute_pde_loss(
-                        output, input_data, batch, config, accelerator
+                        output, input_data, batch, config, accelerator, pde_version
                     )
 
                     # RMSE loss
@@ -497,7 +517,7 @@ def main():
                 # Validation
                 if global_step % eval_interval == 0:
                     accelerator.wait_for_everyone()
-                    val_pde, val_rmse, val_bc = validate(model, val_loader, config, accelerator)
+                    val_pde, val_rmse, val_bc = validate(model, val_loader, config, accelerator, pde_version)
 
                     val_loss = lambda_pde * val_pde + lambda_rmse * val_rmse + lambda_bc * val_bc
                     accelerator.log({

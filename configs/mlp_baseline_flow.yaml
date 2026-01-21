@@ -16,7 +16,7 @@ model:
   in_channels: 6                          # Padded to 6 channels (only 1 real)
   out_channels: 6                         # Output channels
   width: 64                               # Hidden channel width
-  n_layers: 4                             # Number of SIREN blocks
+  n_layers: 8                             # Number of SIREN blocks
   omega_0: 30.0                           # SIREN first layer frequency
   use_positional_embedding: true          # Add (x, y) coordinates
   use_residual: true                      # Residual connections
@@ -54,7 +54,7 @@ training:
   grad_clip: 1.0
 
   # Loss weights
-  lambda_pde: 1.0                         # PDE residual loss weight (2nd order upwind)
+  lambda_pde: 0.01                         # PDE residual loss weight (2nd order upwind)
   lambda_rmse: 1.0                        # RMSE loss weight
   lambda_bc: 1.0                          # Boundary loss weight (4 edges RMSE)
 
