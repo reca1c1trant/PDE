@@ -338,6 +338,12 @@ def main():
     print(f"Loading model from: {args.checkpoint}")
     model, is_lora = load_model(config, args.checkpoint, is_lora=args.lora, device=device)
 
+    # Determine model type for output filename
+    if is_lora:
+        model_suffix = "lora"
+    else:
+        model_suffix = config.get('model', {}).get('type', 'unet')
+
     # Create dataset
     dataset = FlowMixingDataset(
         data_path=config['dataset']['path'],
@@ -413,17 +419,18 @@ def main():
         print(f"  Sample {sample_idx}: vtmax={vtmax:.2f}, RMSE={rmse:.4f}, PDE_RMSE={pde_rmse:.4f}")
 
     # Plot all samples
+    output_filename = f"visualization_{model_suffix}.png"
     print("Plotting visualization...")
     plot_multiple_samples(
         results=results,
-        save_path=str(output_dir / 'visualization.png'),
+        save_path=str(output_dir / output_filename),
     )
 
     # Print summary
     print("\n" + "=" * 60)
     print("Visualization Complete")
     print("=" * 60)
-    print(f"Output: {output_dir / 'visualization.png'}")
+    print(f"Output: {output_dir / output_filename}")
     print(f"\nAverage Metrics ({len(results)} samples):")
     print(f"  - RMSE (pred vs gt): {np.mean(all_rmse):.6f}")
     print(f"  - PDE Residual RMSE: {np.mean(all_pde_rmse):.6f}")
