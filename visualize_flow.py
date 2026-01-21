@@ -93,8 +93,12 @@ def get_sample(config: dict, sample_idx: int = 0, clip_idx: int = 0) -> dict:
         clips_per_sample=None,
     )
 
-    # Get sample
-    idx = sample_idx * dataset.clips_per_sample + clip_idx
+    # Get sample index
+    # dataset.samples is a list of (sample_key, vtmax, total_timesteps)
+    n_samples = len(dataset.samples)
+    clips_per_sample = len(dataset) // n_samples if n_samples > 0 else 1
+
+    idx = sample_idx * clips_per_sample + clip_idx
     idx = min(idx, len(dataset) - 1)
     sample = dataset[idx]
 
@@ -167,132 +171,70 @@ def compute_pde_residual(
     return residual, du_dt, advection
 
 
-def plot_pred_vs_gt(
-    pred: torch.Tensor,
+def plot_single_timestep(
     gt: torch.Tensor,
-    timesteps: list = [0, 4, 8, 12, 15],
+    pred: torch.Tensor,
+    residual: torch.Tensor,
+    timestep: int = -1,
     channel: int = 0,
+    vtmax: float = 0.0,
     save_path: Optional[str] = None,
-    title: str = "Prediction vs Ground Truth",
 ):
-    """Plot prediction vs ground truth comparison."""
-    pred_np = pred[0, :, :, :, channel].cpu().numpy()
-    gt_np = gt[0, :, :, :, channel].cpu().numpy()
+    """
+    Plot GT, Prediction, PDE Residual in one row (3 columns).
 
-    n_times = len(timesteps)
-    fig, axes = plt.subplots(3, n_times, figsize=(4 * n_times, 12))
+    Args:
+        gt: [B, T, H, W, C] ground truth
+        pred: [B, T, H, W, C] prediction
+        residual: [B, T-1, H, W] PDE residual
+        timestep: which timestep to plot (-1 = last)
+        channel: which channel to plot
+        vtmax: vtmax value for title
+        save_path: path to save figure
+    """
+    # Get the specified timestep
+    gt_np = gt[0, timestep, :, :, channel].cpu().numpy()
+    pred_np = pred[0, timestep, :, :, channel].cpu().numpy()
 
-    vmin = min(pred_np.min(), gt_np.min())
-    vmax = max(pred_np.max(), gt_np.max())
+    # Residual has T-1 timesteps, adjust index
+    res_idx = timestep if timestep >= 0 else residual.shape[1] + timestep
+    res_np = residual[0, res_idx].cpu().numpy()
 
-    error = np.abs(pred_np - gt_np)
-    emax = error.max()
+    # Coordinate range [0, 1]
+    extent = [0, 1, 0, 1]
 
-    for i, t in enumerate(timesteps):
-        im0 = axes[0, i].imshow(gt_np[t], cmap='RdBu_r', vmin=vmin, vmax=vmax, origin='lower')
-        axes[0, i].set_title(f't={t} (GT)')
-        axes[0, i].axis('off')
+    # Create figure: 1 row, 3 columns
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
 
-        im1 = axes[1, i].imshow(pred_np[t], cmap='RdBu_r', vmin=vmin, vmax=vmax, origin='lower')
-        axes[1, i].set_title(f't={t} (Pred)')
-        axes[1, i].axis('off')
+    # Determine color range for GT and Pred
+    vmin = min(gt_np.min(), pred_np.min())
+    vmax = max(gt_np.max(), pred_np.max())
 
-        im2 = axes[2, i].imshow(error[t], cmap='hot', vmin=0, vmax=emax, origin='lower')
-        axes[2, i].set_title(f't={t} (|Error|)')
-        axes[2, i].axis('off')
+    # 1. Ground Truth
+    im0 = axes[0].imshow(gt_np, origin='lower', extent=extent, cmap='jet', vmin=vmin, vmax=vmax)
+    axes[0].set_title(f'Ground Truth (t={timestep})', fontsize=12)
+    axes[0].set_xlabel('x')
+    axes[0].set_ylabel('y')
+    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
 
-    fig.colorbar(im0, ax=axes[0, :], shrink=0.6, label='Value')
-    fig.colorbar(im1, ax=axes[1, :], shrink=0.6, label='Value')
-    fig.colorbar(im2, ax=axes[2, :], shrink=0.6, label='|Error|')
+    # 2. Prediction
+    im1 = axes[1].imshow(pred_np, origin='lower', extent=extent, cmap='jet', vmin=vmin, vmax=vmax)
+    pred_rmse = np.sqrt(np.mean((pred_np - gt_np)**2))
+    axes[1].set_title(f'Prediction (RMSE={pred_rmse:.4f})', fontsize=12)
+    axes[1].set_xlabel('x')
+    axes[1].set_ylabel('y')
+    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
 
-    fig.suptitle(title, fontsize=14)
-    plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved: {save_path}")
-
-    plt.close()
-
-
-def plot_pde_residual(
-    residual: torch.Tensor,
-    du_dt: torch.Tensor,
-    advection: torch.Tensor,
-    timesteps: list = [0, 4, 8, 12, 14],
-    save_path: Optional[str] = None,
-    title: str = "PDE Residual Analysis",
-):
-    """Plot PDE residual heatmap."""
-    res_np = residual[0].cpu().numpy()
-    dt_np = du_dt[0].cpu().numpy()
-    adv_np = advection[0].cpu().numpy()
-
-    n_times = len(timesteps)
-    fig, axes = plt.subplots(3, n_times, figsize=(4 * n_times, 12))
-
+    # 3. PDE Residual
     res_max = np.abs(res_np).max()
-    dt_max = np.abs(dt_np).max()
-    adv_max = np.abs(adv_np).max()
+    im2 = axes[2].imshow(res_np, origin='lower', extent=extent, cmap='RdBu_r', vmin=-res_max, vmax=res_max)
+    pde_rmse = np.sqrt(np.mean(res_np**2))
+    axes[2].set_title(f'PDE Residual (RMSE={pde_rmse:.4f})', fontsize=12)
+    axes[2].set_xlabel('x')
+    axes[2].set_ylabel('y')
+    plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
 
-    for i, t in enumerate(timesteps):
-        im0 = axes[0, i].imshow(dt_np[t], cmap='RdBu_r', vmin=-dt_max, vmax=dt_max, origin='lower')
-        axes[0, i].set_title(f't={t} (du/dt)')
-        axes[0, i].axis('off')
-
-        im1 = axes[1, i].imshow(adv_np[t], cmap='RdBu_r', vmin=-adv_max, vmax=adv_max, origin='lower')
-        axes[1, i].set_title(f't={t} (Advection)')
-        axes[1, i].axis('off')
-
-        im2 = axes[2, i].imshow(res_np[t], cmap='RdBu_r', vmin=-res_max, vmax=res_max, origin='lower')
-        axes[2, i].set_title(f't={t} (Residual)')
-        axes[2, i].axis('off')
-
-    fig.colorbar(im0, ax=axes[0, :], shrink=0.6, label='du/dt')
-    fig.colorbar(im1, ax=axes[1, :], shrink=0.6, label='a*du/dx + b*du/dy')
-    fig.colorbar(im2, ax=axes[2, :], shrink=0.6, label='PDE Residual')
-
-    rmse = np.sqrt(np.mean(res_np**2))
-    mae = np.mean(np.abs(res_np))
-    fig.suptitle(f"{title}\nRMSE: {rmse:.4f}, MAE: {mae:.4f}", fontsize=14)
-
-    plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved: {save_path}")
-
-    plt.close()
-
-
-def plot_residual_distribution(
-    residual: torch.Tensor,
-    save_path: Optional[str] = None,
-    title: str = "PDE Residual Distribution",
-):
-    """Plot histogram of PDE residual values."""
-    res_np = residual.cpu().numpy().flatten()
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-
-    axes[0].hist(res_np, bins=100, density=True, alpha=0.7, color='steelblue')
-    axes[0].set_xlabel('Residual Value')
-    axes[0].set_ylabel('Density')
-    axes[0].set_title('Distribution')
-    axes[0].axvline(0, color='red', linestyle='--', alpha=0.5)
-
-    mean = np.mean(res_np)
-    std = np.std(res_np)
-    axes[0].axvline(mean, color='green', linestyle='-', alpha=0.7, label=f'Mean: {mean:.4f}')
-    axes[0].legend()
-
-    axes[1].hist(np.abs(res_np), bins=100, density=True, alpha=0.7, color='coral')
-    axes[1].set_xlabel('|Residual|')
-    axes[1].set_ylabel('Density')
-    axes[1].set_title('Absolute Value Distribution')
-    axes[1].set_yscale('log')
-
-    fig.suptitle(f"{title}\nMean: {mean:.4f}, Std: {std:.4f}", fontsize=12)
+    fig.suptitle(f'vtmax={vtmax:.2f}', fontsize=14)
     plt.tight_layout()
 
     if save_path:
@@ -310,6 +252,7 @@ def main():
     parser.add_argument('--lora', action='store_true', help='Use LoRA checkpoint')
     parser.add_argument('--sample_idx', type=int, default=0, help='Sample index')
     parser.add_argument('--clip_idx', type=int, default=0, help='Clip index')
+    parser.add_argument('--timestep', type=int, default=-1, help='Timestep to visualize (-1 = last)')
     parser.add_argument('--pde_version', type=str, default='v1', choices=['v1', 'v2'], help='PDE version')
     parser.add_argument('--device', type=str, default='cuda', help='Device')
     args = parser.parse_args()
@@ -335,18 +278,10 @@ def main():
     t0 = data[:, 0:1]
     pred_with_t0 = torch.cat([t0, pred], dim=1)  # [B, 17, H, W, 6]
 
-    # A: Prediction vs GT
-    print("Plotting prediction vs ground truth...")
-    plot_pred_vs_gt(
-        pred=pred,
-        gt=gt,
-        timesteps=[0, 4, 8, 12, 15],
-        channel=0,
-        save_path=str(output_dir / 'pred_vs_gt.png'),
-        title=f"Sample {args.sample_idx}, Clip {args.clip_idx} - Channel 0 (u)",
-    )
+    # Get vtmax
+    vtmax = batch['vtmax'][0].item()
 
-    # B: PDE Residual
+    # Compute PDE residual
     print(f"Computing PDE residual (version: {args.pde_version})...")
     residual, du_dt, advection = compute_pde_residual(
         pred=pred_with_t0,
@@ -356,34 +291,26 @@ def main():
         device=device,
     )
 
-    print("Plotting PDE residual heatmap...")
-    plot_pde_residual(
+    # Plot: GT | Prediction | PDE Residual (one row)
+    print("Plotting visualization...")
+    plot_single_timestep(
+        gt=gt,
+        pred=pred,
         residual=residual,
-        du_dt=du_dt,
-        advection=advection,
-        timesteps=[0, 4, 8, 12, 14],
-        save_path=str(output_dir / 'pde_residual.png'),
-        title=f"PDE Residual (version: {args.pde_version})",
+        timestep=args.timestep,
+        channel=0,
+        vtmax=vtmax,
+        save_path=str(output_dir / 'visualization.png'),
     )
 
-    print("Plotting residual distribution...")
-    plot_residual_distribution(
-        residual=residual,
-        save_path=str(output_dir / 'residual_distribution.png'),
-        title=f"PDE Residual Distribution (version: {args.pde_version})",
-    )
+    # Print metrics
+    rmse = torch.sqrt(torch.mean((pred - gt)**2)).item()
+    pde_rmse = torch.sqrt(torch.mean(residual**2)).item()
 
     print("\n" + "=" * 60)
     print("Visualization Complete")
     print("=" * 60)
-    print(f"Output directory: {output_dir}")
-    print(f"Files generated:")
-    print(f"  - pred_vs_gt.png")
-    print(f"  - pde_residual.png")
-    print(f"  - residual_distribution.png")
-
-    rmse = torch.sqrt(torch.mean((pred - gt)**2)).item()
-    pde_rmse = torch.sqrt(torch.mean(residual**2)).item()
+    print(f"Output: {output_dir / 'visualization.png'}")
     print(f"\nMetrics:")
     print(f"  - RMSE (pred vs gt): {rmse:.6f}")
     print(f"  - PDE Residual RMSE: {pde_rmse:.6f}")
