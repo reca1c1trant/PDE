@@ -6,11 +6,14 @@ A. Prediction vs Ground Truth comparison
 B. PDE Residual heatmap
 
 Usage:
-    # For baseline models (UNet/MLP)
-    python visualize_flow.py --checkpoint path/to/best.pt --config path/to/config.yaml --output_dir ./vis_results
+    # UNet → visualization_unet.png
+  python visualize_flow.py --checkpoint checkpoints_unet_baseline_flow_v2/best.pt --config configs/unet_baseline_flow_v2.yaml --output_dir ./vis_results 
 
-    # For LoRA checkpoints
-    python visualize_flow.py --checkpoint path/to/best_lora.pt --config path/to/config.yaml --lora --output_dir ./vis_results
+  # MLP → visualization_mlp.png
+  python visualize_flow.py --checkpoint checkpoints_mlp/best.pt --config configs/mlp_baseline_flow_v2.yaml --output_dir ./vis_results   
+
+  # LoRA → visualization_lora.png
+  python visualize_flow.py --checkpoint checkpoints_flow_lora_v2/best_lora.pt --config configs/finetune_flow_v2.yaml --lora --output_dir ./vis_results
 """
 
 import argparse
@@ -23,13 +26,6 @@ from typing import Optional, Tuple
 
 from dataset_flow import FlowMixingDataset, flow_mixing_collate_fn
 from pde_loss_flow import flow_mixing_pde_loss
-from pde_loss_flow_v2 import (
-    flow_mixing_pde_loss_v2,
-    compute_flow_coefficients,
-    pad_with_boundaries_1x,
-    central_derivative_x,
-    central_derivative_y,
-)
 
 
 def load_config(config_path: str) -> dict:
@@ -108,9 +104,9 @@ def get_sample(config: dict, sample_idx: int = 0, clip_idx: int = 0) -> dict:
 
 
 @torch.no_grad()
-def run_inference(model, batch: dict, device: str = 'cuda', is_lora: bool = False) -> torch.Tensor:
+def run_inference(model, batch: dict, device: str = 'cuda', is_lora: bool = False, dtype: torch.dtype = torch.bfloat16) -> torch.Tensor:
     """Run model inference."""
-    data = batch['data'].to(device=device, dtype=torch.float32)
+    data = batch['data'].to(device=device, dtype=dtype)
 
     if is_lora:
         input_data = data[:, :-1]  # [B, 16, H, W, 6]
@@ -118,32 +114,27 @@ def run_inference(model, batch: dict, device: str = 'cuda', is_lora: bool = Fals
     else:
         output = model(data)  # [B, 16, H, W, 6]
 
-    return output
+    return output.float()  # Convert back to float32 for visualization
 
 
 def compute_pde_residual(
     pred: torch.Tensor,
     batch: dict,
     config: dict,
-    pde_version: str = "v1",
     device: str = 'cuda',
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, float]:
     """
-    Compute PDE residual field.
+    Compute PDE residual field using pde_loss_flow (2nd order upwind).
 
     Returns:
-        residual: [B, T-1, H, W] PDE residual
-        du_dt: [B, T-1, H, W] time derivative
-        advection: [B, T-1, H, W] advection term
+        residual: [B, T-1, H, W] PDE residual field
+        pde_loss: float - MSE of residual (same as training)
     """
-    pred_u = pred[..., :1].to(device).float()
-    B, T, H, W, C = pred_u.shape
+    pred_u = pred[..., :1].to(device).float()  # [B, T, H, W, 1]
 
     dt = config.get('physics', {}).get('dt', 1/999)
     Lx = config.get('physics', {}).get('Lx', 1.0)
     Ly = config.get('physics', {}).get('Ly', 1.0)
-    dx = Lx / W
-    dy = Ly / H
 
     boundary_left = batch['boundary_left'].to(device).float()
     boundary_right = batch['boundary_right'].to(device).float()
@@ -151,24 +142,20 @@ def compute_pde_residual(
     boundary_top = batch['boundary_top'].to(device).float()
     vtmax = batch['vtmax'].to(device).float().mean().item()
 
-    u = pred_u[..., 0]  # [B, T, H, W]
+    # Use same function as training (2nd order upwind)
+    pde_loss, loss_time, loss_advection, residual = flow_mixing_pde_loss(
+        pred=pred_u,
+        boundary_left=boundary_left,
+        boundary_right=boundary_right,
+        boundary_bottom=boundary_bottom,
+        boundary_top=boundary_top,
+        vtmax=vtmax,
+        dt=dt,
+        Lx=Lx,
+        Ly=Ly,
+    )
 
-    a, b = compute_flow_coefficients(H, W, vtmax, device, torch.float32)
-
-    bnd_left = boundary_left[..., 0]
-    bnd_right = boundary_right[..., 0]
-    bnd_bottom = boundary_bottom[..., 0]
-    bnd_top = boundary_top[..., 0]
-
-    u_padded = pad_with_boundaries_1x(u, bnd_left, bnd_right, bnd_bottom, bnd_top)
-    du_dx = central_derivative_x(u_padded, H, W, dx)
-    du_dy = central_derivative_y(u_padded, H, W, dy)
-
-    du_dt = (u[:, 1:] - u[:, :-1]) / dt
-    advection = a * du_dx[:, 1:] + b * du_dy[:, 1:]
-    residual = du_dt + advection
-
-    return residual, du_dt, advection
+    return residual, pde_loss.item()
 
 
 def plot_single_timestep(
@@ -225,11 +212,12 @@ def plot_single_timestep(
     axes[1].set_ylabel('y')
     plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
 
-    # 3. PDE Residual
-    res_max = np.abs(res_np).max()
+    # 3. PDE Residual (use 95th percentile for colorbar)
+    res_percentile = np.percentile(np.abs(res_np), 95)
+    res_max = res_percentile if res_percentile > 0 else 1.0
     im2 = axes[2].imshow(res_np, origin='lower', extent=extent, cmap='RdBu_r', vmin=-res_max, vmax=res_max)
-    pde_rmse = np.sqrt(np.mean(res_np**2))
-    axes[2].set_title(f'PDE Residual (RMSE={pde_rmse:.4f})', fontsize=12)
+    pde_mse = np.mean(res_np**2)
+    axes[2].set_title(f'PDE Residual (MSE={pde_mse:.2f})', fontsize=12)
     axes[2].set_xlabel('x')
     axes[2].set_ylabel('y')
     plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
@@ -293,11 +281,12 @@ def plot_multiple_samples(
         axes[row, 1].set_xlabel('x')
         plt.colorbar(im1, ax=axes[row, 1], fraction=0.046, pad=0.04)
 
-        # 3. PDE Residual
-        res_max = np.abs(res_np).max() if np.abs(res_np).max() > 0 else 1.0
+        # 3. PDE Residual (use 95th percentile for colorbar to avoid outliers)
+        res_percentile = np.percentile(np.abs(res_np), 95)
+        res_max = res_percentile if res_percentile > 0 else 1.0
         im2 = axes[row, 2].imshow(res_np, origin='lower', extent=extent, cmap='RdBu_r', vmin=-res_max, vmax=res_max)
-        pde_rmse = np.sqrt(np.mean(res_np**2))
-        axes[row, 2].set_title(f'PDE Residual (RMSE={pde_rmse:.4f})', fontsize=11)
+        pde_mse = np.mean(res_np**2)
+        axes[row, 2].set_title(f'PDE Residual (MSE={pde_mse:.2f})', fontsize=11)
         axes[row, 2].set_xlabel('x')
         plt.colorbar(im2, ax=axes[row, 2], fraction=0.046, pad=0.04)
 
@@ -317,7 +306,6 @@ def main():
     parser.add_argument('--output_dir', type=str, default='./vis_results', help='Output directory')
     parser.add_argument('--lora', action='store_true', help='Use LoRA checkpoint')
     parser.add_argument('--num_samples', type=int, default=None, help='Number of samples (overrides config)')
-    parser.add_argument('--pde_version', type=str, default='v1', choices=['v1', 'v2'], help='PDE version')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--device', type=str, default='cuda', help='Device')
     args = parser.parse_args()
@@ -367,7 +355,10 @@ def main():
 
     results = []
     all_rmse = []
-    all_pde_rmse = []
+    all_pde_mse = []
+
+    # Determine model dtype
+    model_dtype = torch.bfloat16 if is_lora else torch.float32
 
     for i, sample_idx in enumerate(sample_indices):
         # Random clip within this sample
@@ -379,26 +370,25 @@ def main():
         batch = flow_mixing_collate_fn([sample])
 
         # Run inference
-        pred = run_inference(model, batch, device=device, is_lora=is_lora)
+        pred = run_inference(model, batch, device=device, is_lora=is_lora, dtype=model_dtype)
 
         data = batch['data'].to(device)
         gt = data[:, 1:]  # [B, 16, H, W, 6]
         t0 = data[:, 0:1]
-        pred_with_t0 = torch.cat([t0, pred], dim=1)
+        pred_with_t0 = torch.cat([t0.float(), pred], dim=1)
 
         vtmax = batch['vtmax'][0].item()
 
-        # Compute PDE residual
-        residual, _, _ = compute_pde_residual(
+        # Compute PDE residual (using same method as training: 2nd order upwind)
+        residual, pde_mse = compute_pde_residual(
             pred=pred_with_t0,
             batch=batch,
             config=config,
-            pde_version=args.pde_version,
             device=device,
         )
 
         # Get last timestep
-        gt_last = gt[0, -1, :, :, 0].cpu().numpy()
+        gt_last = gt[0, -1, :, :, 0].float().cpu().numpy()
         pred_last = pred[0, -1, :, :, 0].cpu().numpy()
         res_last = residual[0, -1].cpu().numpy()
 
@@ -412,11 +402,10 @@ def main():
 
         # Metrics
         rmse = np.sqrt(np.mean((pred_last - gt_last)**2))
-        pde_rmse = np.sqrt(np.mean(res_last**2))
         all_rmse.append(rmse)
-        all_pde_rmse.append(pde_rmse)
+        all_pde_mse.append(pde_mse)
 
-        print(f"  Sample {sample_idx}: vtmax={vtmax:.2f}, RMSE={rmse:.4f}, PDE_RMSE={pde_rmse:.4f}")
+        print(f"  Sample {sample_idx}: vtmax={vtmax:.2f}, RMSE={rmse:.4f}, PDE_MSE={pde_mse:.2f}")
 
     # Plot all samples
     output_filename = f"visualization_{model_suffix}.png"
@@ -433,7 +422,7 @@ def main():
     print(f"Output: {output_dir / output_filename}")
     print(f"\nAverage Metrics ({len(results)} samples):")
     print(f"  - RMSE (pred vs gt): {np.mean(all_rmse):.6f}")
-    print(f"  - PDE Residual RMSE: {np.mean(all_pde_rmse):.6f}")
+    print(f"  - PDE Loss (MSE): {np.mean(all_pde_mse):.2f}")
     print("=" * 60)
 
 

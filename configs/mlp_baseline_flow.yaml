@@ -16,7 +16,7 @@ model:
   in_channels: 6                          # Padded to 6 channels (only 1 real)
   out_channels: 6                         # Output channels
   width: 64                               # Hidden channel width
-  n_layers: 8                             # Number of SIREN blocks
+  n_layers: 4                             # Number of SIREN blocks
   omega_0: 30.0                           # SIREN first layer frequency
   use_positional_embedding: true          # Add (x, y) coordinates
   use_residual: true                      # Residual connections
@@ -39,7 +39,7 @@ physics:
 
 # DataLoader
 dataloader:
-  batch_size: 64                          # Batch size
+  batch_size: 48                          # Batch size
   num_workers: 4
   pin_memory: true
 
@@ -67,5 +67,5 @@ training:
 logging:
   project: "pde-mlp-baseline-flow"
   entity: "reca1c1trant-ntu"
-  save_dir: "./checkpoints_mlp_baseline_flow"
+  save_dir: "./checkpoints_mlp_baseline_flow_normal_single"
   log_interval: 10

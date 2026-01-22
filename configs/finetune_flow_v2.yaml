@@ -57,7 +57,7 @@ dataset:
   temporal_length: 16  # Will load 17 frames (16+1)
   train_ratio: 0.9
   seed: 42
-  clips_per_sample: 100  # K clips per sample per epoch
+  clips_per_sample: null  # K clips per sample per epoch
 
 # Physics parameters
 physics:

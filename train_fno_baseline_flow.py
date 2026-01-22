@@ -10,7 +10,11 @@ Usage:
 
     # Multi-GPU
     torchrun --nproc_per_node=8 train_fno_baseline_flow.py --config configs/unet_baseline_flow_v2.yaml
-"""
+
+    torchrun --nproc_per_node=8 train_fno_baseline_flow.py --config configs/mlp_baseline_flow.yaml
+
+    python train_fno_baseline_flow.py --config configs/mlp_baseline_flow.yaml
+    """
 
 import os
 import sys

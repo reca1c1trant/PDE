@@ -238,3 +238,5 @@ docs/
 unet.py
 train_PINN_transient.py
 *.ipynb
+
+vis_results/
