@@ -104,15 +104,17 @@ def get_sample(config: dict, sample_idx: int = 0, clip_idx: int = 0) -> dict:
 
 
 @torch.no_grad()
-def run_inference(model, batch: dict, device: str = 'cuda', is_lora: bool = False, dtype: torch.dtype = torch.bfloat16) -> torch.Tensor:
+def run_inference(model, batch: dict, device: str = 'cuda', is_lora: bool = False, dtype: torch.dtype = torch.float32) -> torch.Tensor:
     """Run model inference."""
-    data = batch['data'].to(device=device, dtype=dtype)
-
     if is_lora:
+        # LoRA uses all 6 channels with bf16
+        data = batch['data'].to(device=device, dtype=torch.bfloat16)
         input_data = data[:, :-1]  # [B, 16, H, W, 6]
         output = model(input_data)  # [B, 16, H, W, 6]
     else:
-        output = model(data)  # [B, 16, H, W, 6]
+        # Baseline (UNet/MLP) uses only first channel
+        data = batch['data'][..., :1].to(device=device, dtype=dtype)  # [B, T, H, W, 1]
+        output = model(data)  # [B, 16, H, W, 1]
 
     return output.float()  # Convert back to float32 for visualization
 
@@ -372,12 +374,24 @@ def main():
         # Run inference
         pred = run_inference(model, batch, device=device, is_lora=is_lora, dtype=model_dtype)
 
-        data = batch['data'].to(device)
-        gt = data[:, 1:]  # [B, 16, H, W, 6]
-        t0 = data[:, 0:1]
-        pred_with_t0 = torch.cat([t0.float(), pred], dim=1)
-
         vtmax = batch['vtmax'][0].item()
+
+        if is_lora:
+            # LoRA: data is [B, T, H, W, 6], pred is [B, 16, H, W, 6]
+            data = batch['data'].to(device)
+            gt = data[:, 1:]  # [B, 16, H, W, 6]
+            t0 = data[:, 0:1]
+            pred_with_t0 = torch.cat([t0.float(), pred], dim=1)
+            gt_last = gt[0, -1, :, :, 0].float().cpu().numpy()
+            pred_last = pred[0, -1, :, :, 0].cpu().numpy()
+        else:
+            # Baseline: data is [B, T, H, W, 1], pred is [B, 16, H, W, 1]
+            data = batch['data'][..., :1].to(device)  # Only first channel
+            gt = data[:, 1:]  # [B, 16, H, W, 1]
+            t0 = data[:, 0:1]
+            pred_with_t0 = torch.cat([t0.float(), pred], dim=1)
+            gt_last = gt[0, -1, :, :, 0].float().cpu().numpy()
+            pred_last = pred[0, -1, :, :, 0].cpu().numpy()
 
         # Compute PDE residual (using same method as training: 2nd order upwind)
         residual, pde_mse = compute_pde_residual(
@@ -386,10 +400,6 @@ def main():
             config=config,
             device=device,
         )
-
-        # Get last timestep
-        gt_last = gt[0, -1, :, :, 0].float().cpu().numpy()
-        pred_last = pred[0, -1, :, :, 0].cpu().numpy()
         res_last = residual[0, -1].cpu().numpy()
 
         results.append({

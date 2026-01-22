@@ -17,6 +17,7 @@ from typing import Tuple
 
 from dataset_flow import FlowMixingDataset, flow_mixing_collate_fn
 from pde_loss_flow import flow_mixing_pde_loss
+from pde_loss_flow_v2 import flow_mixing_pde_loss_v2
 from model_lora import PDELoRAModel, load_lora_checkpoint
 
 
@@ -105,28 +106,51 @@ def compute_pde_residual(
     Lx = config.get('physics', {}).get('Lx', 1.0)
     Ly = config.get('physics', {}).get('Ly', 1.0)
 
+    # Get pde_version from config (must match training!)
+    pde_version = config.get('training', {}).get('pde_version', 'v1')
+
     # Use mean vtmax for batch
     vtmax_mean = vtmax.mean().item()
 
-    # Compute PDE loss (same as training)
-    pde_loss, loss_time, loss_advection, residual = flow_mixing_pde_loss(
-        pred=pred_u,
-        boundary_left=boundary_left,
-        boundary_right=boundary_right,
-        boundary_bottom=boundary_bottom,
-        boundary_top=boundary_top,
-        vtmax=vtmax_mean,
-        dt=dt,
-        Lx=Lx,
-        Ly=Ly,
-    )
+    # Select PDE loss function based on version (same as train_flow_lora.py)
+    if pde_version == "v2":
+        pde_loss, loss_time, loss_advection, residual = flow_mixing_pde_loss_v2(
+            pred=pred_u,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            vtmax=vtmax_mean,
+            dt=dt,
+            Lx=Lx,
+            Ly=Ly,
+        )
+    else:
+        pde_loss, loss_time, loss_advection, residual = flow_mixing_pde_loss(
+            pred=pred_u,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            vtmax=vtmax_mean,
+            dt=dt,
+            Lx=Lx,
+            Ly=Ly,
+        )
 
     return residual, pde_loss.item()
 
 
-def compute_rmse_loss(output: torch.Tensor, target: torch.Tensor) -> float:
-    """Compute RMSE loss (same as train_flow_lora.py)."""
-    mse = torch.mean((output.float() - target.float()) ** 2)
+def compute_rmse_loss(output: torch.Tensor, target: torch.Tensor, channel: int = 0) -> float:
+    """
+    Compute RMSE loss for a specific channel.
+
+    For Flow Mixing, only channel 0 (u) is real, others are padding.
+    """
+    # Only compute on the real channel
+    out_ch = output[..., channel].float()
+    tgt_ch = target[..., channel].float()
+    mse = torch.mean((out_ch - tgt_ch) ** 2)
     rmse = torch.sqrt(mse + 1e-8)
     return rmse.item()
 
@@ -208,6 +232,10 @@ def main():
     num_samples = args.num_samples
     if num_samples is None:
         num_samples = config.get('visualization', {}).get('num_samples', 3)
+
+    # Print PDE version
+    pde_version = config.get('training', {}).get('pde_version', 'v1')
+    print(f"PDE Version: {pde_version} ({'central diff' if pde_version == 'v2' else '2nd upwind'})")
 
     # Load model correctly
     model = load_lora_model(config, args.checkpoint, device=device)

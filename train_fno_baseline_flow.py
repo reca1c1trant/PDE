@@ -192,21 +192,25 @@ def compute_pde_loss(output, input_data, batch, config, accelerator, pde_version
 
 
 def compute_rmse_loss(output, target):
-    """Compute RMSE loss between output and ground truth."""
+    """
+    Compute RMSE loss between output and ground truth.
+
+    Args:
+        output: [B, T, H, W, C] (C=1 for Flow Mixing)
+        target: [B, T, H, W, C]
+    """
     mse = torch.mean((output - target) ** 2)
     rmse = torch.sqrt(mse + 1e-8)
     return rmse
 
 
 def compute_boundary_loss(output, target):
-    """Compute boundary RMSE loss on 4 edges (excluding corners).
+    """
+    Compute boundary RMSE loss on 4 edges (excluding corners).
 
     Args:
-        output: [B, T, H, W, C]
+        output: [B, T, H, W, C] (C=1 for Flow Mixing)
         target: [B, T, H, W, C]
-
-    Returns:
-        boundary_rmse: scalar tensor
     """
     # Left edge (excluding corners)
     left_pred = output[:, :, 1:-1, 0, :]
@@ -255,7 +259,8 @@ def validate(model, val_loader, config, accelerator, pde_version="v1"):
     num_batches = torch.zeros(1, device=accelerator.device)
 
     for batch in val_loader:
-        data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
+        # Only use first channel (Flow Mixing has 1 real channel)
+        data = batch['data'][..., :1].to(device=accelerator.device, dtype=torch.float32)
         input_data = data[:, :-1]
         target = data[:, 1:]
 
@@ -459,7 +464,8 @@ def main():
                 if early_stop:
                     break
 
-                data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
+                # Only use first channel (Flow Mixing has 1 real channel)
+                data = batch['data'][..., :1].to(device=accelerator.device, dtype=torch.float32)
                 input_data = data[:, :-1]
                 target = data[:, 1:]
 
@@ -476,7 +482,7 @@ def main():
                     # RMSE loss
                     rmse_loss = compute_rmse_loss(output, target)
 
-                    # Boundary loss (4 edges RMSE)
+                    # Boundary loss
                     bc_loss = compute_boundary_loss(output, target)
 
                     # Total loss

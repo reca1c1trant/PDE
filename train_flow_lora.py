@@ -196,48 +196,76 @@ def compute_pde_loss(output, input_data, batch, config, accelerator, pde_version
     return pde_loss, loss_time, loss_advection
 
 
-def compute_rmse_loss(output, target):
+def compute_rmse_loss(output, target, channel_mask=None):
     """
     Compute RMSE loss between output and ground truth.
 
     Args:
         output: Model output [B, 16, H, W, 6]
         target: Ground truth [B, 16, H, W, 6]
+        channel_mask: [B, 6] or [6] mask indicating real channels (1=real, 0=padding)
 
     Returns:
-        rmse_loss: RMSE loss (all channels)
+        rmse_loss: RMSE loss (only real channels)
     """
-    mse = torch.mean((output - target) ** 2)
+    if channel_mask is not None:
+        # Use channel_mask to only compute loss on real channels
+        # channel_mask: [B, 6] or [6] -> broadcast to [B, T, H, W, 6]
+        if channel_mask.dim() == 1:
+            mask = channel_mask.view(1, 1, 1, 1, -1)
+        else:
+            mask = channel_mask.view(channel_mask.shape[0], 1, 1, 1, -1)
+
+        # Masked MSE: only count real channels
+        diff_sq = (output - target) ** 2
+        masked_diff_sq = diff_sq * mask
+        mse = masked_diff_sq.sum() / (mask.sum() * output.shape[1] * output.shape[2] * output.shape[3])
+    else:
+        # Fallback: only use first channel (for Flow Mixing)
+        mse = torch.mean((output[..., 0] - target[..., 0]) ** 2)
+
     rmse_loss = torch.sqrt(mse + 1e-8)
     return rmse_loss
 
 
-def compute_boundary_loss(output, target):
+def compute_boundary_loss(output, target, channel_mask=None):
     """
     Compute boundary RMSE loss on 4 edges (excluding corners).
 
     Args:
         output: Model output [B, T, H, W, C]
         target: Ground truth [B, T, H, W, C]
+        channel_mask: [B, C] or [C] mask indicating real channels (1=real, 0=padding)
 
     Returns:
-        boundary_rmse: Scalar tensor
+        boundary_rmse: Scalar tensor (only real channels)
     """
-    # Left edge (excluding corners)
-    left_pred = output[:, :, 1:-1, 0, :]
-    left_target = target[:, :, 1:-1, 0, :]
+    # Determine which channels to use
+    if channel_mask is not None:
+        # Get indices of real channels
+        if channel_mask.dim() == 1:
+            real_channels = torch.where(channel_mask > 0)[0]
+        else:
+            real_channels = torch.where(channel_mask[0] > 0)[0]
+    else:
+        # Default: only first channel (for Flow Mixing)
+        real_channels = torch.tensor([0], device=output.device)
+
+    # Left edge (excluding corners) - only real channels
+    left_pred = output[:, :, 1:-1, 0, :][:, :, :, real_channels]
+    left_target = target[:, :, 1:-1, 0, :][:, :, :, real_channels]
 
     # Right edge (excluding corners)
-    right_pred = output[:, :, 1:-1, -1, :]
-    right_target = target[:, :, 1:-1, -1, :]
+    right_pred = output[:, :, 1:-1, -1, :][:, :, :, real_channels]
+    right_target = target[:, :, 1:-1, -1, :][:, :, :, real_channels]
 
     # Bottom edge (excluding corners)
-    bottom_pred = output[:, :, 0, 1:-1, :]
-    bottom_target = target[:, :, 0, 1:-1, :]
+    bottom_pred = output[:, :, 0, 1:-1, :][:, :, :, real_channels]
+    bottom_target = target[:, :, 0, 1:-1, :][:, :, :, real_channels]
 
     # Top edge (excluding corners)
-    top_pred = output[:, :, -1, 1:-1, :]
-    top_target = target[:, :, -1, 1:-1, :]
+    top_pred = output[:, :, -1, 1:-1, :][:, :, :, real_channels]
+    top_target = target[:, :, -1, 1:-1, :][:, :, :, real_channels]
 
     # Concatenate all boundary points
     bc_pred = torch.cat([
@@ -271,6 +299,7 @@ def validate(model, val_loader, config, accelerator, pde_version: str = "v1"):
 
     for batch in val_loader:
         data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+        channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
         input_data = data[:, :-1]  # [B, 16, H, W, 6]
         target = data[:, 1:]       # [B, 16, H, W, 6]
@@ -278,8 +307,8 @@ def validate(model, val_loader, config, accelerator, pde_version: str = "v1"):
         output = model(input_data)
 
         pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator, pde_version)
-        rmse_loss = compute_rmse_loss(output.float(), target.float())
-        bc_loss = compute_boundary_loss(output.float(), target.float())
+        rmse_loss = compute_rmse_loss(output.float(), target.float(), channel_mask)
+        bc_loss = compute_boundary_loss(output.float(), target.float(), channel_mask)
 
         total_pde_loss += pde_loss.detach()
         total_rmse_loss += rmse_loss.detach()
@@ -430,6 +459,7 @@ def main():
                     break
 
                 data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+                channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
                 input_data = data[:, :-1]  # [B, 16, H, W, 6]
                 target = data[:, 1:]       # [B, 16, H, W, 6]
@@ -444,11 +474,11 @@ def main():
                         output, input_data, batch, config, accelerator, pde_version
                     )
 
-                    # RMSE loss
-                    rmse_loss = compute_rmse_loss(output.float(), target.float())
+                    # RMSE loss (only real channels)
+                    rmse_loss = compute_rmse_loss(output.float(), target.float(), channel_mask)
 
-                    # Boundary loss
-                    bc_loss = compute_boundary_loss(output.float(), target.float())
+                    # Boundary loss (only real channels)
+                    bc_loss = compute_boundary_loss(output.float(), target.float(), channel_mask)
 
                     # Total loss
                     train_loss = lambda_pde * pde_loss + lambda_rmse * rmse_loss + lambda_bc * bc_loss
