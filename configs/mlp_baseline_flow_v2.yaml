@@ -40,8 +40,8 @@ dataloader:
 
 # Training
 training:
-  max_epochs: 50
-  warmup_steps: 200
+  max_epochs: 20
+  warmup_steps: 100
   learning_rate: 1.0e-3
   min_lr: 1.0e-5
   weight_decay: 1.0e-4
@@ -59,7 +59,7 @@ training:
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1
   eval_interval: 50
-  early_stopping_patience: 300
+  early_stopping_patience: 50
 
 # Logging
 logging:

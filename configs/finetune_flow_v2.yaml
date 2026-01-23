@@ -73,7 +73,7 @@ dataloader:
 
 # Training
 training:
-  max_epochs: 15
+  max_epochs: 10
   warmup_steps: 200
   learning_rate: 1.0e-4
   min_lr: 1.0e-6

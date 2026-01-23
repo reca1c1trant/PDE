@@ -57,7 +57,7 @@ training:
   mixed_precision: "bf16"
   gradient_accumulation_steps: 1
   eval_interval: 50
-  early_stopping_patience: 300
+  early_stopping_patience: 50
 
 # Logging
 logging:
