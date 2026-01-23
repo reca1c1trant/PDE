@@ -186,6 +186,11 @@ def main():
     print(f"Loading LoRA model from: {args.checkpoint}")
     model = load_lora_model(config, args.checkpoint, device)
 
+    # Convert model to fp32 if requested (model weights are bf16 by default)
+    if args.fp32:
+        print("Converting model to fp32...")
+        model = model.float()
+
     # Create val_loader exactly as in training
     val_dataset = FlowMixingDataset(
         data_path=config['dataset']['path'],
