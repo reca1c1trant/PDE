@@ -23,8 +23,7 @@ def load_config(config_path: str) -> dict:
 
 def load_lora_model(config: dict, checkpoint_path: str, device: str = 'cuda'):
     """Load LoRA model from checkpoint."""
-    from model_lora import PDELoRAModel
-    from lora_utils import load_lora_checkpoint
+    from model_lora import PDELoRAModel, load_lora_checkpoint
 
     # Get pretrained path from config
     pretrained_path = config.get('model', {}).get('pretrained_path')
@@ -33,6 +32,7 @@ def load_lora_model(config: dict, checkpoint_path: str, device: str = 'cuda'):
     model = PDELoRAModel(config, pretrained_path=pretrained_path)
 
     # Load LoRA checkpoint
+    print(f"Loading LoRA checkpoint from: {checkpoint_path}")
     load_lora_checkpoint(model.model, checkpoint_path)
 
     model = model.to(device)
