@@ -145,14 +145,20 @@ def compute_pde_loss(output, input_data, batch, config, accelerator, pde_version
     Flow Mixing: ∂u/∂t + a·∂u/∂x + b·∂u/∂y = 0
     Only uses first channel (u).
 
+    IMPORTANT: PDE loss must be computed in float32 for numerical stability!
+    The time derivative du/dt = (u[t] - u[t-1]) / dt is very sensitive to precision
+    because u[t] ≈ u[t-1] when the model is well-trained, causing catastrophic
+    cancellation in lower precision formats like bf16.
+
     Args:
         pde_version: "v1" for 2nd order upwind, "v2" for central difference
     """
     # Use only first channel for PDE loss
-    t0_frame = input_data[:, 0:1, ..., :1]  # [B, 1, H, W, 1]
-    output_u = output[..., :1]  # [B, T-1, H, W, 1]
+    # CRITICAL: Convert to float32 BEFORE any computation to avoid precision loss
+    t0_frame = input_data[:, 0:1, ..., :1].float()  # [B, 1, H, W, 1]
+    output_u = output[..., :1].float()  # [B, T-1, H, W, 1]
     pred_with_t0 = torch.cat([t0_frame, output_u], dim=1)
-    pred_u = pred_with_t0.float()
+    pred_u = pred_with_t0  # Already float32
 
     # Boundaries only have 1 channel
     boundary_left = batch['boundary_left'].to(accelerator.device).float()
@@ -199,7 +205,10 @@ def compute_rmse_loss(output, target):
         output: [B, T, H, W, C] (C=1 for Flow Mixing)
         target: [B, T, H, W, C]
     """
-    mse = torch.mean((output - target) ** 2)
+    # Use float32 for numerical stability
+    output_f32 = output.float()
+    target_f32 = target.float()
+    mse = torch.mean((output_f32 - target_f32) ** 2)
     rmse = torch.sqrt(mse + 1e-8)
     return rmse
 
@@ -212,6 +221,10 @@ def compute_boundary_loss(output, target):
         output: [B, T, H, W, C] (C=1 for Flow Mixing)
         target: [B, T, H, W, C]
     """
+    # Use float32 for numerical stability
+    output = output.float()
+    target = target.float()
+
     # Left edge (excluding corners)
     left_pred = output[:, :, 1:-1, 0, :]
     left_target = target[:, :, 1:-1, 0, :]

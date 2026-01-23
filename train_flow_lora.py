@@ -138,6 +138,9 @@ def compute_pde_loss(output, input_data, batch, config, accelerator, pde_version
     """
     Compute PDE residual loss for Flow Mixing equation.
 
+    IMPORTANT: PDE loss must be computed in float32 for numerical stability!
+    The time derivative du/dt = (u[t] - u[t-1]) / dt is very sensitive to precision.
+
     Args:
         output: Model output [B, 16, H, W, 6]
         input_data: Model input [B, 16, H, W, 6]
@@ -151,12 +154,14 @@ def compute_pde_loss(output, input_data, batch, config, accelerator, pde_version
         loss_time: Time derivative loss
         loss_advection: Advection loss
     """
+    # CRITICAL: Convert to float32 BEFORE any computation to avoid precision loss
     # Prepend input's first frame to output
-    t0_frame = input_data[:, 0:1]  # [B, 1, H, W, 6]
-    pred_with_t0 = torch.cat([t0_frame, output], dim=1)  # [B, 17, H, W, 6]
+    t0_frame = input_data[:, 0:1].float()  # [B, 1, H, W, 6]
+    output_f32 = output.float()  # [B, 16, H, W, 6]
+    pred_with_t0 = torch.cat([t0_frame, output_f32], dim=1)  # [B, 17, H, W, 6]
 
-    # Extract u channel and convert to float32
-    pred_u = pred_with_t0[..., :1].float()  # [B, 17, H, W, 1]
+    # Extract u channel (already float32)
+    pred_u = pred_with_t0[..., :1]  # [B, 17, H, W, 1]
 
     # Get boundaries
     boundary_left = batch['boundary_left'].to(accelerator.device).float()
@@ -208,13 +213,17 @@ def compute_rmse_loss(output, target, channel_mask=None):
     Returns:
         rmse_loss: RMSE loss (only real channels)
     """
+    # Use float32 for numerical stability
+    output = output.float()
+    target = target.float()
+
     if channel_mask is not None:
         # Use channel_mask to only compute loss on real channels
         # channel_mask: [B, 6] or [6] -> broadcast to [B, T, H, W, 6]
         if channel_mask.dim() == 1:
-            mask = channel_mask.view(1, 1, 1, 1, -1)
+            mask = channel_mask.view(1, 1, 1, 1, -1).float()
         else:
-            mask = channel_mask.view(channel_mask.shape[0], 1, 1, 1, -1)
+            mask = channel_mask.view(channel_mask.shape[0], 1, 1, 1, -1).float()
 
         # Masked MSE: only count real channels
         diff_sq = (output - target) ** 2
@@ -240,6 +249,10 @@ def compute_boundary_loss(output, target, channel_mask=None):
     Returns:
         boundary_rmse: Scalar tensor (only real channels)
     """
+    # Use float32 for numerical stability
+    output = output.float()
+    target = target.float()
+
     # Determine which channels to use
     if channel_mask is not None:
         # Get indices of real channels
