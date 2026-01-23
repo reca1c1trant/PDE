@@ -333,6 +333,7 @@ def main():
     parser.add_argument('--num_samples', type=int, default=None, help='Number of samples (overrides config)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--device', type=str, default='cuda', help='Device')
+    parser.add_argument('--scan_all', action='store_true', help='Scan all validation samples to check PDE loss distribution')
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -373,20 +374,82 @@ def main():
     n_val_samples = len(dataset.samples)
     clips_per_sample = total_clips // n_val_samples if n_val_samples > 0 else 1
 
-    # Select random samples and random start times
-    sample_indices = np.random.choice(n_val_samples, min(num_samples, n_val_samples), replace=False)
-
     # Get PDE version from config (must match training!)
     pde_version = config.get('training', {}).get('pde_version', 'v1')
-    print(f"Visualizing {len(sample_indices)} samples...")
     print(f"PDE version: {pde_version} ({'central diff' if pde_version == 'v2' else '2nd order upwind'})")
+
+    # Determine model dtype
+    model_dtype = torch.bfloat16 if is_lora else torch.float32
+
+    # ========== SCAN ALL MODE ==========
+    if args.scan_all:
+        print(f"\n{'='*60}")
+        print(f"SCANNING ALL {n_val_samples} VALIDATION SAMPLES")
+        print(f"{'='*60}")
+
+        all_sample_pde = []
+        for sample_idx in range(n_val_samples):
+            # Use first clip of each sample for consistency
+            idx = sample_idx * clips_per_sample
+            sample = dataset[idx]
+            batch = flow_mixing_collate_fn([sample])
+
+            # Run inference
+            pred = run_inference(model, batch, device=device, is_lora=is_lora, dtype=model_dtype)
+            vtmax = batch['vtmax'][0].item()
+
+            if is_lora:
+                data = batch['data'].to(device)
+                t0 = data[:, 0:1]
+                pred_with_t0 = torch.cat([t0.float(), pred], dim=1)
+            else:
+                data = batch['data'][..., :1].to(device)
+                t0 = data[:, 0:1]
+                pred_with_t0 = torch.cat([t0.float(), pred], dim=1)
+
+            # Compute PDE loss (without debug prints)
+            pred_u = pred_with_t0[..., :1].to(device).float()
+            dt = config.get('physics', {}).get('dt', 1/999)
+            boundary_left = batch['boundary_left'].to(device).float()
+            boundary_right = batch['boundary_right'].to(device).float()
+            boundary_bottom = batch['boundary_bottom'].to(device).float()
+            boundary_top = batch['boundary_top'].to(device).float()
+            vtmax_val = batch['vtmax'].to(device).float().mean().item()
+
+            if pde_version == "v2":
+                pde_loss, loss_time, loss_adv, _ = flow_mixing_pde_loss_v2(
+                    pred=pred_u, boundary_left=boundary_left, boundary_right=boundary_right,
+                    boundary_bottom=boundary_bottom, boundary_top=boundary_top,
+                    vtmax=vtmax_val, dt=dt)
+            else:
+                pde_loss, loss_time, loss_adv, _ = flow_mixing_pde_loss(
+                    pred=pred_u, boundary_left=boundary_left, boundary_right=boundary_right,
+                    boundary_bottom=boundary_bottom, boundary_top=boundary_top,
+                    vtmax=vtmax_val, dt=dt)
+
+            pde_val = pde_loss.item()
+            all_sample_pde.append(pde_val)
+            print(f"  Sample {sample_idx:2d}: vtmax={vtmax:.3f}, PDE_MSE={pde_val:.4f}, loss_time={loss_time.item():.4f}, loss_adv={loss_adv.item():.4f}")
+
+        all_sample_pde = np.array(all_sample_pde)
+        print(f"\n{'='*60}")
+        print(f"PDE Loss Statistics ({n_val_samples} samples):")
+        print(f"  Mean:   {np.mean(all_sample_pde):.4f}")
+        print(f"  Std:    {np.std(all_sample_pde):.4f}")
+        print(f"  Min:    {np.min(all_sample_pde):.4f} (Sample {np.argmin(all_sample_pde)})")
+        print(f"  Max:    {np.max(all_sample_pde):.4f} (Sample {np.argmax(all_sample_pde)})")
+        print(f"  Median: {np.median(all_sample_pde):.4f}")
+        print(f"{'='*60}")
+        return
+
+    # ========== NORMAL VISUALIZATION MODE ==========
+    # Select random samples and random start times
+    sample_indices = np.random.choice(n_val_samples, min(num_samples, n_val_samples), replace=False)
+    print(f"Visualizing {len(sample_indices)} samples...")
 
     results = []
     all_rmse = []
     all_pde_mse = []
-
-    # Determine model dtype
-    model_dtype = torch.bfloat16 if is_lora else torch.float32
 
     for i, sample_idx in enumerate(sample_indices):
         # Random clip within this sample
