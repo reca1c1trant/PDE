@@ -83,13 +83,14 @@ training:
 
   # Loss weights (same as baseline)
   lambda_pde: 0.01
-  lambda_rmse: 1.0
   lambda_bc: 1.0
 
   # PDE loss version: v1=2nd upwind, v2=central diff
   pde_version: "v2"
 
-  mixed_precision: "bf16"
+  # Use fp32 for full precision training (same as train_PINN_transient.py)
+  # Options: "no" (fp32), "fp16", "bf16"
+  mixed_precision: "no"
   gradient_accumulation_steps: 1
   eval_interval: 100  # Validate every N steps
   early_stopping_patience: 30  # Stop if no improvement for N validations
