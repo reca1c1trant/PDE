@@ -153,46 +153,49 @@ def compute_pde_loss(output, input_data, batch, config, accelerator, pde_version
     Args:
         pde_version: "v1" for 2nd order upwind, "v2" for central difference
     """
-    # Use only first channel for PDE loss
-    # CRITICAL: Convert to float32 BEFORE any computation to avoid precision loss
-    t0_frame = input_data[:, 0:1, ..., :1].float()  # [B, 1, H, W, 1]
-    output_u = output[..., :1].float()  # [B, T-1, H, W, 1]
-    pred_with_t0 = torch.cat([t0_frame, output_u], dim=1)
-    pred_u = pred_with_t0  # Already float32
+    # CRITICAL: Disable autocast to ensure all PDE computations are in float32
+    # accelerator.accumulate() enables autocast which can affect intermediate computations
+    with torch.autocast(device_type='cuda', enabled=False):
+        # Use only first channel for PDE loss
+        # Convert to float32 BEFORE any computation to avoid precision loss
+        t0_frame = input_data[:, 0:1, ..., :1].float()  # [B, 1, H, W, 1]
+        output_u = output[..., :1].float()  # [B, T-1, H, W, 1]
+        pred_with_t0 = torch.cat([t0_frame, output_u], dim=1)
+        pred_u = pred_with_t0  # Already float32
 
-    # Boundaries only have 1 channel
-    boundary_left = batch['boundary_left'].to(accelerator.device).float()
-    boundary_right = batch['boundary_right'].to(accelerator.device).float()
-    boundary_bottom = batch['boundary_bottom'].to(accelerator.device).float()
-    boundary_top = batch['boundary_top'].to(accelerator.device).float()
-    vtmax = batch['vtmax'].to(accelerator.device).float()
+        # Boundaries only have 1 channel
+        boundary_left = batch['boundary_left'].to(accelerator.device).float()
+        boundary_right = batch['boundary_right'].to(accelerator.device).float()
+        boundary_bottom = batch['boundary_bottom'].to(accelerator.device).float()
+        boundary_top = batch['boundary_top'].to(accelerator.device).float()
+        vtmax = batch['vtmax'].to(accelerator.device).float()
 
-    dt = config.get('physics', {}).get('dt', 1/999)
-    vtmax_mean = vtmax.mean().item()
+        dt = config.get('physics', {}).get('dt', 1/999)
+        vtmax_mean = vtmax.mean().item()
 
-    # Select PDE loss version
-    if pde_version == "v2":
-        # V2: Central difference (train_PINN_transient style)
-        pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss_v2(
-            pred=pred_u,
-            boundary_left=boundary_left,
-            boundary_right=boundary_right,
-            boundary_bottom=boundary_bottom,
-            boundary_top=boundary_top,
-            vtmax=vtmax_mean,
-            dt=dt
-        )
-    else:
-        # V1: 2nd order upwind (n-PINN style)
-        pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss(
-            pred=pred_u,
-            boundary_left=boundary_left,
-            boundary_right=boundary_right,
-            boundary_bottom=boundary_bottom,
-            boundary_top=boundary_top,
-            vtmax=vtmax_mean,
-            dt=dt
-        )
+        # Select PDE loss version
+        if pde_version == "v2":
+            # V2: Central difference (train_PINN_transient style)
+            pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss_v2(
+                pred=pred_u,
+                boundary_left=boundary_left,
+                boundary_right=boundary_right,
+                boundary_bottom=boundary_bottom,
+                boundary_top=boundary_top,
+                vtmax=vtmax_mean,
+                dt=dt
+            )
+        else:
+            # V1: 2nd order upwind (n-PINN style)
+            pde_loss, loss_time, loss_advection, _ = flow_mixing_pde_loss(
+                pred=pred_u,
+                boundary_left=boundary_left,
+                boundary_right=boundary_right,
+                boundary_bottom=boundary_bottom,
+                boundary_top=boundary_top,
+                vtmax=vtmax_mean,
+                dt=dt
+            )
 
     return pde_loss, loss_time, loss_advection
 
@@ -205,11 +208,12 @@ def compute_rmse_loss(output, target):
         output: [B, T, H, W, C] (C=1 for Flow Mixing)
         target: [B, T, H, W, C]
     """
-    # Use float32 for numerical stability
-    output_f32 = output.float()
-    target_f32 = target.float()
-    mse = torch.mean((output_f32 - target_f32) ** 2)
-    rmse = torch.sqrt(mse + 1e-8)
+    # Disable autocast for numerical stability
+    with torch.autocast(device_type='cuda', enabled=False):
+        output_f32 = output.float()
+        target_f32 = target.float()
+        mse = torch.mean((output_f32 - target_f32) ** 2)
+        rmse = torch.sqrt(mse + 1e-8)
     return rmse
 
 
@@ -221,43 +225,44 @@ def compute_boundary_loss(output, target):
         output: [B, T, H, W, C] (C=1 for Flow Mixing)
         target: [B, T, H, W, C]
     """
-    # Use float32 for numerical stability
-    output = output.float()
-    target = target.float()
+    # Disable autocast for numerical stability
+    with torch.autocast(device_type='cuda', enabled=False):
+        output = output.float()
+        target = target.float()
 
-    # Left edge (excluding corners)
-    left_pred = output[:, :, 1:-1, 0, :]
-    left_target = target[:, :, 1:-1, 0, :]
+        # Left edge (excluding corners)
+        left_pred = output[:, :, 1:-1, 0, :]
+        left_target = target[:, :, 1:-1, 0, :]
 
-    # Right edge (excluding corners)
-    right_pred = output[:, :, 1:-1, -1, :]
-    right_target = target[:, :, 1:-1, -1, :]
+        # Right edge (excluding corners)
+        right_pred = output[:, :, 1:-1, -1, :]
+        right_target = target[:, :, 1:-1, -1, :]
 
-    # Bottom edge (excluding corners)
-    bottom_pred = output[:, :, 0, 1:-1, :]
-    bottom_target = target[:, :, 0, 1:-1, :]
+        # Bottom edge (excluding corners)
+        bottom_pred = output[:, :, 0, 1:-1, :]
+        bottom_target = target[:, :, 0, 1:-1, :]
 
-    # Top edge (excluding corners)
-    top_pred = output[:, :, -1, 1:-1, :]
-    top_target = target[:, :, -1, 1:-1, :]
+        # Top edge (excluding corners)
+        top_pred = output[:, :, -1, 1:-1, :]
+        top_target = target[:, :, -1, 1:-1, :]
 
-    # Concatenate all boundary points
-    bc_pred = torch.cat([
-        left_pred.reshape(-1),
-        right_pred.reshape(-1),
-        bottom_pred.reshape(-1),
-        top_pred.reshape(-1),
-    ])
-    bc_target = torch.cat([
-        left_target.reshape(-1),
-        right_target.reshape(-1),
-        bottom_target.reshape(-1),
-        top_target.reshape(-1),
-    ])
+        # Concatenate all boundary points
+        bc_pred = torch.cat([
+            left_pred.reshape(-1),
+            right_pred.reshape(-1),
+            bottom_pred.reshape(-1),
+            top_pred.reshape(-1),
+        ])
+        bc_target = torch.cat([
+            left_target.reshape(-1),
+            right_target.reshape(-1),
+            bottom_target.reshape(-1),
+            top_target.reshape(-1),
+        ])
 
-    # RMSE
-    mse = torch.mean((bc_pred - bc_target) ** 2)
-    rmse = torch.sqrt(mse + 1e-8)
+        # RMSE
+        mse = torch.mean((bc_pred - bc_target) ** 2)
+        rmse = torch.sqrt(mse + 1e-8)
     return rmse
 
 
@@ -499,7 +504,7 @@ def main():
                     bc_loss = compute_boundary_loss(output, target)
 
                     # Total loss
-                    train_loss = lambda_pde * pde_loss + lambda_rmse * rmse_loss + lambda_bc * bc_loss
+                    train_loss = lambda_pde * pde_loss + lambda_bc * bc_loss
 
                     # NaN check - all ranks must agree to skip
                     has_nan = torch.isnan(train_loss) or torch.isinf(train_loss)
@@ -543,10 +548,10 @@ def main():
 
                 # Log to wandb
                 if global_step % log_interval == 0:
-                    total_loss = lambda_pde * pde_loss_reduced + lambda_rmse * rmse_loss_reduced + lambda_bc * bc_loss_reduced
+                    total_loss = lambda_pde * pde_loss_reduced + lambda_bc * bc_loss_reduced
                     log_dict = {
                         'train/pde_loss': pde_loss_reduced.item(),
-                        'train/rmse_loss': rmse_loss_reduced.item(),
+                        'train/rmse_loss': rmse_loss_reduced.item(),  # For monitoring only
                         'train/bc_loss': bc_loss_reduced.item(),
                         'train/loss_time': accelerator.reduce(loss_time.detach(), reduction='mean').item(),
                         'train/loss_advection': accelerator.reduce(loss_advection.detach(), reduction='mean').item(),
@@ -561,7 +566,7 @@ def main():
                     accelerator.wait_for_everyone()
                     val_pde, val_rmse, val_bc = validate(model, val_loader, config, accelerator, pde_version)
 
-                    val_loss = lambda_pde * val_pde + lambda_rmse * val_rmse + lambda_bc * val_bc
+                    val_loss = lambda_pde * val_pde + lambda_bc * val_bc
                     accelerator.log({
                         'val/pde_loss': val_pde,
                         'val/rmse_loss': val_rmse,
