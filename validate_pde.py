@@ -91,7 +91,7 @@ def compute_pde_loss(output, input_data, batch, config, device, pde_version="v1"
 
 
 @torch.no_grad()
-def validate(model, val_loader, config, device, pde_version="v1"):
+def validate(model, val_loader, config, device, pde_version="v1", use_bf16=False):
     """
     Exact copy of validate() from train_fno_baseline_flow.py
     """
@@ -104,10 +104,16 @@ def validate(model, val_loader, config, device, pde_version="v1"):
 
     for batch_idx, batch in enumerate(val_loader):
         # Only use first channel (Flow Mixing has 1 real channel)
+        # Training uses float32 for data even with bf16 model
         data = batch['data'][..., :1].to(device=device, dtype=torch.float32)
         input_data = data[:, :-1]
 
-        output = model(data)
+        # But if model is bf16, forward happens in bf16
+        if use_bf16:
+            data_model = data.to(torch.bfloat16)
+            output = model(data_model).float()  # Convert back to float32
+        else:
+            output = model(data)
 
         pde_loss, loss_time, loss_adv = compute_pde_loss(
             output, input_data, batch, config, device, pde_version
@@ -118,8 +124,9 @@ def validate(model, val_loader, config, device, pde_version="v1"):
         total_loss_adv += loss_adv.detach()
         num_batches += 1
 
-        # Print per-batch info
-        print(f"  Batch {batch_idx:3d}: pde={pde_loss.item():.4f}, time={loss_time.item():.4f}, adv={loss_adv.item():.4f}, batch_size={data.shape[0]}")
+        # Print progress every 50 batches
+        if batch_idx % 50 == 0:
+            print(f"  Batch {batch_idx:3d}/{len(val_loader)}: pde={pde_loss.item():.4f}, time={loss_time.item():.4f}, adv={loss_adv.item():.4f}")
 
     n = num_batches.item()
     return (
@@ -135,6 +142,7 @@ def main():
     parser.add_argument('--checkpoint', type=str, required=True)
     parser.add_argument('--config', type=str, required=True)
     parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--bf16', action='store_true', help='Use bf16 precision like training')
     args = parser.parse_args()
 
     device = args.device if torch.cuda.is_available() else 'cpu'
@@ -144,8 +152,24 @@ def main():
     pde_version = config.get('training', {}).get('pde_version', 'v1')
     batch_size = config['dataloader']['batch_size']
 
+    # Check checkpoint metrics
+    print(f"\n{'='*60}")
+    print("Checkpoint Info")
+    print(f"{'='*60}")
+    checkpoint = torch.load(args.checkpoint, map_location='cpu')
+    if 'metrics' in checkpoint:
+        print(f"Saved metrics: {checkpoint['metrics']}")
+    if 'global_step' in checkpoint:
+        print(f"Global step: {checkpoint['global_step']}")
+    print(f"{'='*60}\n")
+
     print(f"Loading model from: {args.checkpoint}")
     model = load_model(config, args.checkpoint, device)
+
+    # Convert to bf16 if requested
+    if args.bf16:
+        print("Converting model to bf16...")
+        model = model.to(torch.bfloat16)
 
     # Create val_loader exactly as in training
     val_dataset = FlowMixingDataset(
@@ -175,10 +199,11 @@ def main():
     print(f"Val samples: {len(val_dataset.samples)}")
     print(f"Val clips: {len(val_dataset)}")
     print(f"Val batches: {len(val_loader)}")
+    print(f"Model dtype: {next(model.parameters()).dtype}")
     print(f"{'='*60}\n")
 
     print("Running validation (same as training)...")
-    val_pde, val_time, val_adv, n_batches = validate(model, val_loader, config, device, pde_version)
+    val_pde, val_time, val_adv, n_batches = validate(model, val_loader, config, device, pde_version, use_bf16=args.bf16)
 
     print(f"\n{'='*60}")
     print(f"Validation Results ({int(n_batches)} batches)")
