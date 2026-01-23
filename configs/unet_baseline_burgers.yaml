@@ -1,19 +1,18 @@
-# MLP Baseline Training Configuration - Burgers Equation
+# UNet Baseline Training Configuration - Burgers Equation
 #
 # PDE Loss: Conservative flux form (n-PINN style)
+# UNet: Tanh activation, BatchNorm2d
 #
 # Burgers: u_t + (u*u)_x + (v*u)_y = ν∇²u
 #          v_t + (u*v)_x + (v*v)_y = ν∇²v
 
 # Model Configuration
 model:
-  type: mlp
+  type: unet
   in_channels: 2                       # u, v channels
   out_channels: 2
-  width: 64
-  n_layers: 4
+  init_features: 32
   use_positional_embedding: true
-  use_residual: true
   grid_h: 128
   grid_w: 128
 
@@ -33,14 +32,14 @@ physics:
 
 # DataLoader
 dataloader:
-  batch_size: 32  # Reduced for fp32 (MLP has high activation memory)
+  batch_size: 64
   num_workers: 4
   pin_memory: true
 
 # Training
 training:
-  max_epochs: 20
-  warmup_steps: 100
+  max_epochs: 50
+  warmup_steps: 200
   learning_rate: 1.0e-3
   min_lr: 1.0e-5
   weight_decay: 1.0e-4
@@ -59,9 +58,9 @@ training:
 
 # Logging
 logging:
-  project: "pde-mlp-baseline-burgers"
+  project: "pde-unet-baseline-burgers"
   entity: "reca1c1trant-ntu"
-  save_dir: "./checkpoints_mlp_baseline_burgers"
+  save_dir: "./checkpoints_unet_baseline_burgers"
   log_interval: 10
 
 # Visualization
