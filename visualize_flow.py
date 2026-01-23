@@ -10,10 +10,8 @@ Usage:
   python visualize_flow.py --checkpoint checkpoints_unet_baseline_flow_v2/best.pt --config configs/unet_baseline_flow_v2.yaml --output_dir ./vis_results 
 
   # MLP → visualization_mlp.png
-  python visualize_flow.py --checkpoint checkpoints_mlp/best.pt --config configs/mlp_baseline_flow_v2.yaml --output_dir ./vis_results   
+  python visualize_flow.py --checkpoint checkpoints_mlp_baseline_flow_v2/best.pt --config configs/mlp_baseline_flow_v2.yaml --output_dir ./vis_results   
 
-  # LoRA → visualization_lora.png
-  python visualize_flow.py --checkpoint checkpoints_flow_lora_v2/best_lora.pt --config configs/finetune_flow_v2.yaml --lora --output_dir ./vis_results
 """
 
 import argparse
@@ -26,6 +24,7 @@ from typing import Optional, Tuple
 
 from dataset_flow import FlowMixingDataset, flow_mixing_collate_fn
 from pde_loss_flow import flow_mixing_pde_loss
+from pde_loss_flow_v2 import flow_mixing_pde_loss_v2
 
 
 def load_config(config_path: str) -> dict:
@@ -124,9 +123,13 @@ def compute_pde_residual(
     batch: dict,
     config: dict,
     device: str = 'cuda',
+    pde_version: str = 'v1',
 ) -> Tuple[torch.Tensor, float]:
     """
-    Compute PDE residual field using pde_loss_flow (2nd order upwind).
+    Compute PDE residual field using the same method as training.
+
+    Args:
+        pde_version: "v1" for 2nd order upwind, "v2" for central difference
 
     Returns:
         residual: [B, T-1, H, W] PDE residual field
@@ -144,18 +147,38 @@ def compute_pde_residual(
     boundary_top = batch['boundary_top'].to(device).float()
     vtmax = batch['vtmax'].to(device).float().mean().item()
 
-    # Use same function as training (2nd order upwind)
-    pde_loss, loss_time, loss_advection, residual = flow_mixing_pde_loss(
-        pred=pred_u,
-        boundary_left=boundary_left,
-        boundary_right=boundary_right,
-        boundary_bottom=boundary_bottom,
-        boundary_top=boundary_top,
-        vtmax=vtmax,
-        dt=dt,
-        Lx=Lx,
-        Ly=Ly,
-    )
+    # DEBUG: Print shapes and values
+    print(f"    [DEBUG] pred_u shape: {pred_u.shape}")
+    print(f"    [DEBUG] boundary_left shape: {boundary_left.shape}")
+    print(f"    [DEBUG] vtmax: {vtmax}, dt: {dt}")
+
+    # Select PDE loss version (must match training!)
+    if pde_version == "v2":
+        # V2: Central difference (train_PINN_transient style)
+        pde_loss, loss_time, loss_advection, residual = flow_mixing_pde_loss_v2(
+            pred=pred_u,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            vtmax=vtmax,
+            dt=dt,
+        )
+    else:
+        # V1: 2nd order upwind (n-PINN style)
+        pde_loss, loss_time, loss_advection, residual = flow_mixing_pde_loss(
+            pred=pred_u,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            vtmax=vtmax,
+            dt=dt,
+        )
+
+    # DEBUG: Print loss components
+    print(f"    [DEBUG] loss_time: {loss_time.item():.6f}, loss_advection: {loss_advection.item():.6f}")
+    print(f"    [DEBUG] residual min/max: {residual.min().item():.6f} / {residual.max().item():.6f}")
 
     return residual, pde_loss.item()
 
@@ -353,7 +376,10 @@ def main():
     # Select random samples and random start times
     sample_indices = np.random.choice(n_val_samples, min(num_samples, n_val_samples), replace=False)
 
+    # Get PDE version from config (must match training!)
+    pde_version = config.get('training', {}).get('pde_version', 'v1')
     print(f"Visualizing {len(sample_indices)} samples...")
+    print(f"PDE version: {pde_version} ({'central diff' if pde_version == 'v2' else '2nd order upwind'})")
 
     results = []
     all_rmse = []
@@ -393,12 +419,13 @@ def main():
             gt_last = gt[0, -1, :, :, 0].float().cpu().numpy()
             pred_last = pred[0, -1, :, :, 0].cpu().numpy()
 
-        # Compute PDE residual (using same method as training: 2nd order upwind)
+        # Compute PDE residual (using same method as training!)
         residual, pde_mse = compute_pde_residual(
             pred=pred_with_t0,
             batch=batch,
             config=config,
             device=device,
+            pde_version=pde_version,
         )
         res_last = residual[0, -1].cpu().numpy()
 
