@@ -62,8 +62,8 @@ def run_inference(model, batch: dict, device: str = 'cuda') -> Tuple[torch.Tenso
         output: [B, 16, H, W, 6] model output
         target: [B, 16, H, W, 6] ground truth target
     """
-    # Same as train_flow_lora.py line 273-278
-    data = batch['data'].to(device=device, dtype=torch.bfloat16)
+    # Use fp32 for numerical stability
+    data = batch['data'].to(device=device, dtype=torch.float32)
 
     input_data = data[:, :-1]  # [B, 16, H, W, 6] (t=0 to t=15)
     target = data[:, 1:]       # [B, 16, H, W, 6] (t=1 to t=16)

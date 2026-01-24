@@ -346,7 +346,7 @@ def main():
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
 
     accelerator = Accelerator(
-        mixed_precision=config['training'].get('mixed_precision', 'bf16'),
+        mixed_precision=config['training'].get('mixed_precision', 'no'),
         gradient_accumulation_steps=config['training'].get('gradient_accumulation_steps', 1),
         log_with="wandb",
         kwargs_handlers=[ddp_kwargs]
