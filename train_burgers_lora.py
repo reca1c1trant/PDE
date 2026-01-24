@@ -50,7 +50,7 @@ else:
 
 from dataset_burgers import BurgersDataset, BurgersSampler, burgers_collate_fn
 from model_lora import PDELoRAModel, save_lora_checkpoint
-from pde_loss import burgers_pde_loss_upwind
+from pde_loss import burgers_pde_loss
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ def get_lr_scheduler(optimizer, config, total_steps: int):
 
 def compute_pde_loss(output, input_data, batch, config, accelerator):
     """
-    Compute PDE residual loss for Burgers equation.
+    Compute PDE residual loss for Burgers equation (n-PINN conservative flux form).
 
     Args:
         output: Model output [B, 16, H, W, 6]
@@ -152,37 +152,40 @@ def compute_pde_loss(output, input_data, batch, config, accelerator):
         loss_u: Loss for u equation
         loss_v: Loss for v equation
     """
-    # Time alignment: prepend input's first frame to output
-    # input[0] corresponds to t=0, output corresponds to t=1,...,16
-    t0_frame = input_data[:, 0:1]  # [B, 1, H, W, 6]
-    pred_with_t0 = torch.cat([t0_frame, output], dim=1)  # [B, 17, H, W, 6]
+    # CRITICAL: Disable autocast to ensure all PDE computations are in float32
+    with torch.autocast(device_type='cuda', enabled=False):
+        # Time alignment: prepend input's first frame to output
+        t0_frame = input_data[:, 0:1, ..., :2].float()  # [B, 1, H, W, 2]
+        output_uv = output[..., :2].float()  # [B, 16, H, W, 2]
+        pred_with_t0 = torch.cat([t0_frame, output_uv], dim=1)  # [B, 17, H, W, 2]
 
-    # Extract u, v channels and convert to float32 for PDE computation
-    pred_uv = pred_with_t0[..., :2].float()  # [B, 17, H, W, 2]
+        # Get boundaries (already 17 frames from dataset)
+        boundary_left = batch['boundary_left'].to(accelerator.device).float()
+        boundary_right = batch['boundary_right'].to(accelerator.device).float()
+        boundary_bottom = batch['boundary_bottom'].to(accelerator.device).float()
+        boundary_top = batch['boundary_top'].to(accelerator.device).float()
+        nu = batch['nu'].to(accelerator.device).float()
 
-    # Get boundaries (already 17 frames from dataset)
-    boundary_left = batch['boundary_left'].to(accelerator.device).float()
-    boundary_right = batch['boundary_right'].to(accelerator.device).float()
-    boundary_bottom = batch['boundary_bottom'].to(accelerator.device).float()
-    boundary_top = batch['boundary_top'].to(accelerator.device).float()
-    nu = batch['nu'].to(accelerator.device).float()
+        # Get physics params from config
+        dt = config.get('physics', {}).get('dt', 1/999)
+        Lx = config.get('physics', {}).get('Lx', 1.0)
+        Ly = config.get('physics', {}).get('Ly', 1.0)
 
-    # Get dt from config
-    dt = config.get('physics', {}).get('dt', 1/999)
+        # Use mean nu for batch
+        nu_mean = nu.mean().item()
 
-    # Use mean nu for batch (all samples in batch should have similar nu)
-    nu_mean = nu.mean().item()
-
-    # Compute PDE loss
-    pde_loss, loss_u, loss_v, _, _ = burgers_pde_loss_upwind(
-        pred=pred_uv,
-        boundary_left=boundary_left,
-        boundary_right=boundary_right,
-        boundary_bottom=boundary_bottom,
-        boundary_top=boundary_top,
-        nu=nu_mean,
-        dt=dt
-    )
+        # Compute PDE loss (n-PINN conservative flux form)
+        pde_loss, loss_u, loss_v, _, _ = burgers_pde_loss(
+            pred=pred_with_t0,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            nu=nu_mean,
+            dt=dt,
+            Lx=Lx,
+            Ly=Ly,
+        )
 
     return pde_loss, loss_u, loss_v
 
@@ -219,7 +222,7 @@ def validate(model, val_loader, config, accelerator):
     num_batches = torch.zeros(1, device=accelerator.device)
 
     for batch in val_loader:
-        data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+        data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
 
         input_data = data[:, :-1]  # [B, 16, H, W, 6]
 
@@ -255,7 +258,7 @@ def main():
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
     accelerator = Accelerator(
-        mixed_precision=config['training'].get('mixed_precision', 'bf16'),
+        mixed_precision=config['training'].get('mixed_precision', 'no'),
         gradient_accumulation_steps=config['training'].get('gradient_accumulation_steps', 1),
         log_with="wandb",
         kwargs_handlers=[ddp_kwargs]
@@ -369,7 +372,7 @@ def main():
                 if early_stop:
                     break
 
-                data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+                data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
 
                 input_data = data[:, :-1]  # [B, 16, H, W, 6]
 

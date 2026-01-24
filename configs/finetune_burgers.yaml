@@ -61,6 +61,8 @@ dataset:
 physics:
   dt: 0.001001001  # 1/999, time step from Burgers dataset
   dx: 0.0078125    # 1/128, spatial step
+  Lx: 1.0          # Domain length in x
+  Ly: 1.0          # Domain length in y
 
 # DataLoader
 dataloader:
@@ -82,7 +84,7 @@ training:
   lambda_data: 0.0   # Not used (no ground truth)
   lambda_pde: 1.0
 
-  mixed_precision: "bf16"
+  mixed_precision: "no"
   gradient_accumulation_steps: 1
   eval_interval: 100  # Validate every N steps
   early_stopping_patience: 20  # Stop if no improvement for N validations
