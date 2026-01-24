@@ -80,9 +80,9 @@ training:
   betas: [0.9, 0.999]
   grad_clip: 5.0
 
-  # Loss weights
-  lambda_data: 0.0   # Not used (no ground truth)
-  lambda_pde: 1.0
+  # Loss weights (matching train_flow_lora.py)
+  lambda_pde: 1.0    # PDE residual loss weight
+  lambda_bc: 1.0     # Boundary loss weight
 
   mixed_precision: "no"
   gradient_accumulation_steps: 1
