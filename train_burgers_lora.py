@@ -299,6 +299,10 @@ def main():
     pretrained_path = config['model'].get('pretrained_path', None)
     model = PDELoRAModel(config, pretrained_path=pretrained_path)
 
+    # Convert to fp32 if not using mixed precision (base model may be saved in bf16)
+    if config['training'].get('mixed_precision', 'no') == 'no':
+        model = model.float()
+
     # Optimizer (only LoRA params)
     trainable_params = model.get_trainable_params()
     optimizer = torch.optim.AdamW(

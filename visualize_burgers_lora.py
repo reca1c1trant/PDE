@@ -46,6 +46,8 @@ def load_lora_model(config: dict, checkpoint_path: str, device: str = 'cuda'):
     print(f"Loading LoRA checkpoint from: {checkpoint_path}")
     load_lora_checkpoint(model.model, checkpoint_path)
 
+    # Convert to fp32 for numerical stability (base model may be saved in bf16)
+    model = model.float()
     model = model.to(device)
     model.eval()
 
