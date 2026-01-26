@@ -1,0 +1,73 @@
+# Transolver Configuration for PDE Prediction
+# Uses Physics-Attention: Slice → Attend → Deslice
+#
+# Key differences from Llama-based model:
+# - Physics-Attention replaces standard self-attention
+# - Soft-clustering into learnable "physics slices"
+# - Linear complexity O(N×S) instead of O(N²)
+# - Combined spatial + temporal mixing
+#
+# Reference: "Transolver: A Fast Transformer Solver for PDEs" (ICML 2024)
+
+model_name: "pde_transolver"
+
+# Dataset - 2D Diffusion Reaction (same as e2e_medium_v2)
+dataset:
+  path: "/home/msai/song0304/code/PDE/data/2D_diff-react_NA_NA.hdf5"
+  temporal_length: 16
+  train_ratio: 0.9
+  seed: 42
+  clips_per_sample: 80
+
+# DataLoader
+dataloader:
+  batch_size: 8
+  num_workers: 4
+  pin_memory: true
+  same_sample_per_batch: true
+
+# Model
+model:
+  in_channels: 6
+
+  transolver:
+    # Core dimensions
+    hidden_dim: 256        # Feature dimension
+    num_layers: 8          # Number of Transolver blocks
+    num_heads: 8           # Attention heads
+    num_slices: 64         # Number of physics slices (S)
+
+    # Patch embedding
+    patch_size: 4          # 128/4 = 32x32 = 1024 patches per timestep
+
+    # FFN
+    mlp_ratio: 4.0         # FFN hidden = hidden_dim * mlp_ratio
+
+    # Regularization
+    dropout: 0.0
+
+    # Temporal residual (output = input + delta)
+    use_temporal_residual: true
+
+# Training
+training:
+  max_epochs: 30
+  warmup_steps: 200
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  grad_clip: 5.0
+  min_lr: 1.0e-6
+
+  mixed_precision: "bf16"
+  gradient_accumulation_steps: 1
+
+  eval_interval: 100
+  early_stopping_patience: 30
+
+# Logging
+logging:
+  project: "pde-transolver"
+  entity: "reca1c1trant-ntu"
+  save_dir: "./checkpoints_transolver"
+  log_interval: 10
