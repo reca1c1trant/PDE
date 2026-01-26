@@ -1,10 +1,8 @@
-# Burgers2D LoRA Finetuning Configuration
-# Pure PDE Loss Training (no ground truth supervision)
+# Burgers2D LoRA V2 Finetuning Configuration
+# Key difference: Encoder and Decoder are UNFROZEN (trainable)
 #
-# Training Budget (with default settings):
-#   - 90 train samples x 100 clips/sample = 9000 clips/epoch
-#   - batch_size=4 -> 2250 steps/epoch
-#   - 10 epochs -> ~22500 total steps
+# This allows spatial feature adaptation to new physics (Burgers equation)
+# while still using LoRA for efficient Transformer fine-tuning.
 
 # Model
 model:
@@ -12,7 +10,7 @@ model:
 
   # Must match pretrained model config
   in_channels: 6
-  noise_level: 0.0  # Disable noise for finetuning
+  noise_level: 0.0
   use_flash_attention: false
   gradient_checkpointing: true
 
@@ -35,7 +33,7 @@ model:
     rope_theta: 500000.0
     attention_dropout: 0.0
 
-  # LoRA config
+  # LoRA config (applied to Transformer only)
   lora:
     r: 16
     alpha: 32
@@ -52,17 +50,16 @@ model:
 # Dataset
 dataset:
   path: "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
-  temporal_length: 16  # Will load 17 frames (16+1)
+  temporal_length: 16
   train_ratio: 0.9
   seed: 42
-  clips_per_sample: null  # K=100 clips per sample per epoch (方案C)
+  clips_per_sample: null
 
 # Physics parameters
 physics:
-  dt: 0.001001001  # 1/999, time step from Burgers dataset
-  dx: 0.0078125    # 1/128, spatial step
-  Lx: 1.0          # Domain length in x
-  Ly: 1.0          # Domain length in y
+  dt: 0.001001001  # 1/999
+  Lx: 1.0
+  Ly: 1.0
 
 # DataLoader
 dataloader:
@@ -72,7 +69,7 @@ dataloader:
 
 # Training
 training:
-  max_epochs: 15  # Epoch-based training with balanced sampling
+  max_epochs: 15
   warmup_steps: 200
   learning_rate: 1.0e-4
   min_lr: 1.0e-6
@@ -80,18 +77,18 @@ training:
   betas: [0.9, 0.999]
   grad_clip: 5.0
 
-  # Loss weights (matching train_flow_lora.py)
-  lambda_pde: 0.01    # PDE residual loss weight
-  lambda_bc: 1.0     # Boundary loss weight
+  # Loss weights (same as UNet baseline)
+  lambda_pde: 0.01
+  lambda_bc: 1.0
 
   mixed_precision: "no"
   gradient_accumulation_steps: 1
-  eval_interval: 100  # Validate every N steps
-  early_stopping_patience: 20  # Stop if no improvement for N validations
+  eval_interval: 100
+  early_stopping_patience: 20
 
 # Logging
 logging:
   project: "pde-burgers-lora"
-  entity: "reca1c1trant-ntu"  # Update with your wandb entity
-  save_dir: "./checkpoints_burgers_lora"
+  entity: "reca1c1trant-ntu"
+  save_dir: "./checkpoints_burgers_lora_v2"
   log_interval: 10

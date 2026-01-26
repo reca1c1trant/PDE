@@ -1,15 +1,13 @@
 """
-LoRA Finetuning for 2D Burgers Equation with PDE Loss.
+LoRA Finetuning V2 for 2D Burgers Equation - Unfrozen Encoder/Decoder.
 
-Features:
-- PDE residual loss + Boundary loss (matching train_flow_lora.py)
-- LoRA applied to Transformer layers only
-- Encoder and Decoder frozen
-- Boundary conditions used for PDE loss computation
-- Epoch-based training with balanced sampling (K clips per sample)
+Key difference from v1:
+- Encoder and Decoder are UNFROZEN (trainable)
+- LoRA still applied to Transformer layers
+- This allows spatial feature adaptation to new physics
 
 Usage:
-    torchrun --nproc_per_node=8 train_burgers_lora.py --config configs/finetune_burgers.yaml
+    torchrun --nproc_per_node=8 train_burgers_lora_v2.py --config configs/finetune_burgers_v2.yaml
 """
 
 import os
@@ -49,14 +47,14 @@ else:
     logging.disable(logging.CRITICAL)
 
 from dataset_burgers import BurgersDataset, BurgersSampler, burgers_collate_fn
-from model_lora import PDELoRAModel, save_lora_checkpoint
+from model_lora import PDELoRAModel
 from pde_loss import burgers_pde_loss
 
 logger = logging.getLogger(__name__)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="LoRA Finetuning for Burgers PDE")
+    parser = argparse.ArgumentParser(description="LoRA V2 Finetuning for Burgers PDE (Unfrozen Enc/Dec)")
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
     return parser.parse_args()
 
@@ -79,14 +77,13 @@ def create_dataloaders(config: dict):
         clips_per_sample=clips_per_sample,
     )
 
-    # Validation uses ALL clips (clips_per_sample=None)
     val_dataset = BurgersDataset(
         data_path=config['dataset']['path'],
         temporal_length=config['dataset']['temporal_length'],
         split='val',
         train_ratio=config['dataset']['train_ratio'],
         seed=config['dataset']['seed'],
-        clips_per_sample=None,  # Use all available clips for validation
+        clips_per_sample=None,
     )
 
     batch_size = config['dataloader']['batch_size']
@@ -135,46 +132,23 @@ def get_lr_scheduler(optimizer, config, total_steps: int):
 
 
 def compute_pde_loss(output, input_data, batch, config, accelerator):
-    """
-    Compute PDE residual loss for Burgers equation (n-PINN conservative flux form).
-
-    IMPORTANT: PDE loss must be computed in float32 for numerical stability!
-
-    Args:
-        output: Model output [B, 16, H, W, 6]
-        input_data: Model input [B, 16, H, W, 6]
-        batch: Batch dict with boundaries and nu
-        config: Config dict
-        accelerator: Accelerator instance
-
-    Returns:
-        pde_loss: Scalar PDE loss
-        loss_u: Loss for u equation
-        loss_v: Loss for v equation
-    """
-    # CRITICAL: Disable autocast to ensure all PDE computations are in float32
+    """Compute PDE residual loss for Burgers equation."""
     with torch.autocast(device_type='cuda', enabled=False):
-        # Time alignment: prepend input's first frame to output
-        t0_frame = input_data[:, 0:1, ..., :2].float()  # [B, 1, H, W, 2]
-        output_uv = output[..., :2].float()  # [B, 16, H, W, 2]
-        pred_with_t0 = torch.cat([t0_frame, output_uv], dim=1)  # [B, 17, H, W, 2]
+        t0_frame = input_data[:, 0:1, ..., :2].float()
+        output_uv = output[..., :2].float()
+        pred_with_t0 = torch.cat([t0_frame, output_uv], dim=1)
 
-        # Get boundaries (already 17 frames from dataset)
         boundary_left = batch['boundary_left'].to(accelerator.device).float()
         boundary_right = batch['boundary_right'].to(accelerator.device).float()
         boundary_bottom = batch['boundary_bottom'].to(accelerator.device).float()
         boundary_top = batch['boundary_top'].to(accelerator.device).float()
         nu = batch['nu'].to(accelerator.device).float()
 
-        # Get physics params from config
         dt = config.get('physics', {}).get('dt', 1/999)
         Lx = config.get('physics', {}).get('Lx', 1.0)
         Ly = config.get('physics', {}).get('Ly', 1.0)
-
-        # Use mean nu for batch
         nu_mean = nu.mean().item()
 
-        # Compute PDE loss (n-PINN conservative flux form)
         pde_loss, loss_u, loss_v, _, _ = burgers_pde_loss(
             pred=pred_with_t0,
             boundary_left=boundary_left,
@@ -191,36 +165,21 @@ def compute_pde_loss(output, input_data, batch, config, accelerator):
 
 
 def compute_rmse_loss(output, target, channel_mask=None):
-    """
-    Compute RMSE loss between output and ground truth.
-
-    Args:
-        output: Model output [B, 16, H, W, 6]
-        target: Ground truth [B, 16, H, W, 6]
-        channel_mask: [B, 6] or [6] mask indicating real channels (1=real, 0=padding)
-
-    Returns:
-        rmse_loss: RMSE loss (only real channels)
-    """
-    # Disable autocast for numerical stability
+    """Compute RMSE loss between output and ground truth."""
     with torch.autocast(device_type='cuda', enabled=False):
         output = output.float()
         target = target.float()
 
         if channel_mask is not None:
-            # Use channel_mask to only compute loss on real channels
-            # channel_mask: [B, 6] or [6] -> broadcast to [B, T, H, W, 6]
             if channel_mask.dim() == 1:
                 mask = channel_mask.view(1, 1, 1, 1, -1).float()
             else:
                 mask = channel_mask.view(channel_mask.shape[0], 1, 1, 1, -1).float()
 
-            # Masked MSE: only count real channels
             diff_sq = (output - target) ** 2
             masked_diff_sq = diff_sq * mask
             mse = masked_diff_sq.sum() / (mask.sum() * output.shape[1] * output.shape[2] * output.shape[3])
         else:
-            # Fallback: use first 2 channels (u, v) for Burgers
             mse = torch.mean((output[..., :2] - target[..., :2]) ** 2)
 
         rmse_loss = torch.sqrt(mse + 1e-8)
@@ -229,80 +188,123 @@ def compute_rmse_loss(output, target, channel_mask=None):
 
 
 def compute_boundary_loss(output, target, channel_mask=None):
-    """
-    Compute boundary RMSE loss on 4 edges (excluding corners).
-
-    Args:
-        output: Model output [B, T, H, W, C]
-        target: Ground truth [B, T, H, W, C]
-        channel_mask: [B, C] or [C] mask indicating real channels (1=real, 0=padding)
-
-    Returns:
-        boundary_rmse: Scalar tensor (only real channels)
-    """
-    # Disable autocast for numerical stability
+    """Compute boundary RMSE loss on 4 edges."""
     with torch.autocast(device_type='cuda', enabled=False):
         output = output.float()
         target = target.float()
 
-        # Determine which channels to use
         if channel_mask is not None:
-            # Get indices of real channels
             if channel_mask.dim() == 1:
                 real_channels = torch.where(channel_mask > 0)[0]
             else:
                 real_channels = torch.where(channel_mask[0] > 0)[0]
         else:
-            # Fallback: first 2 channels (u, v) for Burgers
             real_channels = torch.tensor([0, 1], device=output.device)
 
-        # Left edge (excluding corners) - only real channels
         left_pred = output[:, :, 1:-1, 0, :][:, :, :, real_channels]
         left_target = target[:, :, 1:-1, 0, :][:, :, :, real_channels]
-
-        # Right edge (excluding corners)
         right_pred = output[:, :, 1:-1, -1, :][:, :, :, real_channels]
         right_target = target[:, :, 1:-1, -1, :][:, :, :, real_channels]
-
-        # Bottom edge (excluding corners)
         bottom_pred = output[:, :, 0, 1:-1, :][:, :, :, real_channels]
         bottom_target = target[:, :, 0, 1:-1, :][:, :, :, real_channels]
-
-        # Top edge (excluding corners)
         top_pred = output[:, :, -1, 1:-1, :][:, :, :, real_channels]
         top_target = target[:, :, -1, 1:-1, :][:, :, :, real_channels]
 
-        # Concatenate all boundary points
         bc_pred = torch.cat([
-            left_pred.reshape(-1),
-            right_pred.reshape(-1),
-            bottom_pred.reshape(-1),
-            top_pred.reshape(-1),
+            left_pred.reshape(-1), right_pred.reshape(-1),
+            bottom_pred.reshape(-1), top_pred.reshape(-1),
         ])
         bc_target = torch.cat([
-            left_target.reshape(-1),
-            right_target.reshape(-1),
-            bottom_target.reshape(-1),
-            top_target.reshape(-1),
+            left_target.reshape(-1), right_target.reshape(-1),
+            bottom_target.reshape(-1), top_target.reshape(-1),
         ])
 
-        # RMSE
         mse = torch.mean((bc_pred - bc_target) ** 2)
         boundary_rmse = torch.sqrt(mse + 1e-8)
 
     return boundary_rmse
 
 
+def unfreeze_encoder_decoder(model):
+    """
+    Unfreeze Encoder and Decoder parameters.
+
+    Returns parameter counts for logging.
+    """
+    enc_params = 0
+    dec_params = 0
+
+    # Unfreeze encoder
+    for param in model.model.encoder_2d.parameters():
+        param.requires_grad = True
+        enc_params += param.numel()
+
+    # Unfreeze decoder
+    for param in model.model.decoder_2d.parameters():
+        param.requires_grad = True
+        dec_params += param.numel()
+
+    return enc_params, dec_params
+
+
+def get_all_trainable_params(model):
+    """Get all trainable parameters (LoRA + Encoder + Decoder)."""
+    return [p for p in model.parameters() if p.requires_grad]
+
+
+def log_param_summary(model, accelerator):
+    """Log parameter summary."""
+    if not accelerator.is_main_process:
+        return
+
+    # Count parameters
+    enc_total = sum(p.numel() for p in model.model.encoder_2d.parameters())
+    enc_train = sum(p.numel() for p in model.model.encoder_2d.parameters() if p.requires_grad)
+
+    dec_total = sum(p.numel() for p in model.model.decoder_2d.parameters())
+    dec_train = sum(p.numel() for p in model.model.decoder_2d.parameters() if p.requires_grad)
+
+    trans_total = sum(p.numel() for p in model.model.transformer.parameters())
+    trans_train = sum(p.numel() for p in model.model.transformer.parameters() if p.requires_grad)
+
+    total = enc_total + dec_total + trans_total
+    trainable = enc_train + dec_train + trans_train
+
+    logger.info(f"\n{'='*60}")
+    logger.info(f"LoRA V2 Model Parameter Summary (Unfrozen Enc/Dec)")
+    logger.info(f"{'='*60}")
+    logger.info(f"Encoder:     {enc_total:>12,} total, {enc_train:>10,} trainable")
+    logger.info(f"Decoder:     {dec_total:>12,} total, {dec_train:>10,} trainable")
+    logger.info(f"Transformer: {trans_total:>12,} total, {trans_train:>10,} trainable (LoRA)")
+    logger.info(f"{'-'*60}")
+    logger.info(f"Total:       {total:>12,} total, {trainable:>10,} trainable")
+    logger.info(f"Trainable ratio: {100 * trainable / total:.2f}%")
+    logger.info(f"{'='*60}\n")
+
+
+def save_full_checkpoint(model, optimizer, scheduler, global_step, metrics, save_path, config):
+    """Save full checkpoint (all trainable weights)."""
+    # Get all trainable state dict
+    trainable_state_dict = {}
+    for name, param in model.model.named_parameters():
+        if param.requires_grad:
+            trainable_state_dict[name] = param.data.clone()
+
+    checkpoint = {
+        'global_step': global_step,
+        'trainable_state_dict': trainable_state_dict,
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+        'metrics': metrics,
+        'config': config,
+    }
+
+    torch.save(checkpoint, save_path)
+
+
 @torch.no_grad()
 def validate(model, val_loader, config, accelerator):
-    """
-    Validate model on validation set.
-
-    Returns:
-        avg_pde_loss: Average PDE loss
-        avg_rmse_loss: Average RMSE loss
-        avg_bc_loss: Average boundary loss
-    """
+    """Validate model on validation set."""
     model.eval()
 
     total_pde_loss = torch.zeros(1, device=accelerator.device)
@@ -314,18 +316,13 @@ def validate(model, val_loader, config, accelerator):
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
-        input_data = data[:, :-1]  # [B, 16, H, W, 6]
-        target = data[:, 1:]       # [B, 16, H, W, 6]
+        input_data = data[:, :-1]
+        target = data[:, 1:]
 
         output = model(input_data)
 
-        # PDE loss
         pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator)
-
-        # RMSE loss (only real channels)
         rmse_loss = compute_rmse_loss(output.float(), target.float(), channel_mask)
-
-        # Boundary loss (only real channels)
         bc_loss = compute_boundary_loss(output.float(), target.float(), channel_mask)
 
         total_pde_loss += pde_loss.detach()
@@ -354,7 +351,6 @@ def main():
     config = load_config(args.config)
     set_seed(config['dataset']['seed'])
 
-    # DDP kwargs
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
     accelerator = Accelerator(
@@ -377,22 +373,16 @@ def main():
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
-        logger.info(f"Burgers2D LoRA Finetuning with PDE + BC Loss")
+        logger.info(f"Burgers2D LoRA V2 - UNFROZEN Encoder/Decoder")
         logger.info(f"{'='*60}")
         logger.info(f"Config: {args.config}")
         logger.info(f"Max Epochs: {max_epochs}")
         logger.info(f"Clips per Sample: {clips_per_sample}")
-        logger.info(f"Warmup Steps: {warmup_steps}")
-        logger.info(f"Eval Interval: {eval_interval} steps")
-        logger.info(f"Early Stopping Patience: {early_stopping_patience}")
         logger.info(f"Loss: lambda_pde={lambda_pde}, lambda_bc={lambda_bc}")
-        logger.info(f"Grad Clip: {grad_clip}")
         logger.info(f"{'='*60}")
 
     # Create dataloaders
     train_loader, val_loader, train_sampler, val_sampler = create_dataloaders(config)
-
-    # Calculate total steps for scheduler
     steps_per_epoch = len(train_loader)
     total_steps = max_epochs * steps_per_epoch
 
@@ -400,12 +390,21 @@ def main():
     pretrained_path = config['model'].get('pretrained_path', None)
     model = PDELoRAModel(config, pretrained_path=pretrained_path)
 
-    # Convert to fp32 if not using mixed precision (base model may be saved in bf16)
+    # KEY CHANGE: Unfreeze Encoder and Decoder
+    enc_params, dec_params = unfreeze_encoder_decoder(model)
+    if accelerator.is_main_process:
+        logger.info(f"Unfroze Encoder: {enc_params:,} params")
+        logger.info(f"Unfroze Decoder: {dec_params:,} params")
+
+    # Convert to fp32 if needed
     if config['training'].get('mixed_precision', 'no') == 'no':
         model = model.float()
 
-    # Optimizer (only LoRA params)
-    trainable_params = model.get_trainable_params()
+    # Log parameter summary
+    log_param_summary(model, accelerator)
+
+    # Optimizer: ALL trainable params (LoRA + Encoder + Decoder)
+    trainable_params = get_all_trainable_params(model)
     optimizer = torch.optim.AdamW(
         trainable_params,
         lr=config['training']['learning_rate'],
@@ -414,25 +413,22 @@ def main():
     )
 
     scheduler = get_lr_scheduler(optimizer, config, total_steps)
-
-    # Prepare with accelerator
     model, optimizer = accelerator.prepare(model, optimizer)
 
     # Init WandB
     if accelerator.is_main_process:
         lora_r = config['model'].get('lora', {}).get('r', 16)
-        run_name = f"burgers-lora-r{lora_r}"
+        run_name = f"burgers-lora-v2-unfrozen-r{lora_r}"
         accelerator.init_trackers(
             project_name=config['logging']['project'],
             config=config,
             init_kwargs={"wandb": {
                 "entity": config['logging'].get('entity'),
                 "name": run_name,
-                "tags": ["burgers", "lora", "pde-loss", "bc-loss"],
+                "tags": ["burgers", "lora-v2", "unfrozen-enc-dec"],
             }}
         )
 
-    # Save directory
     save_dir = Path(config['logging']['save_dir'])
     if accelerator.is_main_process:
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -451,11 +447,6 @@ def main():
 
     model.train()
 
-    # Epoch trackers
-    epoch_pde_loss = 0.0
-    epoch_rmse_loss = 0.0
-    epoch_bc_loss = 0.0
-
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold blue]{task.description}"),
@@ -472,7 +463,6 @@ def main():
             if early_stop:
                 break
 
-            # Set epoch for reproducible shuffling
             train_sampler.set_epoch(epoch)
 
             epoch_pde_loss = 0.0
@@ -487,27 +477,20 @@ def main():
                 data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
                 channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
-                input_data = data[:, :-1]  # [B, 16, H, W, 6]
-                target = data[:, 1:]       # [B, 16, H, W, 6]
+                input_data = data[:, :-1]
+                target = data[:, 1:]
 
-                # Check if in warmup phase
                 in_warmup = global_step < warmup_steps
 
                 with accelerator.accumulate(model):
                     output = model(input_data)
 
-                    # PDE loss
                     pde_loss, loss_u, loss_v = compute_pde_loss(
                         output, input_data, batch, config, accelerator
                     )
-
-                    # RMSE loss (for monitoring only, real channels only)
                     rmse_loss = compute_rmse_loss(output.float(), target.float(), channel_mask)
-
-                    # Boundary loss (real channels only)
                     bc_loss = compute_boundary_loss(output.float(), target.float(), channel_mask)
 
-                    # Total loss
                     train_loss = lambda_pde * pde_loss + lambda_bc * bc_loss
 
                     accelerator.backward(train_loss)
@@ -522,40 +505,31 @@ def main():
                 global_step += 1
                 epoch_steps += 1
 
-                # Reduce for logging
                 pde_loss_reduced = accelerator.reduce(pde_loss.detach(), reduction='mean')
                 rmse_loss_reduced = accelerator.reduce(rmse_loss.detach(), reduction='mean')
                 bc_loss_reduced = accelerator.reduce(bc_loss.detach(), reduction='mean')
-                loss_u_reduced = accelerator.reduce(loss_u.detach(), reduction='mean')
-                loss_v_reduced = accelerator.reduce(loss_v.detach(), reduction='mean')
 
                 epoch_pde_loss += pde_loss_reduced.item()
                 epoch_rmse_loss += rmse_loss_reduced.item()
                 epoch_bc_loss += bc_loss_reduced.item()
 
-                # Update progress bar
                 phase_str = "[warmup]" if in_warmup else f"[E{epoch+1}]"
                 progress.update(
                     train_task, advance=1,
                     description=f"{phase_str} PDE={pde_loss_reduced.item():.4f} RMSE={rmse_loss_reduced.item():.4f} BC={bc_loss_reduced.item():.4f}"
                 )
 
-                # Log to wandb
                 if global_step % log_interval == 0:
                     total_loss = lambda_pde * pde_loss_reduced + lambda_bc * bc_loss_reduced
-                    log_dict = {
+                    accelerator.log({
                         'train/pde_loss': pde_loss_reduced.item(),
-                        'train/rmse_loss': rmse_loss_reduced.item(),  # For monitoring only
+                        'train/rmse_loss': rmse_loss_reduced.item(),
                         'train/bc_loss': bc_loss_reduced.item(),
                         'train/total_loss': total_loss.item(),
-                        'train/loss_u': loss_u_reduced.item(),
-                        'train/loss_v': loss_v_reduced.item(),
                         'train/lr': scheduler.get_last_lr()[0],
                         'train/epoch': epoch + 1,
-                    }
-                    accelerator.log(log_dict, step=global_step)
+                    }, step=global_step)
 
-                # Step-based validation
                 if global_step % eval_interval == 0:
                     accelerator.wait_for_everyone()
                     val_pde, val_rmse, val_bc = validate(model, val_loader, config, accelerator)
@@ -574,7 +548,6 @@ def main():
                             f"val_pde={val_pde:.6f}, val_rmse={val_rmse:.6f}, val_bc={val_bc:.6f}"
                         )
 
-                    # Post-warmup: enable best model saving and early stopping
                     if not in_warmup:
                         if val_loss < best_val_loss:
                             best_val_loss = val_loss
@@ -582,13 +555,13 @@ def main():
 
                             if accelerator.is_main_process:
                                 unwrapped_model = accelerator.unwrap_model(model)
-                                save_lora_checkpoint(
-                                    model=unwrapped_model.model,
+                                save_full_checkpoint(
+                                    model=unwrapped_model,
                                     optimizer=optimizer,
                                     scheduler=scheduler,
                                     global_step=global_step,
                                     metrics={'pde_loss': val_pde, 'rmse_loss': val_rmse, 'bc_loss': val_bc},
-                                    save_path=str(save_dir / 'best_lora.pt'),
+                                    save_path=str(save_dir / 'best_lora_v2.pt'),
                                     config=config,
                                 )
                                 console.print(f"[yellow]Saved best model[/yellow] (val_loss: {val_loss:.6f})")
@@ -608,7 +581,6 @@ def main():
 
                     model.train()
 
-            # End of epoch summary
             if epoch_steps > 0:
                 avg_pde = epoch_pde_loss / epoch_steps
                 avg_rmse = epoch_rmse_loss / epoch_steps
@@ -629,12 +601,12 @@ def main():
     accelerator.end_training()
 
     if accelerator.is_main_process:
-        table = Table(title="Training Complete", show_header=False, border_style="green")
+        table = Table(title="Training Complete (LoRA V2 - Unfrozen)", show_header=False, border_style="green")
         table.add_row("Total Epochs", str(epoch + 1))
         table.add_row("Total Steps", str(global_step))
         table.add_row("Best Val Loss", f"{best_val_loss:.6f}")
         table.add_row("Early Stopped", "Yes" if early_stop else "No")
-        table.add_row("Checkpoint", str(save_dir / "best_lora.pt"))
+        table.add_row("Checkpoint", str(save_dir / "best_lora_v2.pt"))
         console.print(table)
 
 
