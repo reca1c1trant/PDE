@@ -56,6 +56,9 @@ logger = logging.getLogger(__name__)
 def parse_args():
     parser = argparse.ArgumentParser(description="LoRA V2 Finetuning for Burgers PDE (Unfrozen Enc/Dec)")
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
+    parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume from')
+    parser.add_argument('--reset_patience', action='store_true', help='Reset early stopping patience counter')
+    parser.add_argument('--extra_patience', type=int, default=0, help='Add extra patience on top of config value')
     return parser.parse_args()
 
 
@@ -282,7 +285,7 @@ def log_param_summary(model, accelerator):
     logger.info(f"{'='*60}\n")
 
 
-def save_full_checkpoint(model, optimizer, scheduler, global_step, metrics, save_path, config):
+def save_full_checkpoint(model, optimizer, scheduler, global_step, metrics, save_path, config, patience_counter=0, best_val_loss=float('inf')):
     """Save full checkpoint (all trainable weights)."""
     # Get all trainable state dict
     trainable_state_dict = {}
@@ -297,9 +300,50 @@ def save_full_checkpoint(model, optimizer, scheduler, global_step, metrics, save
         'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
         'metrics': metrics,
         'config': config,
+        'patience_counter': patience_counter,
+        'best_val_loss': best_val_loss,
     }
 
     torch.save(checkpoint, save_path)
+
+
+def load_checkpoint_for_resume(model, optimizer, scheduler, checkpoint_path, accelerator):
+    """Load checkpoint for resuming training."""
+    if accelerator.is_main_process:
+        logger.info(f"Loading checkpoint from: {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+
+    # Load trainable state dict
+    if 'trainable_state_dict' in checkpoint:
+        trainable_state_dict = checkpoint['trainable_state_dict']
+        model_state = model.model.state_dict()
+        model_state.update(trainable_state_dict)
+        model.model.load_state_dict(model_state)
+        if accelerator.is_main_process:
+            logger.info(f"Loaded {len(trainable_state_dict)} trainable parameters")
+
+    # Load optimizer state
+    if 'optimizer_state_dict' in checkpoint and checkpoint['optimizer_state_dict'] is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if accelerator.is_main_process:
+            logger.info("Loaded optimizer state")
+
+    # Load scheduler state
+    if 'scheduler_state_dict' in checkpoint and checkpoint['scheduler_state_dict'] is not None:
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        if accelerator.is_main_process:
+            logger.info("Loaded scheduler state")
+
+    global_step = checkpoint.get('global_step', 0)
+    patience_counter = checkpoint.get('patience_counter', 0)
+    best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+    metrics = checkpoint.get('metrics', {})
+
+    if accelerator.is_main_process:
+        logger.info(f"Resumed from step {global_step}, best_val_loss={best_val_loss:.6f}, patience={patience_counter}")
+
+    return global_step, patience_counter, best_val_loss, metrics
 
 
 @torch.no_grad()
@@ -439,6 +483,21 @@ def main():
     patience_counter = 0
     early_stop = False
 
+    # Resume from checkpoint if specified
+    if args.resume:
+        global_step, patience_counter, best_val_loss, _ = load_checkpoint_for_resume(
+            accelerator.unwrap_model(model), optimizer, scheduler, args.resume, accelerator
+        )
+        if args.reset_patience:
+            patience_counter = 0
+            if accelerator.is_main_process:
+                logger.info("Reset patience counter to 0")
+
+    # Apply extra patience
+    effective_patience = early_stopping_patience + args.extra_patience
+    if args.extra_patience > 0 and accelerator.is_main_process:
+        logger.info(f"Effective early stopping patience: {effective_patience} (config={early_stopping_patience} + extra={args.extra_patience})")
+
     console = Console()
 
     if accelerator.is_main_process:
@@ -563,14 +622,16 @@ def main():
                                     metrics={'pde_loss': val_pde, 'rmse_loss': val_rmse, 'bc_loss': val_bc},
                                     save_path=str(save_dir / 'best_lora_v2.pt'),
                                     config=config,
+                                    patience_counter=patience_counter,
+                                    best_val_loss=best_val_loss,
                                 )
                                 console.print(f"[yellow]Saved best model[/yellow] (val_loss: {val_loss:.6f})")
                         else:
                             patience_counter += 1
                             if accelerator.is_main_process:
-                                console.print(f"[dim]Patience: {patience_counter}/{early_stopping_patience}[/dim]")
+                                console.print(f"[dim]Patience: {patience_counter}/{effective_patience}[/dim]")
 
-                            if patience_counter >= early_stopping_patience:
+                            if patience_counter >= effective_patience:
                                 if accelerator.is_main_process:
                                     console.print(f"[red]Early stopping triggered![/red]")
                                 early_stop = True
