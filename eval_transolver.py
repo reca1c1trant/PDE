@@ -1,11 +1,17 @@
 """
 Evaluate models on 2D Diffusion Reaction dataset.
 
-Flexible evaluation - only evaluates models you specify.
+Single-step prediction (NOT autoregressive):
+    - Input: ground truth t[i]
+    - Output: predict t[i+1]
+    - Compare prediction with ground truth t[i+1]
+    - Repeat for all timesteps (no error accumulation)
+
+For a sample with 101 timesteps, we get 100 single-step predictions.
 
 Usage:
     # Evaluate single model
-    python eval_transolver.py --model Base:base:./checkpoints_e2e_medium/best.pt
+    python eval_transolver.py --model Transolver:transolver:./checkpoints_transolver/best.pt
 
     # Evaluate multiple models
     python eval_transolver.py \
@@ -14,10 +20,10 @@ Usage:
 
     # Model types: base, base_v2, transolver
 
-    # Custom data path
+    # Custom temporal length (how many timesteps to load)
     python eval_transolver.py \
-        --model MyModel:base:./my_checkpoint.pt \
-        --data_path ./data/2D_diff-react_NA_NA.hdf5
+        --model MyModel:transolver:./ckpt.pt \
+        --temporal_length 101
 """
 
 import argparse
@@ -35,7 +41,7 @@ from metrics import metric_func
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate models on Diffusion Reaction")
+    parser = argparse.ArgumentParser(description="Evaluate models on Diffusion Reaction (single-step)")
     parser.add_argument('--model', action='append', required=True,
                         help='Model specification: NAME:TYPE:PATH (e.g., Base:base:./ckpt.pt). '
                              'TYPE can be: base, base_v2, transolver')
@@ -44,6 +50,8 @@ def parse_args():
                         help='Path to dataset')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--temporal_length', type=int, default=101,
+                        help='Total timesteps to load from dataset')
     return parser.parse_args()
 
 
@@ -173,42 +181,68 @@ def compute_nrmse(pred: torch.Tensor, target: torch.Tensor, channel_mask: torch.
 
 @torch.no_grad()
 def evaluate_model(model, val_loader, device, model_name="Model"):
-    """Evaluate a model on validation set."""
-    print(f"  Evaluating...")
+    """
+    Evaluate single-step prediction: input t[i] (ground truth) -> predict t[i+1].
 
+    NOT autoregressive! Each step uses ground truth as input.
+
+    For a sample with T timesteps:
+        - Input GT t[0] -> predict t[1], compare with GT t[1]
+        - Input GT t[1] -> predict t[2], compare with GT t[2]
+        - ...
+        - Input GT t[T-2] -> predict t[T-1], compare with GT t[T-1]
+
+    Total: T-1 single-step predictions per sample.
+    """
+    print(f"  Evaluating single-step prediction (GT input -> predict next)...")
+
+    all_nrmse = []
+    all_rmse = []
     all_preds = []
     all_targets = []
-    total_nrmse = 0.0
-    total_rmse = 0.0
-    num_batches = 0
+    total_steps = 0
 
     for batch in tqdm(val_loader, desc=f"  {model_name}", leave=False):
         data = batch['data'].to(device=device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=device)
 
-        input_data = data[:, :-1]
-        target_data = data[:, 1:]
+        B, T, H, W, C = data.shape
 
-        output = model(input_data)
+        # For each timestep t, predict t+1 using GT t as input
+        for t in range(T - 1):
+            # Input: ground truth at time t
+            input_t = data[:, t:t+1]  # [B, 1, H, W, C]
 
-        nrmse, rmse = compute_nrmse(output.float(), target_data.float(), channel_mask)
-        total_nrmse += nrmse
-        total_rmse += rmse
-        num_batches += 1
+            # Target: ground truth at time t+1
+            target_t = data[:, t+1:t+2]  # [B, 1, H, W, C]
 
+            # Predict
+            pred_t = model(input_t)  # [B, 1, H, W, C]
+
+            # Compute nRMSE
+            nrmse, rmse = compute_nrmse(pred_t.float(), target_t.float(), channel_mask)
+            all_nrmse.append(nrmse)
+            all_rmse.append(rmse)
+            total_steps += 1
+
+        # Store last step predictions for detailed metrics
         if channel_mask.dim() == 2:
             valid_mask = channel_mask[0].bool()
         else:
             valid_mask = channel_mask.bool()
 
-        pred_last = output[:, -1, :, :, :][:, :, :, valid_mask].float()
-        target_last = target_data[:, -1, :, :, :][:, :, :, valid_mask].float()
+        # Last prediction (t=T-2 -> t=T-1)
+        last_input = data[:, -2:-1]
+        last_target = data[:, -1:]
+        last_pred = model(last_input)
 
-        all_preds.append(pred_last.cpu())
-        all_targets.append(target_last.cpu())
+        all_preds.append(last_pred[:, 0, :, :, valid_mask].float().cpu())
+        all_targets.append(last_target[:, 0, :, :, valid_mask].float().cpu())
 
-    avg_nrmse = total_nrmse / num_batches
-    avg_rmse = total_rmse / num_batches
+    # Aggregate metrics
+    avg_nrmse = np.mean(all_nrmse)
+    avg_rmse = np.mean(all_rmse)
+    std_nrmse = np.std(all_nrmse)
 
     all_preds = torch.cat(all_preds, dim=0)
     all_targets = torch.cat(all_targets, dim=0)
@@ -228,7 +262,9 @@ def evaluate_model(model, val_loader, device, model_name="Model"):
 
     results = {
         'nrmse': avg_nrmse,
+        'nrmse_std': std_nrmse,
         'rmse': avg_rmse,
+        'total_steps': total_steps,
         'max_error': err_Max.item(),
         'boundary_rmse': err_BD.item(),
         'fourier_low': err_F[0].item(),
@@ -271,9 +307,12 @@ def main():
 
     # Create validation dataloader
     print(f"\nLoading dataset: {args.data_path}")
+    print(f"Temporal length: {args.temporal_length} timesteps")
+    print(f"Single-step predictions per sample: {args.temporal_length - 1}")
+
     val_dataset = PDEDataset(
         data_dir=args.data_path,
-        temporal_length=16,
+        temporal_length=args.temporal_length,
         split='val',
         train_ratio=0.9,
         seed=42,
@@ -312,7 +351,7 @@ def main():
 
     # Print results
     print("\n" + "="*90)
-    print("RESULTS")
+    print("RESULTS (Single-step: GT input -> predict next)")
     print("="*90)
 
     models = list(all_results.keys())
@@ -321,6 +360,12 @@ def main():
     print("\n[Parameters]")
     for name in models:
         print(f"  {name}: {param_counts[name]:,}")
+
+    # Total evaluation steps
+    print("\n[Evaluation Info]")
+    for name in models:
+        total_steps = all_results[name].get('total_steps', 0)
+        print(f"  {name}: {total_steps} single-step predictions")
 
     # Main metrics
     print("\n[Metrics]")
@@ -331,7 +376,7 @@ def main():
     print(header)
     print("-"*90)
 
-    metrics_to_show = ['nrmse', 'rmse', 'max_error', 'boundary_rmse']
+    metrics_to_show = ['nrmse', 'nrmse_std', 'rmse', 'max_error', 'boundary_rmse']
     for metric in metrics_to_show:
         row = f"{metric.upper():<20}"
         for m in models:
