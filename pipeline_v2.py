@@ -136,7 +136,8 @@ class PDECausalModelV2(nn.Module):
             attention_dropout=config['model']['transformer']['attention_dropout'],
             use_cache=False,
             attn_implementation=attn_impl,
-            torch_dtype=torch.bfloat16,
+            # Let Accelerator control dtype via mixed_precision config
+            torch_dtype=torch.float32,
         )
 
         # Initialize Llama from scratch
@@ -148,9 +149,6 @@ class PDECausalModelV2(nn.Module):
             self.transformer.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
-
-        # Convert to bf16
-        self.to(torch.bfloat16)
 
         self._log_info(llama_config, use_flash_attn, encoder_version, encoder_config)
 
@@ -185,7 +183,7 @@ class PDECausalModelV2(nn.Module):
         print(f"Residual: Zero-Init Projection (output = input + delta)")
         print(f"FlashAttention-2: {'Enabled' if use_flash_attn else 'Disabled'}")
         print(f"Gradient Checkpointing: {self.transformer.is_gradient_checkpointing}")
-        print(f"Dtype: {llama_config.torch_dtype}")
+        print(f"Dtype: float32 (Accelerator controls mixed precision)")
         print(f"Normalization: Enabled (spatial-wise, eps={self.norm_eps})")
         print(f"Noise Injection: {self.noise_level if self.noise_level > 0 else 'Disabled'}")
         print(f"\nParameters:")

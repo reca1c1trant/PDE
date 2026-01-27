@@ -74,7 +74,7 @@ BASE_CONFIG = {
         'transformer': {
             'hidden_size': 768,
             'num_hidden_layers': 10,
-            'num_attention_heads': 16,
+            'num_attention_heads': 12,  # Must match checkpoint
             'num_key_value_heads': 4,
             'intermediate_size': 3072,
             'hidden_act': 'silu',
