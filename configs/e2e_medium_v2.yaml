@@ -61,7 +61,7 @@ training:
   grad_clip: 5.0
   min_lr: 1.0e-6
 
-  mixed_precision: "bf16"
+  mixed_precision: "no"  # Use fp32 for precision
   gradient_accumulation_steps: 1
 
   eval_interval: 100

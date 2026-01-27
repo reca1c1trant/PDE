@@ -207,7 +207,7 @@ def validate(model, val_loader, accelerator):
     num_batches = torch.zeros(1, device=accelerator.device)
 
     for batch in val_loader:
-        data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+        data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
         input_data = data[:, :-1]
@@ -269,7 +269,7 @@ def main():
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
     accelerator = Accelerator(
-        mixed_precision=config['training'].get('mixed_precision', 'bf16'),
+        mixed_precision=config['training'].get('mixed_precision', 'no'),  # Default to fp32
         gradient_accumulation_steps=config['training'].get('gradient_accumulation_steps', 1),
         log_with="wandb",
         kwargs_handlers=[ddp_kwargs]
@@ -362,7 +362,7 @@ def main():
             train_sampler.set_epoch(epoch)
 
             for batch in train_loader:
-                data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+                data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
                 channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
                 input_data = data[:, :-1]

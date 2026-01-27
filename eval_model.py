@@ -44,6 +44,7 @@ def load_pretrained_model(checkpoint_path: str, config: dict):
         state_dict = checkpoint
 
     model.load_state_dict(state_dict, strict=False)
+    model = model.float()  # Ensure fp32
     model.eval()
 
     return model
@@ -62,6 +63,7 @@ def load_lora_model(pretrained_path: str, lora_path: str, config: dict):
                 current_state[name].copy_(param)
         model.model.transformer.load_state_dict(current_state)
 
+    model = model.float()  # Ensure fp32
     model.eval()
 
     return model
@@ -111,7 +113,7 @@ def evaluate_model(model, val_loader, accelerator, model_name="Model"):
     iterator = tqdm(val_loader, desc=f"Evaluating {model_name}", disable=not accelerator.is_main_process)
 
     for batch in iterator:
-        data = batch['data'].to(device=accelerator.device, dtype=torch.bfloat16)
+        data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
 
         input_data = data[:, :-1]   # [B, 16, H, W, 6]
         target_data = data[:, 1:]   # [B, 16, H, W, 6]

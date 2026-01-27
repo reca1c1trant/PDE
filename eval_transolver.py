@@ -133,7 +133,8 @@ def load_model(name: str, model_type: str, checkpoint_path: str, device: str):
     model.load_state_dict(state_dict, strict=False)
     print(f"  Loaded checkpoint (step={checkpoint.get('global_step', 'N/A')})")
 
-    model = model.to(device)
+    # Use fp32 for precision
+    model = model.float().to(device=device)
     model.eval()
     return model
 
@@ -182,7 +183,7 @@ def evaluate_model(model, val_loader, device, model_name="Model"):
     num_batches = 0
 
     for batch in tqdm(val_loader, desc=f"  {model_name}", leave=False):
-        data = batch['data'].to(device=device, dtype=torch.bfloat16)
+        data = batch['data'].to(device=device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=device)
 
         input_data = data[:, :-1]
