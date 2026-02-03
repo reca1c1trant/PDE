@@ -39,20 +39,24 @@ class PDE2DEncoderV2(nn.Module):
     - 残差块增强表达能力
     - 支持从 config 传入参数
 
-    Input: [B, T, H, W, C] where T=16, H=W=128, C=6
+    Input: [B, T, H, W, C] where T=16, H=W=128, C=18 (3 vector + 15 scalar)
     Output: [B, seq_len, hidden_dim] where seq_len=4096
     """
     def __init__(
         self,
-        in_channels: int = 6,
+        in_channels: int = 18,  # 3 vector + 15 scalar
         hidden_dim: int = 768,
         channels: list = None,  # 每层的通道数 [c1, c2, c3]，如 [64, 128, 256]
         mid_channels: int = 512,  # fusion后的通道数 = 2 * channels[-1]
         use_resblock: bool = True,  # 是否使用残差块
+        vector_channels: int = 3,  # vector 通道数 (固定)
+        scalar_channels: int = 15,  # scalar 通道数
     ):
         super().__init__()
         self.in_channels = in_channels
         self.hidden_dim = hidden_dim
+        self.vector_channels = vector_channels
+        self.scalar_channels = scalar_channels
 
         # 默认通道配置
         if channels is None:
@@ -68,7 +72,7 @@ class PDE2DEncoderV2(nn.Module):
         # Vector branch: 128 → 64 → 32 → 16
         if use_resblock:
             self.vector_conv = nn.Sequential(
-                nn.Conv2d(3, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(vector_channels, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
                 ResBlock2D(c1),
                 nn.Conv2d(c1, c2, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
@@ -80,7 +84,7 @@ class PDE2DEncoderV2(nn.Module):
             )
         else:
             self.vector_conv = nn.Sequential(
-                nn.Conv2d(3, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(vector_channels, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
                 nn.Conv2d(c1, c2, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
@@ -91,7 +95,7 @@ class PDE2DEncoderV2(nn.Module):
         # Scalar branch: 同上
         if use_resblock:
             self.scalar_conv = nn.Sequential(
-                nn.Conv2d(3, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(scalar_channels, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
                 ResBlock2D(c1),
                 nn.Conv2d(c1, c2, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
@@ -103,7 +107,7 @@ class PDE2DEncoderV2(nn.Module):
             )
         else:
             self.scalar_conv = nn.Sequential(
-                nn.Conv2d(3, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
+                nn.Conv2d(scalar_channels, c1, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
                 nn.Conv2d(c1, c2, kernel_size=3, stride=2, padding=1, padding_mode='replicate'),
                 nn.GELU(),
@@ -131,8 +135,8 @@ class PDE2DEncoderV2(nn.Module):
         B, T, H, W, C = x.shape
 
         # Split vector and scalar
-        x_vec = x[..., :3].permute(0, 1, 4, 2, 3).reshape(B * T, 3, H, W)
-        x_sca = x[..., 3:].permute(0, 1, 4, 2, 3).reshape(B * T, 3, H, W)
+        x_vec = x[..., :self.vector_channels].permute(0, 1, 4, 2, 3).reshape(B * T, self.vector_channels, H, W)
+        x_sca = x[..., self.vector_channels:].permute(0, 1, 4, 2, 3).reshape(B * T, self.scalar_channels, H, W)
 
         # Separate branch processing
         x_vec = self.vector_conv(x_vec)  # [B*T, mid//2, 16, 16]
@@ -157,19 +161,23 @@ class PDE2DDecoderV2(nn.Module):
     - 残差块增强
 
     Input: [B, seq_len, hidden_dim] where seq_len=4096
-    Output: [B, T, H, W, C] where T=16, H=W=128, C=6
+    Output: [B, T, H, W, C] where T=16, H=W=128, C=18 (3 vector + 15 scalar)
     """
     def __init__(
         self,
-        out_channels: int = 6,
+        out_channels: int = 18,  # 3 vector + 15 scalar
         hidden_dim: int = 768,
         channels: list = None,  # 每层的通道数 [c1, c2, c3]，与encoder对应
         mid_channels: int = 512,  # 不再使用，由channels自动计算
         use_resblock: bool = True,
+        vector_channels: int = 3,  # vector 通道数 (固定)
+        scalar_channels: int = 15,  # scalar 通道数
     ):
         super().__init__()
         self.out_channels = out_channels
         self.hidden_dim = hidden_dim
+        self.vector_channels = vector_channels
+        self.scalar_channels = scalar_channels
 
         # 默认通道配置
         if channels is None:
@@ -208,7 +216,7 @@ class PDE2DDecoderV2(nn.Module):
                 nn.ConvTranspose2d(c2, c1, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
                 ResBlock2D(c1),
-                nn.ConvTranspose2d(c1, 3, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c1, vector_channels, kernel_size=4, stride=2, padding=1),
             )
         else:
             self.vector_conv = nn.Sequential(
@@ -216,7 +224,7 @@ class PDE2DDecoderV2(nn.Module):
                 nn.GELU(),
                 nn.ConvTranspose2d(c2, c1, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                nn.ConvTranspose2d(c1, 3, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c1, vector_channels, kernel_size=4, stride=2, padding=1),
             )
 
         # Scalar branch: 同上
@@ -229,7 +237,7 @@ class PDE2DDecoderV2(nn.Module):
                 nn.ConvTranspose2d(c2, c1, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
                 ResBlock2D(c1),
-                nn.ConvTranspose2d(c1, 3, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c1, scalar_channels, kernel_size=4, stride=2, padding=1),
             )
         else:
             self.scalar_conv = nn.Sequential(
@@ -237,7 +245,7 @@ class PDE2DDecoderV2(nn.Module):
                 nn.GELU(),
                 nn.ConvTranspose2d(c2, c1, kernel_size=4, stride=2, padding=1),
                 nn.GELU(),
-                nn.ConvTranspose2d(c1, 3, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(c1, scalar_channels, kernel_size=4, stride=2, padding=1),
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -257,11 +265,11 @@ class PDE2DDecoderV2(nn.Module):
         x_sca = x[:, branch_ch:, :, :]
 
         # Upsample
-        x_vec = self.vector_conv(x_vec)  # [B*T, 3, 128, 128]
-        x_sca = self.scalar_conv(x_sca)  # [B*T, 3, 128, 128]
+        x_vec = self.vector_conv(x_vec)  # [B*T, vector_channels, 128, 128]
+        x_sca = self.scalar_conv(x_sca)  # [B*T, scalar_channels, 128, 128]
 
         # Concatenate
-        x = torch.cat([x_vec, x_sca], dim=1)  # [B*T, 6, 128, 128]
+        x = torch.cat([x_vec, x_sca], dim=1)  # [B*T, out_channels, 128, 128]
 
         # Reshape back
         x = x.permute(0, 2, 3, 1).reshape(B, T, 128, 128, self.out_channels)
@@ -272,22 +280,34 @@ class PDE2DDecoderV2(nn.Module):
 def create_encoder_v2(config: Dict) -> PDE2DEncoderV2:
     """从 config 创建 EncoderV2"""
     enc_config = config['model'].get('encoder', {})
+    vector_channels = config['model'].get('vector_channels', 3)
+    scalar_channels = config['model'].get('scalar_channels', 15)
+    in_channels = vector_channels + scalar_channels
+
     return PDE2DEncoderV2(
-        in_channels=config['model']['in_channels'],
+        in_channels=in_channels,
         hidden_dim=config['model']['transformer']['hidden_size'],
         channels=enc_config.get('channels', [64, 128, 256]),
         use_resblock=enc_config.get('use_resblock', True),
+        vector_channels=vector_channels,
+        scalar_channels=scalar_channels,
     )
 
 
 def create_decoder_v2(config: Dict) -> PDE2DDecoderV2:
     """从 config 创建 DecoderV2"""
     enc_config = config['model'].get('encoder', {})
+    vector_channels = config['model'].get('vector_channels', 3)
+    scalar_channels = config['model'].get('scalar_channels', 15)
+    out_channels = vector_channels + scalar_channels
+
     return PDE2DDecoderV2(
-        out_channels=config['model']['in_channels'],
+        out_channels=out_channels,
         hidden_dim=config['model']['transformer']['hidden_size'],
         channels=enc_config.get('channels', [64, 128, 256]),
         use_resblock=enc_config.get('use_resblock', True),
+        vector_channels=vector_channels,
+        scalar_channels=scalar_channels,
     )
 
 
@@ -1109,14 +1129,30 @@ if __name__ == "__main__":
     print("  ✓ 2D test passed!")
 
     print("\n" + "=" * 60)
-    print("Testing 2D V2 Encoder/Decoder...")
+    print("Testing 2D V2 Encoder/Decoder (18 channels)...")
     print("=" * 60)
-    encoder_v2 = PDE2DEncoderV2(in_channels=6, hidden_dim=768, mid_channels=256, use_resblock=True)
-    decoder_v2 = PDE2DDecoderV2(out_channels=6, hidden_dim=768, mid_channels=256, use_resblock=True)
-    tokens_v2 = encoder_v2(x_2d)
+    x_2d_18ch = torch.randn(2, 16, 128, 128, 18)  # 3 vector + 15 scalar
+    encoder_v2 = PDE2DEncoderV2(
+        in_channels=18, hidden_dim=768,
+        vector_channels=3, scalar_channels=15,
+        use_resblock=True
+    )
+    decoder_v2 = PDE2DDecoderV2(
+        out_channels=18, hidden_dim=768,
+        vector_channels=3, scalar_channels=15,
+        use_resblock=True
+    )
+
+    # 计算参数量
+    enc_v2_params = sum(p.numel() for p in encoder_v2.parameters())
+    dec_v2_params = sum(p.numel() for p in decoder_v2.parameters())
+    print(f"  Encoder V2 params: {enc_v2_params / 1e6:.2f}M")
+    print(f"  Decoder V2 params: {dec_v2_params / 1e6:.2f}M")
+
+    tokens_v2 = encoder_v2(x_2d_18ch)
     recon_v2 = decoder_v2(tokens_v2)
-    print(f"  Input: {x_2d.shape} → Tokens: {tokens_v2.shape} → Output: {recon_v2.shape}")
-    assert recon_v2.shape == x_2d.shape, "Shape mismatch!"
+    print(f"  Input: {x_2d_18ch.shape} → Tokens: {tokens_v2.shape} → Output: {recon_v2.shape}")
+    assert recon_v2.shape == x_2d_18ch.shape, f"Shape mismatch: {recon_v2.shape} vs {x_2d_18ch.shape}"
     print("  ✓ V2 test passed!")
 
     print("\n" + "=" * 60)

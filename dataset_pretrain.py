@@ -70,56 +70,34 @@ SCALAR_INDICES = {
 
 def generate_spatial_points(
     n_points: int,
-    min_dist: int = 128,
     max_coord: int = 384,
     rng: np.random.RandomState = None
 ) -> List[Tuple[int, int]]:
     """
-    Generate n spatial crop starting points with minimum distance constraint.
+    Generate n spatial crop starting points using deterministic grid.
 
-    Uses greedy algorithm: randomly sample points, keep if distance >= min_dist from all existing.
+    For n_points=11: use ~3.3x3.3 grid, take first 11 points
+    For n_points=16: use 4x4 grid
 
     Args:
         n_points: Number of points to generate
-        min_dist: Minimum L-infinity distance between any two points
         max_coord: Maximum coordinate value (crop starts in [0, max_coord])
-        rng: Random state for reproducibility
+        rng: Not used, kept for API compatibility
 
     Returns:
-        List of (x, y) tuples
+        List of (x, y) tuples with spacing >= 128
     """
-    if rng is None:
-        rng = np.random.RandomState()
-
-    points = []
-    max_attempts = 10000
-
-    for _ in range(max_attempts):
-        x = rng.randint(0, max_coord + 1)
-        y = rng.randint(0, max_coord + 1)
-
-        # Check distance constraint
-        valid = True
-        for px, py in points:
-            if max(abs(x - px), abs(y - py)) < min_dist:
-                valid = False
-                break
-
-        if valid:
-            points.append((x, y))
-            if len(points) == n_points:
-                return points
-
-    # Fallback: use grid if random fails
-    logger.warning(f"Random point generation failed, using grid fallback")
+    # Determine grid size
     grid_size = int(np.ceil(np.sqrt(n_points)))
     step = max_coord // (grid_size - 1) if grid_size > 1 else 0
+
     points = []
     for i in range(grid_size):
         for j in range(grid_size):
             if len(points) < n_points:
                 points.append((i * step, j * step))
-    return points[:n_points]
+
+    return points
 
 
 def get_validation_spatial_points(n_points: int = 16, max_coord: int = 384) -> List[Tuple[int, int]]:
