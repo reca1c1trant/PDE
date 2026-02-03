@@ -15,12 +15,15 @@ New format:
         scalar_mask: [15]              # [0,0,1,1,0,0,0,0,0,0,0,0,0,0,0]
 
 Usage:
-    python preprocess_diffusion_reaction.py --input /path/to/old.hdf5 --output /path/to/new.hdf5
+    python preprocess_diffusion_reaction.py --input /path/to/old.hdf5
+
+    Output will be saved to pretrained/ folder, original file will be deleted.
 """
 
 import argparse
 import h5py
 import numpy as np
+import os
 from pathlib import Path
 from tqdm import tqdm
 
@@ -48,19 +51,21 @@ NUM_SCALAR_CHANNELS = 15
 NUM_VECTOR_CHANNELS = 3
 
 
-def convert_diffusion_reaction(input_path: str, output_path: str):
+def convert_diffusion_reaction(input_path: str):
     """
     Convert diffusion-reaction dataset to new unified format.
 
+    Output saved to pretrained/ folder, original file deleted after conversion.
+
     Args:
         input_path: Path to original HDF5 file
-        output_path: Path to output HDF5 file
     """
     input_path = Path(input_path)
-    output_path = Path(output_path)
 
-    # Create output directory if needed
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Output to pretrained/ folder with same filename
+    output_dir = input_path.parent / 'pretrained'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / input_path.name
 
     # Scalar mask for diffusion-reaction: only concentration_u (idx 2) and concentration_v (idx 3)
     scalar_mask = np.zeros(NUM_SCALAR_CHANNELS, dtype=np.float32)
@@ -149,14 +154,18 @@ def convert_diffusion_reaction(input_path: str, output_path: str):
         other_zero = all(np.allclose(scalar[..., i], 0) for i in other_channels)
         print(f"  Other scalar channels all zero: {other_zero}")
 
+    # Delete original file after successful conversion
+    print(f"\nDeleting original file: {input_path}")
+    os.remove(input_path)
+    print("Original file deleted.")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Convert diffusion-reaction dataset to unified format")
     parser.add_argument('--input', type=str, required=True, help='Input HDF5 file path')
-    parser.add_argument('--output', type=str, required=True, help='Output HDF5 file path')
     args = parser.parse_args()
 
-    convert_diffusion_reaction(args.input, args.output)
+    convert_diffusion_reaction(args.input)
 
 
 if __name__ == "__main__":
