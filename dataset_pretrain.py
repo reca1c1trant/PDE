@@ -211,7 +211,6 @@ class SingleDataset:
                 if self.split == 'train':
                     spatial_points = generate_spatial_points(
                         self.config.train_spatial_points,
-                        min_dist=128,
                         max_coord=self.spatial_size - self.crop_size,
                         rng=rng
                     )
@@ -644,7 +643,7 @@ if __name__ == "__main__":
 
     # Test spatial point generation
     print("\nTesting spatial point generation:")
-    points = generate_spatial_points(11, min_dist=128, max_coord=384)
+    points = generate_spatial_points(11, max_coord=384)
     print(f"Generated {len(points)} points: {points}")
 
     # Verify distances
