@@ -2,14 +2,14 @@
 # 18 channels: 3 vector + 15 scalar (expanded from 6)
 # Datasets: diffusion-reaction, 2D_CFD, SWE, NS_incom
 
-model_name: "pde_pretrain_18ch"
+model_name: "pde_pretrain"
 
 # Dataset (for pretrain, path points to root containing pretrained/ folder)
 dataset:
   path: "/home/msai/song0304/code/PDE/data"
   seed: 42
   train_ratio: 0.9
-  clips_ratio: 0.2  # 20% temporal sampling for training
+  clips_ratio: 0.25  # 25% temporal sampling for training
 
 # DataLoader
 dataloader:
@@ -55,15 +55,15 @@ training:
   grad_clip: 5.0
   min_lr: 1.0e-6
 
-  mixed_precision: "bf16"  # Use bf16 for pretraining
+  mixed_precision: "no"  # Use bf16 for pretraining
   gradient_accumulation_steps: 2
 
-  eval_interval: 200
+  eval_interval: 400
   early_stopping_patience: 30
 
 # Checkpoint (optional: load from converted checkpoint)
 checkpoint:
-  resume_from: null  # Set to path like "checkpoints/converted.pt" to resume
+  resume_from: checkpoints_pretrain/origin.pt  # Set to path like "checkpoints/converted.pt" to resume
   load_transformer_only: false  # If true, only load transformer weights
 
 # Logging

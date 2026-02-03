@@ -217,15 +217,17 @@ class PDECausalModel(nn.Module):
             return x + noise
         return x
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_normalized: bool = False):
         """
         Forward pass with normalization, noise injection, and block causal mask.
 
         Args:
             x: [B, T, H, 6] (1D) or [B, T, H, W, 6] (2D)
+            return_normalized: If True, return (output_norm, mean, std) for loss in normalized space
 
         Returns:
-            Output tensor with same shape as input
+            If return_normalized=False: Output tensor with same shape as input (denormalized)
+            If return_normalized=True: (output_norm, mean, std) for computing loss in normalized space
         """
         ndim = x.ndim - 3
         B = x.shape[0]
@@ -254,6 +256,9 @@ class PDECausalModel(nn.Module):
 
         else:
             raise ValueError(f"Unsupported input dimension: {x.shape}")
+
+        if return_normalized:
+            return output, mean, std
 
         # Denormalize
         output = self._denormalize(output, mean, std)

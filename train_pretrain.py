@@ -4,7 +4,7 @@ Pretraining for PDE Foundation Model.
 Features:
 - Multi-dataset training (diffusion-reaction, 2D_CFD, SWE, NS_incom)
 - 18 channels (3 vector + 15 scalar) with channel_mask
-- nRMSE loss per-sample, per-channel
+- RMSE loss in normalized space with channel masking
 - Support for checkpoint resume (converted or scratch)
 - PretrainSampler ensures same-batch same-equivalent-sample
 
@@ -66,76 +66,36 @@ from pipeline import PDECausalModel
 logger = logging.getLogger(__name__)
 
 
-def compute_nrmse_loss(
+def compute_normalized_rmse_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
     channel_mask: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """
-    Compute nRMSE loss per-sample, per-channel (matching metrics.py style).
-
-    For each sample i, channel c:
-        RMSE_i_c = sqrt(mean((pred - target)^2, dim=spatial))
-        RMS_i_c = sqrt(mean(target^2, dim=spatial))
-        nRMSE_i_c = RMSE_i_c / RMS_i_c
-
-    nRMSE = mean(nRMSE_i_c) over all samples and valid channels
+    Compute RMSE loss in normalized space with channel masking.
 
     Args:
-        pred: [B, T, H, W, C] predictions
-        target: [B, T, H, W, C] ground truth
+        pred: [B, T, H, W, C] predictions (already in normalized space)
+        target: [B, T, H, W, C] ground truth (already in normalized space)
         channel_mask: [B, C] valid channel mask (1=valid, 0=pad)
 
     Returns:
-        nrmse: scalar nRMSE loss for backprop
-        rmse: scalar RMSE for logging
+        rmse: scalar RMSE loss for backprop
     """
-    eps = 1e-8
-    B, T, H, W, C = pred.shape
+    # Expand channel_mask for broadcasting: [B, 1, 1, 1, C]
+    mask = channel_mask[:, None, None, None, :].float()
 
-    # channel_mask: [B, C] - each sample may have different valid channels
-    # For simplicity, use batch-level valid mask (union of all valid channels)
-    # But compute loss only on each sample's valid channels
+    # Masked MSE: only compute on valid channels
+    squared_error = (pred - target) ** 2  # [B, T, H, W, C]
+    masked_error = squared_error * mask
 
-    total_nrmse = torch.zeros(1, device=pred.device, dtype=pred.dtype)
-    total_rmse = torch.zeros(1, device=pred.device, dtype=pred.dtype)
-    count = 0
+    # Sum over all dimensions, divide by number of valid elements
+    total_error = masked_error.sum()
+    num_valid = mask.sum() * pred.shape[1] * pred.shape[2] * pred.shape[3]  # mask.sum() * T * H * W
 
-    for b in range(B):
-        valid_mask = channel_mask[b].bool()  # [C]
-        n_valid = valid_mask.sum().item()
-        if n_valid == 0:
-            continue
-
-        pred_b = pred[b, ..., valid_mask]  # [T, H, W, C_valid]
-        target_b = target[b, ..., valid_mask]  # [T, H, W, C_valid]
-
-        # Reshape to [C_valid, spatial] where spatial = T * H * W
-        pred_flat = pred_b.permute(3, 0, 1, 2).reshape(n_valid, -1)  # [C_valid, T*H*W]
-        target_flat = target_b.permute(3, 0, 1, 2).reshape(n_valid, -1)  # [C_valid, T*H*W]
-
-        # Per-channel RMSE
-        mse_per_c = ((pred_flat - target_flat) ** 2).mean(dim=1)  # [C_valid]
-        rmse_per_c = torch.sqrt(mse_per_c + eps)  # [C_valid]
-
-        # Per-channel RMS (norm)
-        rms_per_c = torch.sqrt((target_flat ** 2).mean(dim=1) + eps)  # [C_valid]
-
-        # nRMSE per channel
-        nrmse_per_c = rmse_per_c / rms_per_c  # [C_valid]
-
-        total_nrmse += nrmse_per_c.sum()
-        total_rmse += rmse_per_c.sum()
-        count += n_valid
-
-    if count > 0:
-        nrmse = total_nrmse / count
-        rmse = total_rmse / count
-    else:
-        nrmse = torch.zeros(1, device=pred.device, dtype=pred.dtype)
-        rmse = torch.zeros(1, device=pred.device, dtype=pred.dtype)
-
-    return nrmse.squeeze(), rmse.squeeze()
+    mse = total_error / (num_valid + 1e-8)
+    rmse = torch.sqrt(mse + 1e-8)
+    return rmse
 
 
 def parse_args():
@@ -168,16 +128,13 @@ def get_lr_scheduler(optimizer, config: dict, total_steps: int):
     return LambdaLR(optimizer, lr_lambda)
 
 
-def load_checkpoint(model, optimizer, scheduler, checkpoint_path: str, config: dict, accelerator):
+def load_checkpoint(model, checkpoint_path: str, config: dict, accelerator):
     """
-    Load checkpoint with support for:
-    1. Full resume (model + optimizer + scheduler)
-    2. Converted checkpoint (model only)
-    3. Transformer-only loading
+    Load checkpoint (model weights only, optimizer/scheduler start fresh).
 
     Returns:
-        global_step: Step to resume from (0 if new training)
-        best_val_nrmse: Best validation nRMSE (inf if new training)
+        global_step: Always 0 (fresh start)
+        best_val_rmse: Always inf (fresh start)
     """
     if not checkpoint_path or not Path(checkpoint_path).exists():
         if accelerator.is_main_process:
@@ -196,9 +153,6 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_path: str, config: d
         state_dict = ckpt['state_dict']
     else:
         state_dict = ckpt
-
-    # Check if this is a converted checkpoint
-    is_converted = 'converted_from' in ckpt
 
     # Get unwrapped model
     unwrapped_model = accelerator.unwrap_model(model)
@@ -221,58 +175,29 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_path: str, config: d
             if unexpected:
                 logger.warning(f"Unexpected keys: {unexpected[:5]}..." if len(unexpected) > 5 else f"Unexpected keys: {unexpected}")
 
-    # For converted checkpoint or transformer-only, don't load optimizer/scheduler
-    if is_converted or load_transformer_only:
-        if accelerator.is_main_process:
-            logger.info("Converted/partial checkpoint: optimizer and scheduler will start fresh")
-        return 0, float('inf')
-
-    # Full resume: load optimizer and scheduler
-    global_step = ckpt.get('global_step', 0)
-    best_val_nrmse = ckpt.get('best_val_nrmse', float('inf'))
-
-    if 'optimizer_state_dict' in ckpt and optimizer is not None:
-        try:
-            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            if accelerator.is_main_process:
-                logger.info("Loaded optimizer state")
-        except Exception as e:
-            if accelerator.is_main_process:
-                logger.warning(f"Could not load optimizer state: {e}")
-
-    if 'scheduler_state_dict' in ckpt and scheduler is not None and ckpt['scheduler_state_dict']:
-        try:
-            scheduler.load_state_dict(ckpt['scheduler_state_dict'])
-            if accelerator.is_main_process:
-                logger.info("Loaded scheduler state")
-        except Exception as e:
-            if accelerator.is_main_process:
-                logger.warning(f"Could not load scheduler state: {e}")
-
     if accelerator.is_main_process:
-        logger.info(f"Resumed from step {global_step}, best_val_nrmse={best_val_nrmse:.6f}")
+        logger.info("Loaded model weights. Optimizer and scheduler will start fresh.")
 
-    return global_step, best_val_nrmse
+    # Always start fresh (step=0, best_val_rmse=inf)
+    return 0, float('inf')
 
 
 @torch.no_grad()
-def validate(model, val_loader, accelerator) -> tuple[float, float, dict]:
+def validate(model, val_loader, accelerator) -> tuple[float, dict]:
     """
-    Validate and return nRMSE, RMSE, and per-dataset metrics.
+    Validate and return RMSE in normalized space, and per-dataset metrics.
 
     Returns:
-        avg_nrmse: Average nRMSE across all batches
-        avg_rmse: Average RMSE across all batches
-        per_dataset: Dict of {dataset_name: (nrmse, count)}
+        avg_rmse: Average RMSE across all batches (in normalized space)
+        per_dataset: Dict of {dataset_name: rmse}
     """
     model.eval()
 
-    total_nrmse = torch.zeros(1, device=accelerator.device)
     total_rmse = torch.zeros(1, device=accelerator.device)
     num_batches = torch.zeros(1, device=accelerator.device)
 
     # Per-dataset tracking
-    dataset_nrmse = {}
+    dataset_rmse = {}
     dataset_count = {}
 
     for batch in val_loader:
@@ -283,50 +208,51 @@ def validate(model, val_loader, accelerator) -> tuple[float, float, dict]:
         input_data = data[:, :-1]  # [B, 16, H, W, 18]
         target_data = data[:, 1:]   # [B, 16, H, W, 18]
 
-        output = model(input_data)
+        # Get normalized output and normalization params
+        output_norm, mean, std = model(input_data, return_normalized=True)
 
-        # Compute nRMSE loss
-        nrmse, rmse = compute_nrmse_loss(output.float(), target_data.float(), channel_mask)
+        # Normalize target with same mean/std
+        target_norm = (target_data - mean) / std
 
-        total_nrmse += nrmse.detach()
+        # Compute RMSE in normalized space
+        rmse = compute_normalized_rmse_loss(output_norm.float(), target_norm.float(), channel_mask)
+
         total_rmse += rmse.detach()
         num_batches += 1
 
-        # Track per-dataset (assuming all samples in batch are from same dataset)
+        # Track per-dataset
         ds_name = dataset_names[0]
-        if ds_name not in dataset_nrmse:
-            dataset_nrmse[ds_name] = torch.zeros(1, device=accelerator.device)
+        if ds_name not in dataset_rmse:
+            dataset_rmse[ds_name] = torch.zeros(1, device=accelerator.device)
             dataset_count[ds_name] = torch.zeros(1, device=accelerator.device)
-        dataset_nrmse[ds_name] += nrmse.detach()
+        dataset_rmse[ds_name] += rmse.detach()
         dataset_count[ds_name] += 1
 
     # Reduce across GPUs
     accelerator.wait_for_everyone()
-    total_nrmse = accelerator.reduce(total_nrmse, reduction='sum')
     total_rmse = accelerator.reduce(total_rmse, reduction='sum')
     num_batches = accelerator.reduce(num_batches, reduction='sum')
 
-    for ds_name in dataset_nrmse:
-        dataset_nrmse[ds_name] = accelerator.reduce(dataset_nrmse[ds_name], reduction='sum')
+    for ds_name in dataset_rmse:
+        dataset_rmse[ds_name] = accelerator.reduce(dataset_rmse[ds_name], reduction='sum')
         dataset_count[ds_name] = accelerator.reduce(dataset_count[ds_name], reduction='sum')
 
     model.train()
 
-    avg_nrmse = (total_nrmse / num_batches).item() if num_batches.item() > 0 else 0
     avg_rmse = (total_rmse / num_batches).item() if num_batches.item() > 0 else 0
 
     per_dataset = {}
-    for ds_name in dataset_nrmse:
+    for ds_name in dataset_rmse:
         count = dataset_count[ds_name].item()
         if count > 0:
-            per_dataset[ds_name] = dataset_nrmse[ds_name].item() / count
+            per_dataset[ds_name] = dataset_rmse[ds_name].item() / count
 
-    return avg_nrmse, avg_rmse, per_dataset
+    return avg_rmse, per_dataset
 
 
 def save_checkpoint(
     model, optimizer, scheduler, global_step: int,
-    val_rmse: float, val_nrmse: float, best_val_nrmse: float,
+    val_rmse: float, best_val_rmse: float,
     config: dict, save_dir: Path, accelerator, filename: str
 ):
     """Save checkpoint with all training state."""
@@ -339,8 +265,7 @@ def save_checkpoint(
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
             'val_rmse': val_rmse,
-            'val_nrmse': val_nrmse,
-            'best_val_nrmse': best_val_nrmse,
+            'best_val_rmse': best_val_rmse,
             'config': config,
         }
         torch.save(checkpoint, save_dir / filename)
@@ -426,9 +351,9 @@ def main():
     # Prepare with accelerator
     model, optimizer = accelerator.prepare(model, optimizer)
 
-    # Load checkpoint
-    global_step, best_val_nrmse = load_checkpoint(
-        model, optimizer, scheduler, resume_path, config, accelerator
+    # Load checkpoint (model only, optimizer/scheduler start fresh)
+    global_step, best_val_rmse = load_checkpoint(
+        model, resume_path, config, accelerator
     )
 
     # Init WandB
@@ -486,15 +411,18 @@ def main():
                 in_warmup = global_step < warmup_steps
 
                 with accelerator.accumulate(model):
-                    output = model(input_data)
+                    # Get normalized output and normalization params
+                    output_norm, mean, std = model(input_data, return_normalized=True)
 
-                    # Compute nRMSE loss
-                    nrmse_loss, rmse_loss = compute_nrmse_loss(
-                        output.float(), target_data.float(), channel_mask
+                    # Normalize target with same mean/std
+                    target_norm = (target_data - mean) / std
+
+                    # Compute RMSE in normalized space
+                    rmse_loss = compute_normalized_rmse_loss(
+                        output_norm.float(), target_norm.float(), channel_mask
                     )
 
-                    train_loss = nrmse_loss
-                    accelerator.backward(train_loss)
+                    accelerator.backward(rmse_loss)
 
                     if grad_clip:
                         accelerator.clip_grad_norm_(model.parameters(), grad_clip)
@@ -506,20 +434,18 @@ def main():
                 global_step += 1
 
                 # Reduce loss across GPUs
-                nrmse_reduced = accelerator.reduce(nrmse_loss.detach(), reduction='mean')
                 rmse_reduced = accelerator.reduce(rmse_loss.detach(), reduction='mean')
 
                 # Update progress bar
                 phase_str = "[warmup]" if in_warmup else f"[E{epoch+1}]"
                 progress.update(
                     train_task, advance=1,
-                    description=f"{phase_str} nRMSE={nrmse_reduced.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}"
+                    description=f"{phase_str} RMSE={rmse_reduced.item():.4f} lr={scheduler.get_last_lr()[0]:.2e}"
                 )
 
                 # Log to wandb
                 if global_step % log_interval == 0:
                     accelerator.log({
-                        'train/nrmse': nrmse_reduced.item(),
                         'train/rmse': rmse_reduced.item(),
                         'train/lr': scheduler.get_last_lr()[0],
                         'train/epoch': epoch + 1,
@@ -528,36 +454,32 @@ def main():
                 # Validate
                 if global_step % eval_interval == 0:
                     accelerator.wait_for_everyone()
-                    val_nrmse, val_rmse, per_dataset = validate(model, val_loader, accelerator)
+                    val_rmse, per_dataset = validate(model, val_loader, accelerator)
 
                     # Log validation metrics
-                    log_dict = {
-                        'val/nrmse': val_nrmse,
-                        'val/rmse': val_rmse,
-                    }
-                    for ds_name, ds_nrmse in per_dataset.items():
-                        log_dict[f'val/nrmse_{ds_name}'] = ds_nrmse
+                    log_dict = {'val/rmse': val_rmse}
+                    for ds_name, ds_rmse in per_dataset.items():
+                        log_dict[f'val/rmse_{ds_name}'] = ds_rmse
                     accelerator.log(log_dict, step=global_step)
 
                     if accelerator.is_main_process:
                         ds_str = ", ".join([f"{k}={v:.4f}" for k, v in per_dataset.items()])
-                        console.print(f"\n[green]Step {global_step}/{total_steps} {phase_str}:[/green] "
-                                     f"val_nrmse={val_nrmse:.6f}, val_rmse={val_rmse:.6f}")
+                        console.print(f"\n[green]Step {global_step}/{total_steps} {phase_str}:[/green] val_rmse={val_rmse:.6f}")
                         if ds_str:
                             console.print(f"[dim]  Per-dataset: {ds_str}[/dim]")
 
                     # Post-warmup: save best model and early stopping
                     if not in_warmup:
-                        if val_nrmse < best_val_nrmse:
-                            best_val_nrmse = val_nrmse
+                        if val_rmse < best_val_rmse:
+                            best_val_rmse = val_rmse
                             patience_counter = 0
                             save_checkpoint(
                                 model, optimizer, scheduler, global_step,
-                                val_rmse, val_nrmse, best_val_nrmse,
+                                val_rmse, best_val_rmse,
                                 config, save_dir, accelerator, 'best.pt'
                             )
                             if accelerator.is_main_process:
-                                console.print(f"[yellow]Saved best model[/yellow] (val_nrmse: {val_nrmse:.6f})")
+                                console.print(f"[yellow]Saved best model[/yellow] (val_rmse: {val_rmse:.6f})")
                         else:
                             patience_counter += 1
                             if accelerator.is_main_process:
@@ -574,21 +496,13 @@ def main():
 
                     model.train()
 
-                # Save latest checkpoint periodically
-                if global_step % (eval_interval * 5) == 0:
-                    save_checkpoint(
-                        model, optimizer, scheduler, global_step,
-                        0, 0, best_val_nrmse,
-                        config, save_dir, accelerator, 'latest.pt'
-                    )
-
     accelerator.end_training()
 
     if accelerator.is_main_process:
         table = Table(title="Pretraining Complete", show_header=False, border_style="green")
         table.add_row("Total Epochs", str(epoch + 1))
         table.add_row("Total Steps", str(global_step))
-        table.add_row("Best Val nRMSE", f"{best_val_nrmse:.6f}")
+        table.add_row("Best Val RMSE", f"{best_val_rmse:.6f}")
         table.add_row("Checkpoint", str(save_dir / "best.pt"))
         console.print(table)
 
