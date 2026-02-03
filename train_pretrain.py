@@ -288,7 +288,7 @@ def main():
     resume_path = args.resume or config.get('checkpoint', {}).get('resume_from')
 
     # DDP kwargs
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
 
     accelerator = Accelerator(
         mixed_precision=config['training'].get('mixed_precision', 'bf16'),

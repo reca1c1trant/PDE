@@ -95,7 +95,6 @@ class PDECausalModel(nn.Module):
             attention_dropout=config['model']['transformer']['attention_dropout'],
             use_cache=False,
             attn_implementation=attn_impl,
-            torch_dtype=torch.bfloat16,  # Fix FlashAttention dtype warning
         )
 
         # Initialize Llama from scratch
@@ -107,9 +106,6 @@ class PDECausalModel(nn.Module):
             self.transformer.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
-
-        # Convert entire model to bf16 for FSDP compatibility
-        self.to(torch.bfloat16)
 
         self._log_info(llama_config, use_flash_attn, encoder_version, encoder_config)
 

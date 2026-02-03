@@ -48,7 +48,7 @@ model:
 # Training
 training:
   max_epochs: 50
-  warmup_steps: 500
+  warmup_steps: 200
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   betas: [0.9, 0.999]

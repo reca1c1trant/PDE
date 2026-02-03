@@ -407,13 +407,14 @@ class PretrainDataset(Dataset):
 
 class PretrainSampler(Sampler):
     """
-    Sampler ensuring each batch contains clips from the same equivalent sample.
+    Sampler for pretraining with flexible batching strategy.
 
-    Equivalent sample = (dataset, original_sample, spatial_point)
+    For equivalent samples with enough clips (>= batch_size):
+        - Same-equivalent-sample constraint (same physical simulation per batch)
 
-    This ensures:
-    - Same physical simulation within a batch
-    - Same spatial region for cropped datasets (NS_incom)
+    For equivalent samples with few clips (< batch_size):
+        - Merge multiple samples' clips into batches (must be multiple of 4)
+        - This handles short-sequence datasets like CFD (only 5 clips per sample)
     """
 
     def __init__(
@@ -424,12 +425,14 @@ class PretrainSampler(Sampler):
         seed: int = 42,
         num_replicas: Optional[int] = None,
         rank: Optional[int] = None,
+        min_batch_unit: int = 4,  # Batches must be multiple of this
     ):
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
         self.epoch = 0
+        self.min_batch_unit = min_batch_unit
 
         # Distributed settings
         import os
@@ -444,7 +447,7 @@ class PretrainSampler(Sampler):
         self._compute_batches()
 
     def _compute_batches(self):
-        """Compute batches ensuring same-equivalent-sample constraint."""
+        """Compute batches with flexible strategy for small equiv samples."""
         rng = np.random.RandomState(self.seed + self.epoch)
 
         # Get all equivalent sample keys and shuffle
@@ -453,6 +456,8 @@ class PretrainSampler(Sampler):
             rng.shuffle(equiv_keys)
 
         batches = []
+        small_clips_pool = []  # Pool for merging small equiv samples
+
         for equiv_key in equiv_keys:
             clip_indices = list(self.dataset.clips_by_equiv_sample[equiv_key])
 
@@ -463,21 +468,48 @@ class PretrainSampler(Sampler):
             if self.shuffle:
                 rng.shuffle(clip_indices)
 
-            # Divide into batches with padding
-            for i in range(0, len(clip_indices), self.batch_size):
-                batch = clip_indices[i:i + self.batch_size]
+            if len(clip_indices) >= self.batch_size:
+                # Large enough: use same-equiv-sample batching with padding
+                for i in range(0, len(clip_indices), self.batch_size):
+                    batch = clip_indices[i:i + self.batch_size]
 
-                # Pad incomplete batch
-                if len(batch) < self.batch_size:
-                    need = self.batch_size - len(batch)
-                    pool = clip_indices[:i] if i > 0 else batch
-                    if len(pool) >= need:
-                        pad = rng.choice(pool, need, replace=False).tolist()
-                    else:
-                        pad = rng.choice(pool, need, replace=True).tolist()
-                    batch = batch + pad
+                    # Pad incomplete batch from same equiv sample
+                    if len(batch) < self.batch_size:
+                        need = self.batch_size - len(batch)
+                        pool = clip_indices[:i] if i > 0 else batch
+                        if len(pool) >= need:
+                            pad = rng.choice(pool, need, replace=False).tolist()
+                        else:
+                            pad = rng.choice(pool, need, replace=True).tolist()
+                        batch = batch + pad
 
-                batches.append(batch)
+                    batches.append(batch)
+            else:
+                # Too few clips: add to pool for merging
+                small_clips_pool.extend(clip_indices)
+
+        # Process small clips pool: merge into batches
+        if small_clips_pool:
+            if self.shuffle:
+                rng.shuffle(small_clips_pool)
+
+            for i in range(0, len(small_clips_pool), self.batch_size):
+                batch = small_clips_pool[i:i + self.batch_size]
+
+                # Only keep if batch size is multiple of min_batch_unit
+                if len(batch) >= self.min_batch_unit:
+                    # Trim to multiple of min_batch_unit if needed
+                    usable_size = (len(batch) // self.min_batch_unit) * self.min_batch_unit
+                    batch = batch[:usable_size]
+
+                    # Pad to full batch_size if close enough
+                    if len(batch) < self.batch_size and len(batch) >= self.batch_size // 2:
+                        need = self.batch_size - len(batch)
+                        pad = rng.choice(batch, need, replace=True).tolist()
+                        batch = batch + pad
+
+                    if len(batch) > 0:
+                        batches.append(batch)
 
         self._all_batches = batches
 
