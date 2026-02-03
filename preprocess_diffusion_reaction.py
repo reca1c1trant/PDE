@@ -1,23 +1,20 @@
 """
-Preprocess diffusion-reaction dataset.
+Preprocess diffusion-reaction dataset to new unified format.
 
-Converts from old format (u,v in vector) to new unified format (u,v in scalar[2:3]).
-
-Old format:
+Old format (per-sample groups):
     sample_N/
         vector: [T, 128, 128, 2]  # u, v (incorrectly placed)
         scalar: [T, 128, 128, 0]  # empty
 
-New format:
-    sample_N/
-        vector: [T, 128, 128, 3]       # all zeros (no velocity)
-        scalar: [T, 128, 128, 15]      # idx 2: concentration_u, idx 3: concentration_v
-        scalar_mask: [15]              # [0,0,1,1,0,0,0,0,0,0,0,0,0,0,0]
+New format (flat arrays):
+    vector: [N, T, H, W, 3]          # NOT created (no velocity in diffusion-reaction)
+    scalar: [N, T, H, W, 2]          # only actual channels (u, v)
+    scalar_indices: [2]              # [2, 3] -> concentration_u, concentration_v
 
 Usage:
     python preprocess_diffusion_reaction.py --input /path/to/old.hdf5
 
-    Output will be saved to pretrained/ folder, original file will be deleted.
+    Output saved to pretrained/ folder, original file deleted after conversion.
 """
 
 import argparse
@@ -47,9 +44,6 @@ SCALAR_INDICES = {
     'temperature': 14,
 }
 
-NUM_SCALAR_CHANNELS = 15
-NUM_VECTOR_CHANNELS = 3
-
 
 def convert_diffusion_reaction(input_path: str):
     """
@@ -67,21 +61,24 @@ def convert_diffusion_reaction(input_path: str):
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / input_path.name
 
-    # Scalar mask for diffusion-reaction: only concentration_u (idx 2) and concentration_v (idx 3)
-    scalar_mask = np.zeros(NUM_SCALAR_CHANNELS, dtype=np.float32)
-    scalar_mask[SCALAR_INDICES['concentration_u']] = 1.0
-    scalar_mask[SCALAR_INDICES['concentration_v']] = 1.0
+    # Scalar indices for diffusion-reaction: concentration_u (2), concentration_v (3)
+    scalar_indices = np.array([
+        SCALAR_INDICES['concentration_u'],
+        SCALAR_INDICES['concentration_v']
+    ], dtype=np.int32)
 
     print(f"Input:  {input_path}")
     print(f"Output: {output_path}")
-    print(f"Scalar mask: {scalar_mask.astype(int).tolist()}")
-    print(f"  concentration_u -> idx {SCALAR_INDICES['concentration_u']}")
-    print(f"  concentration_v -> idx {SCALAR_INDICES['concentration_v']}")
+    print(f"Scalar indices: {scalar_indices.tolist()}")
+    print(f"  channel 0 -> concentration_u (global idx {SCALAR_INDICES['concentration_u']})")
+    print(f"  channel 1 -> concentration_v (global idx {SCALAR_INDICES['concentration_v']})")
+    print(f"  No vector dataset (diffusion-reaction has no velocity)")
     print()
 
     with h5py.File(input_path, 'r') as f_in:
         sample_keys = sorted(f_in.keys())
-        print(f"Found {len(sample_keys)} samples")
+        n_samples = len(sample_keys)
+        print(f"Found {n_samples} samples")
 
         # Check first sample to understand structure
         first_sample = f_in[sample_keys[0]]
@@ -98,31 +95,46 @@ def convert_diffusion_reaction(input_path: str):
         if C_old != 2:
             print(f"WARNING: Expected 2 channels in vector (u, v), got {C_old}")
 
+        # Determine output shape
+        n_scalar_channels = len(scalar_indices)  # 2
+        scalar_shape = (n_samples, T, H, W, n_scalar_channels)
+
+        print(f"\nOutput shape:")
+        print(f"  scalar: {scalar_shape}")
+        print(f"  scalar_indices: {scalar_indices.shape}")
+
         print(f"\n{'='*60}")
         print("Starting conversion...")
         print(f"{'='*60}\n")
 
         with h5py.File(output_path, 'w') as f_out:
-            for sample_key in tqdm(sample_keys, desc="Converting"):
+            # Create datasets with chunking for efficient random access
+            # Chunk by single sample: (1, T, H, W, C)
+            scalar_ds = f_out.create_dataset(
+                'scalar',
+                shape=scalar_shape,
+                dtype=np.float32,
+                chunks=(1, T, H, W, n_scalar_channels),
+                compression='gzip',
+                compression_opts=4
+            )
+
+            # Store scalar indices (small, no compression needed)
+            f_out.create_dataset('scalar_indices', data=scalar_indices)
+
+            # No vector dataset for diffusion-reaction (no velocity)
+
+            # Convert each sample
+            for i, sample_key in enumerate(tqdm(sample_keys, desc="Converting")):
                 old_vector = f_in[sample_key]['vector'][:]  # [T, H, W, 2]
 
-                # Extract u and v from old vector
-                u = old_vector[..., 0]  # [T, H, W]
-                v = old_vector[..., 1]  # [T, H, W]
+                # Extract u and v, stack as [T, H, W, 2]
+                u = old_vector[..., 0:1]  # [T, H, W, 1]
+                v = old_vector[..., 1:2]  # [T, H, W, 1]
+                scalar_data = np.concatenate([u, v], axis=-1)  # [T, H, W, 2]
 
-                # Create new vector (all zeros, no velocity in diffusion-reaction)
-                new_vector = np.zeros((T, H, W, NUM_VECTOR_CHANNELS), dtype=np.float32)
-
-                # Create new scalar
-                new_scalar = np.zeros((T, H, W, NUM_SCALAR_CHANNELS), dtype=np.float32)
-                new_scalar[..., SCALAR_INDICES['concentration_u']] = u
-                new_scalar[..., SCALAR_INDICES['concentration_v']] = v
-
-                # Write to output
-                grp = f_out.create_group(sample_key)
-                grp.create_dataset('vector', data=new_vector, compression='gzip', compression_opts=4)
-                grp.create_dataset('scalar', data=new_scalar, compression='gzip', compression_opts=4)
-                grp.create_dataset('scalar_mask', data=scalar_mask)
+                # Write to dataset
+                scalar_ds[i] = scalar_data
 
     print(f"\n{'='*60}")
     print("Conversion complete!")
@@ -131,33 +143,33 @@ def convert_diffusion_reaction(input_path: str):
     # Verify output
     print("\nVerifying output...")
     with h5py.File(output_path, 'r') as f_out:
-        sample_keys = sorted(f_out.keys())
-        first_sample = f_out[sample_keys[0]]
-        print(f"\nNew structure (sample {sample_keys[0]}):")
-        for key in first_sample.keys():
-            data = first_sample[key]
+        print(f"\nNew structure:")
+        for key in f_out.keys():
+            data = f_out[key]
             print(f"  {key}: shape={data.shape}, dtype={data.dtype}")
 
         # Check data integrity
-        vector = first_sample['vector'][:]
-        scalar = first_sample['scalar'][:]
-        mask = first_sample['scalar_mask'][:]
+        scalar = f_out['scalar'][0]  # First sample
+        indices = f_out['scalar_indices'][:]
 
-        print(f"\nData check:")
-        print(f"  vector: all zeros = {np.allclose(vector, 0)}")
-        print(f"  scalar[..., 2] (u): min={scalar[..., 2].min():.4f}, max={scalar[..., 2].max():.4f}")
-        print(f"  scalar[..., 3] (v): min={scalar[..., 3].min():.4f}, max={scalar[..., 3].max():.4f}")
-        print(f"  scalar_mask: {mask.astype(int).tolist()}")
+        print(f"\nData check (sample 0):")
+        print(f"  scalar shape: {scalar.shape}")
+        print(f"  scalar[..., 0] (u): min={scalar[..., 0].min():.4f}, max={scalar[..., 0].max():.4f}")
+        print(f"  scalar[..., 1] (v): min={scalar[..., 1].min():.4f}, max={scalar[..., 1].max():.4f}")
+        print(f"  scalar_indices: {indices.tolist()}")
 
-        # Check other scalar channels are zero
-        other_channels = [i for i in range(NUM_SCALAR_CHANNELS) if i not in [2, 3]]
-        other_zero = all(np.allclose(scalar[..., i], 0) for i in other_channels)
-        print(f"  Other scalar channels all zero: {other_zero}")
+        # Verify no vector dataset
+        has_vector = 'vector' in f_out
+        print(f"  vector dataset exists: {has_vector} (expected: False)")
 
     # Delete original file after successful conversion
     print(f"\nDeleting original file: {input_path}")
     os.remove(input_path)
     print("Original file deleted.")
+
+    print(f"\n{'='*60}")
+    print(f"Done! Output: {output_path}")
+    print(f"{'='*60}")
 
 
 def main():
