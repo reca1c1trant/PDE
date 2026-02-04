@@ -5,7 +5,7 @@ Supports multiple datasets with different formats:
 - diffusion-reaction: scalar only (concentration_u, concentration_v)
 - 2D_CFD: vector (Vx, Vy) + scalar (density, pressure)
 - SWE: scalar only (height)
-- NS_incom: vector (vx, vy) + scalar (passive_tracer), 512x512 -> crop to 128x128
+- NS_incom: vector (vx, vy) + scalar (passive_tracer), pre-split 128x128 patches
 
 Data Format (after preprocessing):
     dataset.hdf5
@@ -16,6 +16,10 @@ Data Format (after preprocessing):
 Output Format:
     data: [T, H, W, 18]      # 3 vector + 15 scalar (unified)
     channel_mask: [18]       # valid channel indicator
+
+Note on NS_incom:
+    Original 512x512 samples are pre-split into 128x128 patches (16 per original).
+    patches_per_original=16 ensures train/val split by original sample, not patch.
 """
 
 import h5py
@@ -46,6 +50,9 @@ class DatasetConfig:
     needs_crop: bool   # True for 512x512 datasets
     train_spatial_points: int  # number of spatial crop points for training
     val_spatial_points: int    # number of spatial crop points for validation
+    patches_per_original: int = 1  # For split datasets: group this many consecutive patches as one original sample
+    clips_ratio_offset: float = 0.0  # Offset from base clips_ratio (e.g., -0.05 for ns_incom)
+    val_time_interval: int = 5  # Time interval for validation clips
 
 
 # Scalar channel indices (from scalar_channel.csv)
@@ -136,7 +143,9 @@ class SingleDataset:
         self.split = split
         self.train_ratio = train_ratio
         self.seed = seed
-        self.clips_ratio = clips_ratio
+        # Apply per-dataset clips_ratio offset
+        self.clips_ratio = clips_ratio + config.clips_ratio_offset
+        self.val_time_interval = config.val_time_interval
 
         self.path = Path(config.path)
         self.needs_crop = config.needs_crop
@@ -176,17 +185,44 @@ class SingleDataset:
                    f"spatial={self.spatial_size}, max_start={self.max_start}")
 
     def _split_samples(self):
-        """Split samples into train/val sets."""
+        """Split samples into train/val sets.
+
+        If patches_per_original > 1, splits by original sample groups to avoid
+        data leakage (patches from same original sample stay together).
+        """
         rng = np.random.RandomState(self.seed)
-        indices = rng.permutation(self.n_samples)
-        split_idx = int(self.n_samples * self.train_ratio)
+        patches_per_original = self.config.patches_per_original
 
-        if self.split == 'train':
-            self.sample_indices = indices[:split_idx].tolist()
+        if patches_per_original > 1:
+            # Split by original sample groups
+            n_originals = self.n_samples // patches_per_original
+            original_indices = rng.permutation(n_originals)
+            split_idx = int(n_originals * self.train_ratio)
+
+            if self.split == 'train':
+                selected_originals = original_indices[:split_idx]
+            else:
+                selected_originals = original_indices[split_idx:]
+
+            # Expand to patch indices
+            self.sample_indices = []
+            for orig_idx in selected_originals:
+                start = orig_idx * patches_per_original
+                self.sample_indices.extend(range(start, start + patches_per_original))
+
+            logger.info(f"{self.config.name} ({self.split}): {len(selected_originals)} originals "
+                       f"-> {len(self.sample_indices)} patches")
         else:
-            self.sample_indices = indices[split_idx:].tolist()
+            # Standard split by individual samples
+            indices = rng.permutation(self.n_samples)
+            split_idx = int(self.n_samples * self.train_ratio)
 
-        logger.info(f"{self.config.name} ({self.split}): {len(self.sample_indices)} samples")
+            if self.split == 'train':
+                self.sample_indices = indices[:split_idx].tolist()
+            else:
+                self.sample_indices = indices[split_idx:].tolist()
+
+            logger.info(f"{self.config.name} ({self.split}): {len(self.sample_indices)} samples")
 
     def generate_clips(self, epoch: int = 0) -> List[Tuple[int, int, Optional[Tuple[int, int]]]]:
         """
@@ -250,12 +286,9 @@ class SingleDataset:
         if self.n_timesteps <= 30:
             # Short sequence (e.g., 2D_CFD): use all
             return list(range(self.max_start + 1))
-        elif self.needs_crop:
-            # NS_incom: interval of 10
-            return list(range(0, self.max_start + 1, 10))
         else:
-            # diffusion-reaction, SWE: interval of 5
-            return list(range(0, self.max_start + 1, 5))
+            # Use per-dataset validation interval
+            return list(range(0, self.max_start + 1, self.val_time_interval))
 
     def load_clip(
         self,
@@ -617,11 +650,13 @@ def create_pretrain_dataloaders(
         ),
         DatasetConfig(
             name='ns_incom',
-            path=str(data_dir / 'pretrained' / 'ns_incom_inhom_2d_512_merged.hdf5'),
-            spatial_size=512,
-            needs_crop=True,
-            train_spatial_points=11,
-            val_spatial_points=16,
+            path=str(data_dir / 'pretrained' / 'ns_incom_inhom_2d_128_split.hdf5'),
+            spatial_size=128,
+            needs_crop=False,
+            train_spatial_points=1,
+            val_spatial_points=1,
+            clips_ratio_offset=-0.05,  # 20% instead of 25%
+            val_time_interval=7,
         ),
     ]
 
