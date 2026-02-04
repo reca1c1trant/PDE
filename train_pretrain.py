@@ -191,14 +191,18 @@ def validate(model, val_loader, accelerator) -> tuple[float, dict]:
         avg_rmse: Average RMSE across all batches (in normalized space)
         per_dataset: Dict of {dataset_name: rmse}
     """
+    # Sync all ranks before validation
+    accelerator.wait_for_everyone()
+
     model.eval()
 
     total_rmse = torch.zeros(1, device=accelerator.device)
     num_batches = torch.zeros(1, device=accelerator.device)
 
-    # Per-dataset tracking
-    dataset_rmse = {}
-    dataset_count = {}
+    # Pre-define all dataset names to ensure consistent reduce across ranks
+    all_dataset_names = ['diffusion_reaction', '2d_cfd', 'swe', 'ns_incom']
+    dataset_rmse = {name: torch.zeros(1, device=accelerator.device) for name in all_dataset_names}
+    dataset_count = {name: torch.zeros(1, device=accelerator.device) for name in all_dataset_names}
 
     for batch in val_loader:
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
@@ -222,27 +226,31 @@ def validate(model, val_loader, accelerator) -> tuple[float, dict]:
 
         # Track per-dataset
         ds_name = dataset_names[0]
-        if ds_name not in dataset_rmse:
-            dataset_rmse[ds_name] = torch.zeros(1, device=accelerator.device)
-            dataset_count[ds_name] = torch.zeros(1, device=accelerator.device)
-        dataset_rmse[ds_name] += rmse.detach()
-        dataset_count[ds_name] += 1
+        if ds_name in dataset_rmse:
+            dataset_rmse[ds_name] += rmse.detach()
+            dataset_count[ds_name] += 1
+
+    # Sync before reduce to ensure all ranks finished their loops
+    accelerator.wait_for_everyone()
 
     # Reduce across GPUs
-    accelerator.wait_for_everyone()
     total_rmse = accelerator.reduce(total_rmse, reduction='sum')
     num_batches = accelerator.reduce(num_batches, reduction='sum')
 
-    for ds_name in dataset_rmse:
+    # Reduce per-dataset metrics (all ranks have same keys now)
+    for ds_name in all_dataset_names:
         dataset_rmse[ds_name] = accelerator.reduce(dataset_rmse[ds_name], reduction='sum')
         dataset_count[ds_name] = accelerator.reduce(dataset_count[ds_name], reduction='sum')
+
+    # Sync after reduce
+    accelerator.wait_for_everyone()
 
     model.train()
 
     avg_rmse = (total_rmse / num_batches).item() if num_batches.item() > 0 else 0
 
     per_dataset = {}
-    for ds_name in dataset_rmse:
+    for ds_name in all_dataset_names:
         count = dataset_count[ds_name].item()
         if count > 0:
             per_dataset[ds_name] = dataset_rmse[ds_name].item() / count
