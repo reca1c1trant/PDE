@@ -513,14 +513,31 @@ class PretrainSampler(Sampler):
 
         self._all_batches = batches
 
-        # Distribute across ranks
+        # Distribute across ranks with padding to ensure ALL ranks get EQUAL batches
+        # This is critical for DDP - unequal batch counts cause NCCL collective timeouts
         total_batches = len(batches)
-        self.num_batches_per_rank = total_batches // self.num_replicas
-        usable = self.num_batches_per_rank * self.num_replicas
-        self._all_batches = self._all_batches[:usable]
+
+        if total_batches == 0:
+            self.num_batches_per_rank = 0
+            self._all_batches = []
+            if self.rank == 0:
+                logger.warning("PretrainSampler: No batches generated!")
+            return
+
+        # Pad to make evenly divisible by num_replicas
+        remainder = total_batches % self.num_replicas
+        padding_count = 0
+        if remainder > 0:
+            need = self.num_replicas - remainder
+            for i in range(need):
+                # Repeat batches cyclically for padding
+                self._all_batches.append(batches[i % len(batches)])
+            padding_count = need
+
+        self.num_batches_per_rank = len(self._all_batches) // self.num_replicas
 
         if self.rank == 0:
-            logger.info(f"PretrainSampler: {len(self._all_batches)} batches, "
+            logger.info(f"PretrainSampler: {total_batches} batches (+{padding_count} padding), "
                        f"{self.num_batches_per_rank}/rank, batch_size={self.batch_size}")
 
     def set_epoch(self, epoch: int):
