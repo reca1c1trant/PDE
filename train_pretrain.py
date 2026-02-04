@@ -191,8 +191,20 @@ def validate(model, val_loader, accelerator) -> tuple[float, dict]:
         avg_rmse: Average RMSE across all batches (in normalized space)
         per_dataset: Dict of {dataset_name: rmse}
     """
+    rank = accelerator.process_index
+    world_size = accelerator.num_processes
+
+    # Debug: print expected batch count from sampler
+    if hasattr(val_loader, 'batch_sampler'):
+        sampler = val_loader.batch_sampler
+        print(f"[Rank {rank}] val_loader.batch_sampler: len={len(sampler)}, "
+              f"num_batches_per_rank={getattr(sampler, 'num_batches_per_rank', 'N/A')}, "
+              f"total_batches={len(getattr(sampler, '_all_batches', []))}")
+
     # Sync all ranks before validation
+    print(f"[Rank {rank}] Before wait_for_everyone (pre-validation)")
     accelerator.wait_for_everyone()
+    print(f"[Rank {rank}] After wait_for_everyone (pre-validation)")
 
     model.eval()
 
@@ -204,6 +216,7 @@ def validate(model, val_loader, accelerator) -> tuple[float, dict]:
     dataset_rmse = {name: torch.zeros(1, device=accelerator.device) for name in all_dataset_names}
     dataset_count = {name: torch.zeros(1, device=accelerator.device) for name in all_dataset_names}
 
+    batch_count = 0
     for batch in val_loader:
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
@@ -230,20 +243,38 @@ def validate(model, val_loader, accelerator) -> tuple[float, dict]:
             dataset_rmse[ds_name] += rmse.detach()
             dataset_count[ds_name] += 1
 
+        batch_count += 1
+
+    # Debug: print actual batch count
+    print(f"[Rank {rank}] Finished validation loop, batch_count={batch_count}")
+
     # Sync before reduce to ensure all ranks finished their loops
+    print(f"[Rank {rank}] Before wait_for_everyone (pre-reduce)")
     accelerator.wait_for_everyone()
+    print(f"[Rank {rank}] After wait_for_everyone (pre-reduce)")
 
     # Reduce across GPUs
+    print(f"[Rank {rank}] Before reduce (total_rmse)")
     total_rmse = accelerator.reduce(total_rmse, reduction='sum')
+    print(f"[Rank {rank}] After reduce (total_rmse)")
+
+    print(f"[Rank {rank}] Before reduce (num_batches)")
     num_batches = accelerator.reduce(num_batches, reduction='sum')
+    print(f"[Rank {rank}] After reduce (num_batches)")
 
     # Reduce per-dataset metrics (all ranks have same keys now)
     for ds_name in all_dataset_names:
+        print(f"[Rank {rank}] Before reduce ({ds_name}_rmse)")
         dataset_rmse[ds_name] = accelerator.reduce(dataset_rmse[ds_name], reduction='sum')
+        print(f"[Rank {rank}] Before reduce ({ds_name}_count)")
         dataset_count[ds_name] = accelerator.reduce(dataset_count[ds_name], reduction='sum')
 
+    print(f"[Rank {rank}] All reduces done")
+
     # Sync after reduce
+    print(f"[Rank {rank}] Before wait_for_everyone (post-reduce)")
     accelerator.wait_for_everyone()
+    print(f"[Rank {rank}] After wait_for_everyone (post-reduce)")
 
     model.train()
 
@@ -461,8 +492,11 @@ def main():
 
                 # Validate
                 if global_step % eval_interval == 0:
+                    print(f"[Rank {accelerator.process_index}] Entering validation at step {global_step}")
                     accelerator.wait_for_everyone()
+                    print(f"[Rank {accelerator.process_index}] Calling validate()")
                     val_rmse, per_dataset = validate(model, val_loader, accelerator)
+                    print(f"[Rank {accelerator.process_index}] validate() returned")
 
                     # Log validation metrics
                     log_dict = {'val/rmse': val_rmse}
