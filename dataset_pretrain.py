@@ -511,8 +511,6 @@ class PretrainSampler(Sampler):
                     if len(batch) > 0:
                         batches.append(batch)
 
-        self._all_batches = batches
-
         # Distribute across ranks with padding to ensure ALL ranks get EQUAL batches
         # This is critical for DDP - unequal batch counts cause NCCL collective timeouts
         total_batches = len(batches)
@@ -524,14 +522,17 @@ class PretrainSampler(Sampler):
                 logger.warning("PretrainSampler: No batches generated!")
             return
 
+        # IMPORTANT: Create a copy to avoid modifying original list during padding
+        self._all_batches = list(batches)
+
         # Pad to make evenly divisible by num_replicas
         remainder = total_batches % self.num_replicas
         padding_count = 0
         if remainder > 0:
             need = self.num_replicas - remainder
             for i in range(need):
-                # Repeat batches cyclically for padding
-                self._all_batches.append(batches[i % len(batches)])
+                # Repeat batches cyclically for padding (use original batches list)
+                self._all_batches.append(batches[i % total_batches])
             padding_count = need
 
         self.num_batches_per_rank = len(self._all_batches) // self.num_replicas
