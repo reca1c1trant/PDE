@@ -47,7 +47,7 @@ model:
 
 # Training
 training:
-  max_epochs: 25
+  max_epochs: 30
   warmup_steps: 500
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
@@ -58,7 +58,7 @@ training:
   mixed_precision: "no"  # Use bf16 for pretraining
   gradient_accumulation_steps: 1
 
-  eval_interval: 2
+  eval_interval: 250
   early_stopping_patience: 50
 
 # Checkpoint (optional: load from converted checkpoint)

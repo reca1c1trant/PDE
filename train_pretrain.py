@@ -13,7 +13,7 @@ Usage:
     python train_pretrain.py --config configs/pretrain.yaml
 
     # 8 GPUs distributed
-    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nproc_per_node=8 train_pretrain.py --config configs/pretrain.yaml
+    CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 torchrun --nproc_per_node=7 train_pretrain.py --config configs/pretrain.yaml
 
     # Resume from checkpoint
     python train_pretrain.py --config configs/pretrain.yaml --resume checkpoints_pretrain/latest.pt
