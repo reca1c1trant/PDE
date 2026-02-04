@@ -217,16 +217,21 @@ def validate(model, val_loader, accelerator) -> tuple[float, dict]:
     dataset_count = {name: torch.zeros(1, device=accelerator.device) for name in all_dataset_names}
 
     batch_count = 0
-    for batch in val_loader:
+    for i, batch in enumerate(val_loader):
+        print(f"[Rank {rank}] Batch {i}/{len(val_loader)} loaded, dataset={batch['dataset_names'][0]}")
+
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
         dataset_names = batch['dataset_names']
+
+        print(f"[Rank {rank}] Batch {i} moved to GPU")
 
         input_data = data[:, :-1]  # [B, 16, H, W, 18]
         target_data = data[:, 1:]   # [B, 16, H, W, 18]
 
         # Get normalized output and normalization params
         output_norm, mean, std = model(input_data, return_normalized=True)
+        print(f"[Rank {rank}] Batch {i} forward done")
 
         # Normalize target with same mean/std
         target_norm = (target_data - mean) / std
