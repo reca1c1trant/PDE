@@ -2,7 +2,7 @@
 # 18 channels: 3 vector + 15 scalar (expanded from 6)
 # Datasets: diffusion-reaction, 2D_CFD, SWE, NS_incom
 
-model_name: "pde_pretrain"
+model_name: "pde_pretrain_scratch"
 
 # Dataset (for pretrain, path points to root containing pretrained/ folder)
 dataset:
@@ -63,12 +63,12 @@ training:
 
 # Checkpoint (optional: load from converted checkpoint)
 checkpoint:
-  resume_from: checkpoints_pretrain/origin.pt  # Set to path like "checkpoints/converted.pt" to resume
+  resume_from: null  # Set to path like "checkpoints/converted.pt" to resume
   load_transformer_only: false  # If true, only load transformer weights
 
 # Logging
 logging:
   project: "pde-pretrain"
   entity: "reca1c1trant-ntu"
-  save_dir: "./checkpoints_pretrain"
+  save_dir: "./checkpoints_pretrain_scratch"
   log_interval: 10
