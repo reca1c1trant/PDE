@@ -2,7 +2,7 @@
 # Each dataset is evaluated independently with its own physical domain parameters
 
 # Checkpoint to evaluate
-checkpoint: "./checkpoints_pretrain/best.pt"
+checkpoint: "./checkpoints_pretrain_scratch/best.pt"
 
 # Model config (must match training)
 model_config: "./configs/pretrain.yaml"

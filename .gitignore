@@ -242,3 +242,5 @@ train_PINN_transient.py
 vis_results/
 
 pdf/
+
+eval_results/

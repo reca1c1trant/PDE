@@ -47,7 +47,7 @@ model:
 
 # Training
 training:
-  max_epochs: 30
+  max_epochs: 20
   warmup_steps: 500
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
@@ -63,7 +63,7 @@ training:
 
 # Checkpoint (optional: load from converted checkpoint)
 checkpoint:
-  resume_from: checkpoints_pretrain/origin.pt  # Set to path like "checkpoints/converted.pt" to resume
+  resume_from: checkpoints_pretrain_scratch/best.pt  # Set to path like "checkpoints/converted.pt" to resume
   load_transformer_only: false  # If true, only load transformer weights
 
 # Logging
