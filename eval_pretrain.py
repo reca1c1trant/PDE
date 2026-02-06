@@ -353,6 +353,8 @@ def evaluate_dataset(
     all_preds = []
     all_targets = []
     channel_mask_ref = None
+    channel_mask_nonzero = None  # Filter for non-zero channels (e.g., exclude Vz=0)
+    filtered_channel_indices = None  # Track which original channels are kept
 
     iterator = tqdm(dataloader, desc=f"Evaluating {dataset_config.name}",
                     disable=not accelerator.is_main_process)
@@ -377,6 +379,19 @@ def evaluate_dataset(
         valid_mask = channel_mask[0].bool()
         pred_valid = pred_last[..., valid_mask].float()
         target_valid = target_last[..., valid_mask].float()
+
+        # Additionally filter out channels that are all zeros in target
+        # This handles cases like Vz=0 in 2D simulations
+        if channel_mask_nonzero is None:
+            # Check which channels have non-zero values
+            target_norms = target_valid.abs().mean(dim=(0, 1, 2))  # [C_valid]
+            channel_mask_nonzero = target_norms > 1e-10  # True for non-zero channels
+            # Track which channels are kept for naming
+            valid_indices = torch.where(valid_mask)[0]
+            filtered_channel_indices = valid_indices[channel_mask_nonzero].cpu().tolist()
+
+        pred_valid = pred_valid[..., channel_mask_nonzero]
+        target_valid = target_valid[..., channel_mask_nonzero]
 
         all_preds.append(pred_valid.cpu())
         all_targets.append(target_valid.cpu())
@@ -453,7 +468,21 @@ def evaluate_dataset(
 
         # Per-channel nRMSE
         C_valid = all_preds_gathered.shape[-1]
-        channel_names = get_channel_names(dataset_config)
+        channel_names_config = get_channel_names(dataset_config)
+
+        # Map filtered channel indices to names
+        # filtered_channel_indices contains the original 18-channel indices that were kept
+        # We need to map these to user-friendly names
+        vector_names = ['Vx', 'Vy', 'Vz']
+        scalar_names_map = {v: k for k, v in SCALAR_INDICES.items()}
+
+        def get_channel_name(global_idx: int) -> str:
+            if global_idx < NUM_VECTOR_CHANNELS:
+                return vector_names[global_idx]
+            else:
+                scalar_idx = global_idx - NUM_VECTOR_CHANNELS
+                return scalar_names_map.get(scalar_idx, f"scalar_{scalar_idx}")
+
         per_channel_nRMSE = {}
 
         for ch_idx in range(C_valid):
@@ -477,7 +506,14 @@ def evaluate_dataset(
                 ch_nRMSE_sum += ch_nRMSE.item()
                 ch_batches += 1
 
-            ch_name = channel_names[ch_idx] if ch_idx < len(channel_names) else f"ch_{ch_idx}"
+            # Get channel name from filtered indices
+            if filtered_channel_indices is not None and ch_idx < len(filtered_channel_indices):
+                global_idx = filtered_channel_indices[ch_idx]
+                ch_name = get_channel_name(global_idx)
+            elif ch_idx < len(channel_names_config):
+                ch_name = channel_names_config[ch_idx]
+            else:
+                ch_name = f"ch_{ch_idx}"
             per_channel_nRMSE[ch_name] = ch_nRMSE_sum / ch_batches
 
         results['per_channel_nRMSE'] = per_channel_nRMSE
@@ -537,8 +573,19 @@ def visualize_dataset(
     rng = np.random.RandomState(eval_config.get('seed', 42) + 123)
     vis_indices = rng.choice(len(dataset), num_vis, replace=False)
 
-    channel_names = get_channel_names(dataset_config)
+    # Channel name mapping
+    vector_names = ['Vx', 'Vy', 'Vz']
+    scalar_names_map = {v: k for k, v in SCALAR_INDICES.items()}
+
+    def get_channel_name(global_idx: int) -> str:
+        if global_idx < NUM_VECTOR_CHANNELS:
+            return vector_names[global_idx]
+        else:
+            scalar_idx = global_idx - NUM_VECTOR_CHANNELS
+            return scalar_names_map.get(scalar_idx, f"scalar_{scalar_idx}")
+
     results_list = []
+    filtered_channel_names = None
 
     for idx in vis_indices:
         sample = dataset[idx]
@@ -555,8 +602,21 @@ def visualize_dataset(
         target_last = target_data[0, -1].float().cpu()
 
         valid_mask = channel_mask.bool()
-        pred_valid = pred_last[..., valid_mask].numpy()
-        target_valid = target_last[..., valid_mask].numpy()
+        pred_valid = pred_last[..., valid_mask]
+        target_valid = target_last[..., valid_mask]
+
+        # Filter out all-zero channels (e.g., Vz in 2D)
+        target_norms = target_valid.abs().mean(dim=(0, 1))  # [C_valid]
+        nonzero_mask = target_norms > 1e-10
+
+        pred_valid = pred_valid[..., nonzero_mask].numpy()
+        target_valid = target_valid[..., nonzero_mask].numpy()
+
+        # Get filtered channel names (only once)
+        if filtered_channel_names is None:
+            valid_indices = torch.where(valid_mask)[0]
+            kept_indices = valid_indices[nonzero_mask].tolist()
+            filtered_channel_names = [get_channel_name(i) for i in kept_indices]
 
         results_list.append({
             'pred': pred_valid,
@@ -567,6 +627,7 @@ def visualize_dataset(
 
     # Plot: 3 columns per channel (GT, Pred, Error)
     n_samples = len(results_list)
+    channel_names = filtered_channel_names if filtered_channel_names else []
     n_channels = min(len(channel_names), results_list[0]['pred'].shape[-1]) if results_list else 0
 
     if n_channels == 0:

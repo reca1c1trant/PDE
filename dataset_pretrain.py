@@ -53,6 +53,7 @@ class DatasetConfig:
     patches_per_original: int = 1  # For split datasets: group this many consecutive patches as one original sample
     clips_ratio_offset: float = 0.0  # Offset from base clips_ratio (e.g., -0.05 for ns_incom)
     val_time_interval: int = 5  # Time interval for validation clips
+    vector_dim: int = 0  # Actual vector dimensions (0=no vector, 2=2D, 3=3D)
 
 
 # Scalar channel indices (from scalar_channel.csv)
@@ -344,9 +345,11 @@ class SingleDataset:
         data = np.concatenate([vector, scalar_full], axis=-1).astype(np.float32)
 
         # Create channel mask
+        # Only mark actually valid channels (not padded Vz for 2D data)
         channel_mask = np.zeros(TOTAL_CHANNELS, dtype=np.float32)
-        if self.has_vector:
-            channel_mask[:NUM_VECTOR_CHANNELS] = 1.0  # vector channels
+        if self.has_vector and self.config.vector_dim > 0:
+            # Only mark actual vector dimensions (e.g., 2 for 2D data, not 3)
+            channel_mask[:self.config.vector_dim] = 1.0
         for idx in scalar_indices:
             channel_mask[NUM_VECTOR_CHANNELS + idx] = 1.0  # scalar channels
 
@@ -623,6 +626,7 @@ def create_pretrain_dataloaders(
     data_dir = Path(data_dir)
 
     # Define dataset configurations
+    # vector_dim: 0=no vector, 2=2D velocity (Vx,Vy), 3=3D velocity (Vx,Vy,Vz)
     configs = [
         DatasetConfig(
             name='diffusion_reaction',
@@ -631,6 +635,7 @@ def create_pretrain_dataloaders(
             needs_crop=False,
             train_spatial_points=1,
             val_spatial_points=1,
+            vector_dim=0,  # No vector field, only scalar (concentration_u, concentration_v)
         ),
         DatasetConfig(
             name='2d_cfd',
@@ -639,6 +644,7 @@ def create_pretrain_dataloaders(
             needs_crop=False,
             train_spatial_points=1,
             val_spatial_points=1,
+            vector_dim=2,  # 2D velocity (Vx, Vy), Vz is padded zero
         ),
         DatasetConfig(
             name='swe',
@@ -647,6 +653,7 @@ def create_pretrain_dataloaders(
             needs_crop=False,
             train_spatial_points=1,
             val_spatial_points=1,
+            vector_dim=0,  # No vector field, only scalar (height)
         ),
         DatasetConfig(
             name='ns_incom',
@@ -657,6 +664,7 @@ def create_pretrain_dataloaders(
             val_spatial_points=1,
             clips_ratio_offset=-0.05,  # 20% instead of 25%
             val_time_interval=7,
+            vector_dim=2,  # 2D velocity (vx, vy), vz is padded zero
         ),
     ]
 
