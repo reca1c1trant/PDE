@@ -10,6 +10,7 @@ model_config: "./configs/pretrain.yaml"
 # Evaluation parameters
 eval:
   batch_size: 8           # Batch size per GPU
+  input_steps: 16         # Number of input timesteps (1-16), model predicts next step
   num_samples: null       # Number of samples to evaluate (null = all validation samples)
   seed: 42                # Random seed for reproducibility
   num_vis_samples: 3      # Number of samples to visualize per dataset

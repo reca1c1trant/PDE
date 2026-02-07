@@ -1,0 +1,56 @@
+# Autoregressive Evaluation Configuration
+# Performs rolling window prediction and evaluates RSE over multiple steps
+
+# Checkpoint to evaluate
+checkpoint: "./checkpoints_pretrain_scratch/best.pt"
+
+# Model config (must match training)
+model_config: "./configs/pretrain.yaml"
+
+# Evaluation parameters
+eval:
+  batch_size: 4           # Smaller batch size due to rollout memory
+  input_steps: 16         # Number of initial input timesteps (1-16)
+  rollout_steps: 10       # Number of autoregressive prediction steps
+  max_window_size: 16     # Maximum sliding window size
+  seed: 42                # Random seed
+  num_vis_samples: 2      # Number of samples to visualize per dataset
+
+# Output directory for visualizations
+output_dir: "./eval_ar_results"
+
+# Datasets to evaluate
+datasets:
+  - name: diffusion_reaction
+    path: "./data/pretrained/2D_diff-react_NA_NA.hdf5"
+    Lx: 2.0
+    Ly: 2.0
+    channels:
+      - concentration_u
+      - concentration_v
+
+  - name: 2d_cfd
+    path: "./data/pretrained/2D_CFD_128_merged.hdf5"
+    Lx: 1.0
+    Ly: 1.0
+    channels:
+      - Vx
+      - Vy
+      - density
+      - pressure
+
+  - name: swe
+    path: "./data/pretrained/2D_rdb_NA_NA.h5"
+    Lx: 5.0
+    Ly: 5.0
+    channels:
+      - height
+
+  - name: ns_incom
+    path: "./data/pretrained/ns_incom_inhom_2d_128_split.hdf5"
+    Lx: 1.0
+    Ly: 1.0
+    channels:
+      - vx
+      - vy
+      - passive_tracer

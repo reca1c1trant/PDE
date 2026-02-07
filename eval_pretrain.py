@@ -51,7 +51,8 @@ if os.environ.get('LOCAL_RANK', '0') != '0':
 NUM_VECTOR_CHANNELS = 3
 NUM_SCALAR_CHANNELS = 15
 TOTAL_CHANNELS = NUM_VECTOR_CHANNELS + NUM_SCALAR_CHANNELS  # 18
-TEMPORAL_LENGTH = 17
+DEFAULT_TEMPORAL_LENGTH = 17  # Default: 16 input + 1 target
+DEFAULT_INPUT_STEPS = 16
 
 # Scalar channel indices
 SCALAR_INDICES = {
@@ -96,6 +97,7 @@ class SingleEvalDataset(Dataset):
         train_ratio: float = 0.9,
         seed: int = 42,
         sample_indices: Optional[List[int]] = None,  # Override sample indices for subset evaluation
+        input_steps: int = DEFAULT_INPUT_STEPS,  # Number of input timesteps (1-16)
     ):
         self.config = config
         self.path = Path(config.path)
@@ -103,6 +105,8 @@ class SingleEvalDataset(Dataset):
         self.train_ratio = train_ratio
         self.seed = seed
         self.override_indices = sample_indices
+        self.input_steps = input_steps
+        self.temporal_length = input_steps + 1  # input + 1 target
 
         self._load_metadata()
         self._split_samples()
@@ -130,7 +134,7 @@ class SingleEvalDataset(Dataset):
             else:
                 raise ValueError(f"No data found in {self.path}")
 
-        self.max_start = self.n_timesteps - TEMPORAL_LENGTH
+        self.max_start = self.n_timesteps - self.temporal_length
 
     def _split_samples(self):
         """Split samples into train/val sets."""
@@ -153,7 +157,7 @@ class SingleEvalDataset(Dataset):
         self.clips = []
         for sample_idx in self.sample_indices:
             if self.max_start <= 0:
-                if self.n_timesteps >= TEMPORAL_LENGTH:
+                if self.n_timesteps >= self.temporal_length:
                     self.clips.append((sample_idx, 0))
             else:
                 # For validation, sample every 5 timesteps
@@ -165,13 +169,13 @@ class SingleEvalDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         sample_idx, start_t = self.clips[idx]
-        end_t = start_t + TEMPORAL_LENGTH
+        end_t = start_t + self.temporal_length
 
         with h5py.File(self.path, 'r') as f:
             if self.has_vector:
                 vector = f['vector'][sample_idx, start_t:end_t]
             else:
-                T = TEMPORAL_LENGTH
+                T = self.temporal_length
                 H = W = self.spatial_size
                 vector = np.zeros((T, H, W, NUM_VECTOR_CHANNELS), dtype=np.float32)
 
@@ -337,6 +341,9 @@ def evaluate_dataset(
         print(f"Path: {dataset_config.path}")
         print(f"Domain: Lx={dataset_config.Lx}, Ly={dataset_config.Ly}")
 
+    # Get input_steps from config (default 16)
+    input_steps = eval_config.get('input_steps', DEFAULT_INPUT_STEPS)
+
     # Create dataset and dataloader
     dataset = SingleEvalDataset(
         config=dataset_config,
@@ -344,6 +351,7 @@ def evaluate_dataset(
         train_ratio=0.9,
         seed=eval_config.get('seed', 42),
         sample_indices=sample_indices,
+        input_steps=input_steps,
     )
 
     batch_size = eval_config.get('batch_size', 8)
@@ -364,6 +372,7 @@ def evaluate_dataset(
 
     if accelerator.is_main_process:
         print(f"Samples: {len(dataset.sample_indices)} | Clips: {len(dataset)} | Batches/rank: {len(sampler)}")
+        print(f"Input steps: {input_steps} | Temporal length: {input_steps + 1}")
 
     # Collect predictions
     all_preds = []
@@ -379,8 +388,9 @@ def evaluate_dataset(
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
-        input_data = data[:, :-1]   # [B, 16, H, W, 18]
-        target_data = data[:, 1:]   # [B, 16, H, W, 18]
+        # input: t[0:input_steps], target: t[1:input_steps+1]
+        input_data = data[:, :-1]   # [B, input_steps, H, W, 18]
+        target_data = data[:, 1:]   # [B, input_steps, H, W, 18]
 
         output = model(input_data)  # [B, 16, H, W, 18]
 
@@ -580,11 +590,14 @@ def visualize_dataset(
     """
     print(f"\nGenerating visualization for {dataset_config.name}...")
 
+    input_steps = eval_config.get('input_steps', DEFAULT_INPUT_STEPS)
+
     dataset = SingleEvalDataset(
         config=dataset_config,
         split='val',
         train_ratio=0.9,
         seed=eval_config.get('seed', 42),
+        input_steps=input_steps,
     )
 
     num_vis = eval_config.get('num_vis_samples', 3)
@@ -741,12 +754,15 @@ def main():
 
     # Load model
     checkpoint_path = config['checkpoint']
+    input_steps = config.get('eval', {}).get('input_steps', DEFAULT_INPUT_STEPS)
+
     if accelerator.is_main_process:
         print(f"\n{'='*70}")
         print("PDE Foundation Model Evaluation")
         print(f"{'='*70}")
         print(f"Checkpoint: {checkpoint_path}")
         print(f"Model config: {model_config_path}")
+        print(f"Input steps: {input_steps}")
         print(f"Device: {accelerator.device}")
         print(f"Num processes: {accelerator.num_processes}")
 
