@@ -306,12 +306,16 @@ def main():
     num_workers = config['dataloader']['num_workers']
     seed = config['dataset']['seed']
 
+    # Get dataset-specific overrides from config (e.g., clips_per_epoch)
+    dataset_overrides = config.get('dataset', {}).get('overrides', {})
+
     train_loader, val_loader, train_sampler, val_sampler = create_pretrain_dataloaders(
         data_dir=data_dir,
         batch_size=batch_size,
         num_workers=num_workers,
         pin_memory=config['dataloader']['pin_memory'],
         seed=seed,
+        dataset_overrides=dataset_overrides,
     )
 
     # Calculate total steps

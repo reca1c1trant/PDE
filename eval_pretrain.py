@@ -16,7 +16,7 @@ Usage:
     python eval_pretrain.py --config configs/eval_pretrain.yaml
 
     # Multi-GPU (recommended for faster evaluation)
-    torchrun --nproc_per_node=8 eval_pretrain.py --config configs/eval_pretrain.yaml
+    torchrun --nproc_per_node=4 eval_pretrain.py --config configs/eval_pretrain.yaml
 """
 
 import os
@@ -95,12 +95,14 @@ class SingleEvalDataset(Dataset):
         split: str = 'val',
         train_ratio: float = 0.9,
         seed: int = 42,
+        sample_indices: Optional[List[int]] = None,  # Override sample indices for subset evaluation
     ):
         self.config = config
         self.path = Path(config.path)
         self.split = split
         self.train_ratio = train_ratio
         self.seed = seed
+        self.override_indices = sample_indices
 
         self._load_metadata()
         self._split_samples()
@@ -132,6 +134,11 @@ class SingleEvalDataset(Dataset):
 
     def _split_samples(self):
         """Split samples into train/val sets."""
+        # If override indices provided, use them directly
+        if self.override_indices is not None:
+            self.sample_indices = self.override_indices
+            return
+
         rng = np.random.RandomState(self.seed)
         indices = rng.permutation(self.n_samples)
         split_idx = int(self.n_samples * self.train_ratio)
@@ -308,16 +315,24 @@ def evaluate_dataset(
     dataset_config: EvalDatasetConfig,
     eval_config: dict,
     accelerator: Accelerator,
+    sample_indices: Optional[List[int]] = None,
+    subset_name: Optional[str] = None,
 ) -> Dict:
     """
-    Evaluate model on a single dataset.
+    Evaluate model on a single dataset or subset.
+
+    Args:
+        sample_indices: If provided, only evaluate on these sample indices
+        subset_name: If provided, use this name instead of dataset_config.name
 
     Returns:
         Dict with all 8 metrics and per-channel nRMSE
     """
+    eval_name = subset_name or dataset_config.name
+
     if accelerator.is_main_process:
         print(f"\n{'='*70}")
-        print(f"Evaluating: {dataset_config.name}")
+        print(f"Evaluating: {eval_name}")
         print(f"{'='*70}")
         print(f"Path: {dataset_config.path}")
         print(f"Domain: Lx={dataset_config.Lx}, Ly={dataset_config.Ly}")
@@ -328,6 +343,7 @@ def evaluate_dataset(
         split='val',
         train_ratio=0.9,
         seed=eval_config.get('seed', 42),
+        sample_indices=sample_indices,
     )
 
     batch_size = eval_config.get('batch_size', 8)
@@ -423,13 +439,14 @@ def evaluate_dataset(
         total_Max = 0.0
         total_BD = 0.0
         total_F = None
+        total_MPPnRMSE = 0.0
         num_batches = 0
 
         for i in range(0, N, metrics_batch_size):
             batch_preds = all_preds_gathered[i:i+metrics_batch_size]
             batch_targets = all_targets_gathered[i:i+metrics_batch_size]
 
-            err_RMSE, err_nRMSE, err_CSV, err_Max, err_BD, err_F = metric_func(
+            err_RMSE, err_nRMSE, err_CSV, err_Max, err_BD, err_F, err_MPPnRMSE = metric_func(
                 batch_preds.float(),
                 batch_targets.float(),
                 if_mean=True,
@@ -446,15 +463,17 @@ def evaluate_dataset(
             total_CSV += err_CSV.item()
             total_Max = max(total_Max, err_Max.item())
             total_BD += err_BD.item()
+            total_MPPnRMSE += err_MPPnRMSE.item()
             if total_F is None:
                 total_F = err_F.cpu().clone()
             else:
                 total_F += err_F.cpu()
+
             num_batches += 1
 
         # Average over batches
         results = {
-            'name': dataset_config.name,
+            'name': eval_name,
             'num_samples': N,
             'RMSE': total_RMSE / num_batches,
             'nRMSE': total_nRMSE / num_batches,
@@ -464,6 +483,7 @@ def evaluate_dataset(
             'F_low': (total_F[0] / num_batches).item(),
             'F_mid': (total_F[1] / num_batches).item(),
             'F_high': (total_F[2] / num_batches).item(),
+            'MPPnRMSE': total_MPPnRMSE / num_batches,
         }
 
         # Per-channel nRMSE
@@ -492,7 +512,7 @@ def evaluate_dataset(
                 batch_preds = all_preds_gathered[i:i+metrics_batch_size, ..., ch_idx:ch_idx+1]
                 batch_targets = all_targets_gathered[i:i+metrics_batch_size, ..., ch_idx:ch_idx+1]
 
-                _, ch_nRMSE, _, _, _, _ = metric_func(
+                _, ch_nRMSE, _, _, _, _, _ = metric_func(
                     batch_preds.float(),
                     batch_targets.float(),
                     if_mean=True,
@@ -520,12 +540,13 @@ def evaluate_dataset(
 
         # Print results
         print(f"\n{'-'*50}")
-        print(f"Results for {dataset_config.name}:")
+        print(f"Results for {eval_name}:")
         print(f"{'-'*50}")
         print(f"{'Metric':<25} {'Value':<15}")
         print(f"{'-'*50}")
         print(f"{'RMSE':<25} {results['RMSE']:.6e}")
         print(f"{'nRMSE':<25} {results['nRMSE']:.6e}")
+        print(f"{'MPPnRMSE':<25} {results['MPPnRMSE']:.6e}")
         print(f"{'Max Error':<25} {results['Max']:.6e}")
         print(f"{'Conserved Vars RMSE':<25} {results['CSV']:.6e}")
         print(f"{'Boundary RMSE':<25} {results['BD']:.6e}")
@@ -760,9 +781,44 @@ def main():
     # Evaluate each dataset
     all_results = []
     for ds_config in dataset_configs:
-        results = evaluate_dataset(model, ds_config, eval_config, accelerator)
-        if accelerator.is_main_process and results:
-            all_results.append(results)
+        # Special handling for 2D CFD: split M0.1 and M1.0
+        if ds_config.name == '2d_cfd':
+            # Get val indices using same seed as normal evaluation
+            rng = np.random.RandomState(eval_config.get('seed', 42))
+            n_samples = 4000  # 4 files × 1000 samples
+            indices = rng.permutation(n_samples)
+            val_indices = indices[int(n_samples * 0.9):].tolist()
+
+            # Split by Mach number: M0.1 = samples 0-1999, M1.0 = samples 2000-3999
+            m01_indices = [i for i in val_indices if i < 2000]
+            m10_indices = [i for i in val_indices if i >= 2000]
+
+            if accelerator.is_main_process:
+                print(f"\n2D CFD split: M0.1={len(m01_indices)} val samples, M1.0={len(m10_indices)} val samples")
+
+            # Evaluate M0.1
+            if m01_indices:
+                results = evaluate_dataset(model, ds_config, eval_config, accelerator,
+                                          sample_indices=m01_indices, subset_name='2d_cfd_M0.1')
+                if accelerator.is_main_process and results:
+                    all_results.append(results)
+
+            # Evaluate M1.0
+            if m10_indices:
+                results = evaluate_dataset(model, ds_config, eval_config, accelerator,
+                                          sample_indices=m10_indices, subset_name='2d_cfd_M1.0')
+                if accelerator.is_main_process and results:
+                    all_results.append(results)
+
+            # Also evaluate combined (all)
+            results = evaluate_dataset(model, ds_config, eval_config, accelerator,
+                                      subset_name='2d_cfd_all')
+            if accelerator.is_main_process and results:
+                all_results.append(results)
+        else:
+            results = evaluate_dataset(model, ds_config, eval_config, accelerator)
+            if accelerator.is_main_process and results:
+                all_results.append(results)
 
     # Print summary
     if accelerator.is_main_process and all_results:
@@ -774,21 +830,22 @@ def main():
         print()
 
         # Main metrics table
-        header = f"{'Dataset':<20} {'nRMSE':<12} {'RMSE':<12} {'Max':<12} {'CSV':<12} {'BD':<12} {'Samples':<8}"
+        header = f"{'Dataset':<20} {'nRMSE':<12} {'MPPnRMSE':<12} {'RMSE':<12} {'Max':<12} {'CSV':<12} {'BD':<12} {'Samples':<8}"
         print(header)
         print("-" * 100)
         for r in all_results:
-            row = f"{r['name']:<20} {r['nRMSE']:<12.4e} {r['RMSE']:<12.4e} {r['Max']:<12.4e} {r['CSV']:<12.4e} {r['BD']:<12.4e} {r['num_samples']:<8}"
+            row = f"{r['name']:<20} {r['nRMSE']:<12.4e} {r['MPPnRMSE']:<12.4e} {r['RMSE']:<12.4e} {r['Max']:<12.4e} {r['CSV']:<12.4e} {r['BD']:<12.4e} {r['num_samples']:<8}"
             print(row)
         print("-" * 100)
 
         # Average
         if len(all_results) > 1:
             avg_nRMSE = np.mean([r['nRMSE'] for r in all_results])
+            avg_MPPnRMSE = np.mean([r['MPPnRMSE'] for r in all_results])
             avg_RMSE = np.mean([r['RMSE'] for r in all_results])
             avg_CSV = np.mean([r['CSV'] for r in all_results])
             avg_BD = np.mean([r['BD'] for r in all_results])
-            print(f"{'Average':<20} {avg_nRMSE:<12.4e} {avg_RMSE:<12.4e} {'-':<12} {avg_CSV:<12.4e} {avg_BD:<12.4e}")
+            print(f"{'Average':<20} {avg_nRMSE:<12.4e} {avg_MPPnRMSE:<12.4e} {avg_RMSE:<12.4e} {'-':<12} {avg_CSV:<12.4e} {avg_BD:<12.4e}")
             print("-" * 100)
 
         # Fourier metrics

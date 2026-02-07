@@ -11,6 +11,19 @@ dataset:
   train_ratio: 0.9
   clips_ratio: 0.25  # 25% temporal sampling for training
 
+  # Per-dataset overrides (optional)
+  # clips_per_epoch: limit clips per epoch for each dataset
+  # Set to null to use default (clips_ratio based)
+  overrides:
+    diffusion_reaction:
+      clips_per_epoch: null  # Use default
+    2d_cfd:
+      clips_per_epoch: null  # Use default
+    swe:
+      clips_per_epoch: null  # Use default
+    ns_incom:
+      clips_per_epoch: null  # Use default
+
 # DataLoader
 dataloader:
   batch_size: 8

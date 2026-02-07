@@ -195,6 +195,7 @@ def metric_func(
     err_RMSE = torch.mean(err_mean, axis=0)
     nrm = torch.sqrt(torch.mean(target.view([nb, nc, -1, nt]) ** 2, dim=2))
     err_nRMSE = torch.mean(err_mean / nrm, dim=0)
+    err_MPPnRMSE = torch.sqrt(torch.mean(err_mean**2 / (nrm**2 + 1e-8), dim=0))
 
     err_CSV = torch.sqrt(
         torch.mean(
@@ -302,8 +303,9 @@ def metric_func(
             torch.mean(err_Max, dim=[0, -1]),
             torch.mean(err_BD, dim=[0, -1]),
             torch.mean(err_F, dim=[0, -1]),
+            torch.mean(err_MPPnRMSE, dim=[0, -1]),
         )
-    return err_RMSE, err_nRMSE, err_CSV, err_Max, err_BD, err_F
+    return err_RMSE, err_nRMSE, err_CSV, err_Max, err_BD, err_F, err_MPPnRMSE
 
 
 def metrics(

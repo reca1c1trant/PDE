@@ -54,6 +54,7 @@ class DatasetConfig:
     clips_ratio_offset: float = 0.0  # Offset from base clips_ratio (e.g., -0.05 for ns_incom)
     val_time_interval: int = 5  # Time interval for validation clips
     vector_dim: int = 0  # Actual vector dimensions (0=no vector, 2=2D, 3=3D)
+    clips_per_epoch: Optional[int] = None  # If set, override clips_ratio with fixed number per epoch
 
 
 # Scalar channel indices (from scalar_channel.csv)
@@ -406,8 +407,18 @@ class PretrainDataset(Dataset):
         self.clips_by_equiv_sample: Dict[Tuple[str, int, Optional[Tuple[int, int]]], List[int]] = {}
 
         clip_idx = 0
+        rng = np.random.RandomState(self.seed + self.epoch)
+
         for name, ds in self.datasets.items():
             ds_clips = ds.generate_clips(self.epoch)
+
+            # Apply clips_per_epoch limit if configured
+            clips_per_epoch = ds.config.clips_per_epoch
+            if clips_per_epoch is not None and len(ds_clips) > clips_per_epoch:
+                # Randomly sample clips_per_epoch clips
+                selected_indices = rng.choice(len(ds_clips), clips_per_epoch, replace=False)
+                ds_clips = [ds_clips[i] for i in selected_indices]
+                logger.info(f"  {name}: limited to {clips_per_epoch} clips per epoch")
 
             for sample_idx, start_t, spatial_point in ds_clips:
                 self.clips.append((name, sample_idx, start_t, spatial_point))
@@ -609,6 +620,7 @@ def create_pretrain_dataloaders(
     num_workers: int = 4,
     pin_memory: bool = True,
     seed: int = 42,
+    dataset_overrides: Optional[Dict[str, Dict]] = None,
 ):
     """
     Create train and validation dataloaders for pretraining.
@@ -619,11 +631,14 @@ def create_pretrain_dataloaders(
         num_workers: Number of data loading workers
         pin_memory: Pin memory for faster GPU transfer
         seed: Random seed
+        dataset_overrides: Optional dict to override dataset configs from YAML
+            Example: {'2d_cfd': {'clips_per_epoch': 5000}, 'ns_incom': {'clips_per_epoch': 3000}}
 
     Returns:
         train_loader, val_loader, train_sampler, val_sampler
     """
     data_dir = Path(data_dir)
+    dataset_overrides = dataset_overrides or {}
 
     # Define dataset configurations
     # vector_dim: 0=no vector, 2=2D velocity (Vx,Vy), 3=3D velocity (Vx,Vy,Vz)
@@ -667,6 +682,15 @@ def create_pretrain_dataloaders(
             vector_dim=2,  # 2D velocity (vx, vy), vz is padded zero
         ),
     ]
+
+    # Apply overrides from YAML config
+    for config in configs:
+        if config.name in dataset_overrides:
+            overrides = dataset_overrides[config.name]
+            for key, value in overrides.items():
+                if hasattr(config, key):
+                    setattr(config, key, value)
+                    logger.info(f"  {config.name}: override {key}={value}")
 
     # Filter to existing datasets
     existing_configs = []
