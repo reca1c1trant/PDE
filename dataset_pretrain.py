@@ -52,7 +52,7 @@ class DatasetConfig:
     val_spatial_points: int    # number of spatial crop points for validation
     patches_per_original: int = 1  # For split datasets: group this many consecutive patches as one original sample
     clips_ratio_offset: float = 0.0  # Offset from base clips_ratio (e.g., -0.05 for ns_incom)
-    val_time_interval: int = 5  # Time interval for validation clips
+    val_time_interval: int = 2  # Time interval for validation clips
     vector_dim: int = 0  # Actual vector dimensions (0=no vector, 2=2D, 3=3D)
     clips_per_epoch: Optional[int] = None  # If set, override clips_ratio with fixed number per epoch
 

@@ -244,3 +244,4 @@ vis_results/
 pdf/
 
 eval_results/
+*.png

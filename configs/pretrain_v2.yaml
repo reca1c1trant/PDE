@@ -70,16 +70,16 @@ training:
   gradient_accumulation_steps: 2
 
 dataloader:
-  batch_size: 2            # Per GPU
+  batch_size: 4            # Per GPU
   num_workers: 4
   pin_memory: true
 
 dataset:
-  path: ./data/pretrained
+  path: ./data
   seed: 42
   t_input: 8               # Number of input timesteps
   # temporal_length = t_input + num_steps = 8 + 3 = 11 (computed automatically)
-  clips_ratio: 0.25        # 25% temporal sampling for training
+  clips_ratio: 0.49        # 25% temporal sampling for training
 
   # Per-dataset overrides (optional)
   overrides:
