@@ -627,6 +627,7 @@ def create_pretrain_dataloaders(
     seed: int = 42,
     dataset_overrides: Optional[Dict[str, Dict]] = None,
     temporal_length: int = DEFAULT_TEMPORAL_LENGTH,
+    clips_ratio: float = 0.25,
 ):
     """
     Create train and validation dataloaders for pretraining.
@@ -640,6 +641,7 @@ def create_pretrain_dataloaders(
         dataset_overrides: Optional dict to override dataset configs from YAML
             Example: {'2d_cfd': {'clips_per_epoch': 5000}, 'ns_incom': {'clips_per_epoch': 3000}}
         temporal_length: Number of timesteps per clip (t_input + num_steps)
+        clips_ratio: Temporal sampling ratio for training (e.g., 0.25 = 25%)
 
     Returns:
         train_loader, val_loader, train_sampler, val_sampler
@@ -717,7 +719,7 @@ def create_pretrain_dataloaders(
         split='train',
         train_ratio=0.9,
         seed=seed,
-        clips_ratio=0.2,
+        clips_ratio=clips_ratio,
         temporal_length=temporal_length,
     )
 
@@ -726,7 +728,7 @@ def create_pretrain_dataloaders(
         split='val',
         train_ratio=0.9,
         seed=seed,
-        clips_ratio=0.2,  # Not used for validation
+        clips_ratio=clips_ratio,  # Not used for validation (uses fixed intervals)
         temporal_length=temporal_length,
     )
 

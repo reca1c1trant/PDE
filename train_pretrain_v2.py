@@ -344,6 +344,7 @@ def main():
     batch_size = config['dataloader']['batch_size']
     num_workers = config['dataloader']['num_workers']
     seed = config['dataset']['seed']
+    clips_ratio = config['dataset'].get('clips_ratio', 0.25)
     dataset_overrides = config.get('dataset', {}).get('overrides', {})
 
     # Compute temporal_length = t_input + num_steps for AR
@@ -357,6 +358,7 @@ def main():
         seed=seed,
         dataset_overrides=dataset_overrides,
         temporal_length=temporal_length,
+        clips_ratio=clips_ratio,
     )
 
     steps_per_epoch = len(train_sampler)

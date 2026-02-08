@@ -79,6 +79,16 @@ dataset:
   seed: 42
   t_input: 8               # Number of input timesteps
   # temporal_length = t_input + num_steps = 8 + 3 = 11 (computed automatically)
+  clips_ratio: 0.25        # 25% temporal sampling for training
+
+  # Per-dataset overrides (optional)
+  overrides:
+    diffusion_reaction:
+      clips_per_epoch: null  # Use default (clips_ratio based)
+    2d_cfd:
+      clips_per_epoch: null  # Use default
+    swe:
+      clips_per_epoch: null  # Use default
 
   # Datasets to use (ns_incom excluded)
   datasets:
