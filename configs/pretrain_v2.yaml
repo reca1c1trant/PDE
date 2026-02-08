@@ -1,0 +1,121 @@
+# V2 Pretraining Configuration
+# PDE Foundation Model with Neighborhood Attention
+
+model_name: pde_v2_base
+
+model:
+  in_channels: 18          # 3 vector + 15 scalar
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 24
+  num_heads: 12
+  dropout: 0.0
+
+  # Encoder settings
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false    # Use AttentionPool (true for CNN pooling)
+
+  # Intra-patch temporal attention
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3     # Look back 3 time steps
+    num_heads: 8
+
+  # Inter-patch Neighborhood Attention
+  na:
+    base_kernel: 7         # Adaptive: 7 for 1:1, 14 for 1:2, 28 for 1:4
+
+  # Decoder settings
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+
+  # Channel configuration
+  vector_channels: 3
+  scalar_channels: 15
+
+training:
+  max_epochs: 100
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.95]
+  warmup_steps: 1000
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  # Teacher forcing ratio: determines when to switch to multi-step loss
+  # Front X% uses teacher forcing (eval every epoch)
+  # Back (1-X)% uses multi-step loss (eval every eval_interval_ar steps)
+  teacher_forcing_ratio: 0.5
+
+  # Multi-step loss settings
+  multi_step_loss:
+    enabled: true
+    num_steps: 3           # Number of rollout steps
+    lambda: 0.5            # Decay factor: weights = [1.0, 0.5, 0.25]
+
+  # Evaluation intervals
+  eval_interval_ar: 200    # Eval every N steps in AR phase
+
+  # Early stopping
+  early_stopping_patience: 30
+
+  # Mixed precision (fp32 for stability)
+  mixed_precision: "no"    # "no", "fp16", or "bf16"
+
+  # Gradient accumulation
+  gradient_accumulation_steps: 2
+
+dataloader:
+  batch_size: 2            # Per GPU
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: ./data/pretrained
+  seed: 42
+  temporal_length: 9       # T=8 for input, +1 for target
+
+  # Datasets to use (ns_incom excluded)
+  datasets:
+    - name: diffusion_reaction
+      path: ./data/pretrained/2D_diff-react_NA_NA.hdf5
+      spatial_size: 128
+      needs_crop: false
+      train_spatial_points: 1
+      val_spatial_points: 1
+
+    - name: 2d_cfd
+      path: ./data/pretrained/2D_CFD_128_merged.hdf5
+      spatial_size: 128
+      needs_crop: false
+      train_spatial_points: 1
+      val_spatial_points: 1
+
+    - name: swe
+      path: ./data/pretrained/2D_rdb_NA_NA.h5
+      spatial_size: 128
+      needs_crop: false
+      train_spatial_points: 1
+      val_spatial_points: 1
+
+    # ns_incom excluded for now
+    # - name: ns_incom
+    #   path: ./data/pretrained/ns_incom_inhom_2d_512_full.hdf5
+    #   spatial_size: 512
+    #   needs_crop: true
+    #   train_spatial_points: 16
+    #   val_spatial_points: 4
+
+logging:
+  project: pde-foundation-v2
+  entity: null             # Set your wandb entity
+  save_dir: ./checkpoints_v2
+  log_interval: 10
+
+# Checkpoint settings
+checkpoint:
+  resume_from: null        # Path to checkpoint to resume from
+  load_weights_only: false # If true, only load model weights (not optimizer)
