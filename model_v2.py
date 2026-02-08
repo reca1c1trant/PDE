@@ -64,11 +64,14 @@ class NATransformer(nn.Module):
         ])
 
         # For 1:2 ratio (e.g., 128x256)
+        # Formula: (base_kernel - 1) * ratio + 1 to keep kernel odd
+        # e.g., base=7 -> (7-1)*2+1 = 13
+        kernel_w_1x2 = (base_kernel - 1) * 2 + 1
         self.layers_1x2 = nn.ModuleList([
             NATransformerLayer(
                 hidden_dim=hidden_dim,
                 num_heads=num_heads,
-                kernel_size=(base_kernel, base_kernel, min(base_kernel * 2, 15)),
+                kernel_size=(base_kernel, base_kernel, kernel_w_1x2),
                 is_causal=True,
                 dropout=dropout,
             )
@@ -76,11 +79,13 @@ class NATransformer(nn.Module):
         ])
 
         # For 1:4 ratio (e.g., 128x512)
+        # e.g., base=7 -> (7-1)*4+1 = 25
+        kernel_w_1x4 = (base_kernel - 1) * 4 + 1
         self.layers_1x4 = nn.ModuleList([
             NATransformerLayer(
                 hidden_dim=hidden_dim,
                 num_heads=num_heads,
-                kernel_size=(base_kernel, base_kernel, min(base_kernel * 4, 31)),
+                kernel_size=(base_kernel, base_kernel, kernel_w_1x4),
                 is_causal=True,
                 dropout=dropout,
             )
