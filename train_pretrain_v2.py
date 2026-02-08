@@ -324,7 +324,9 @@ def main():
 
     resume_path = args.resume or config.get('checkpoint', {}).get('resume_from')
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
+    # find_unused_parameters=True because NATransformer has layers for different aspect ratios
+    # (layers_1x1, layers_1x2, layers_1x4) but only one is used per forward pass
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
     accelerator = Accelerator(
         mixed_precision=config['training'].get('mixed_precision', 'no'),
