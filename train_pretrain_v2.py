@@ -88,50 +88,64 @@ def compute_multi_step_loss(
     channel_mask: torch.Tensor,
     num_steps: int = 3,
     lambda_decay: float = 0.5,
+    t_input: int = 8,
 ) -> torch.Tensor:
     """
     Compute multi-step loss for AR training.
 
     Args:
         model: The model
-        data: [B, T_total, H, W, C] where T_total >= T_input + num_steps
+        data: [B, T_total, H, W, C] where T_total >= t_input + num_steps
         channel_mask: [B, C]
-        num_steps: Number of rollout steps
+        num_steps: Number of rollout steps (default 3)
         lambda_decay: Decay factor for loss weights
+        t_input: Number of input timesteps (fixed at 8 for V2)
 
     Returns:
         total_loss: Weighted sum of losses
+
+    Example with t_input=8, num_steps=3:
+        Step 0: input=data[0:8], target=data[1:9], weight=1.0
+        Step 1: input=data[1:8]+pred[-1], target=data[2:10], weight=0.5
+        Step 2: input=data[2:9]+pred[-1], target=data[3:11], weight=0.25
+        Total data needed: 11 timesteps
     """
     B, T_total, H, W, C = data.shape
-    T_input = T_total - num_steps  # e.g., 9 - 3 = 6
+
+    # Validate data has enough timesteps
+    required_T = t_input + num_steps  # 8 + 3 = 11
+    assert T_total >= required_T, \
+        f"Data has {T_total} timesteps, but need {required_T} for AR (t_input={t_input}, num_steps={num_steps})"
 
     total_loss = torch.tensor(0.0, device=data.device)
     weight = 1.0
 
-    # Step 1: Normal forward (teacher forcing)
-    input_data = data[:, :T_input]  # [B, T_input, H, W, C]
-    target_data = data[:, 1:T_input + 1]  # [B, T_input, H, W, C]
+    # Step 0: Normal forward (teacher forcing)
+    input_data = data[:, :t_input]  # [B, 8, H, W, C]
+    target_data = data[:, 1:t_input + 1]  # [B, 8, H, W, C]
 
     output_norm, mean, std = model(input_data, return_normalized=True)
     target_norm = (target_data - mean) / std
 
-    loss_1 = compute_normalized_rmse_loss(output_norm.float(), target_norm.float(), channel_mask)
-    total_loss = total_loss + weight * loss_1
+    loss_0 = compute_normalized_rmse_loss(output_norm.float(), target_norm.float(), channel_mask)
+    total_loss = total_loss + weight * loss_0
 
-    # Subsequent steps: use predictions as input
     # Denormalize output for next step input
     pred_denorm = output_norm * std + mean
 
+    # Subsequent steps: use predictions as input
     for step in range(1, num_steps):
         weight = weight * lambda_decay
 
-        # Build new input: GT[step:T_input-1+step] + pred[-1]
-        # Shift by 1 each step
-        gt_part = data[:, step:T_input - 1 + step]  # [B, T_input-1, H, W, C]
+        # Build new input: GT[step : step+t_input-1] + pred[-1]
+        # e.g., step=1: GT[1:8] (7 frames) + pred[-1] (1 frame) = 8 frames
+        gt_part = data[:, step:step + t_input - 1]  # [B, t_input-1, H, W, C]
         pred_part = pred_denorm[:, -1:]  # [B, 1, H, W, C]
-        new_input = torch.cat([gt_part, pred_part], dim=1)  # [B, T_input, H, W, C]
+        new_input = torch.cat([gt_part, pred_part], dim=1)  # [B, t_input, H, W, C]
 
-        target_data = data[:, step + 1:T_input + step + 1]  # [B, T_input, H, W, C]
+        # Target: data[step+1 : step+1+t_input]
+        # e.g., step=1: target = data[2:10]
+        target_data = data[:, step + 1:step + 1 + t_input]  # [B, t_input, H, W, C]
 
         output_norm, mean, std = model(new_input, return_normalized=True)
         target_norm = (target_data - mean) / std
@@ -299,7 +313,9 @@ def main():
     warmup_steps = config['training'].get('warmup_steps', 1000)
     max_epochs = config['training']['max_epochs']
     teacher_forcing_ratio = config['training'].get('teacher_forcing_ratio', 0.5)
+    eval_interval_tf = config['training'].get('eval_interval_tf', 0)  # 0 = every epoch
     eval_interval_ar = config['training'].get('eval_interval_ar', 200)
+    t_input = config['dataset'].get('t_input', 8)  # Input timesteps (default 8)
 
     resume_path = args.resume or config.get('checkpoint', {}).get('resume_from')
 
@@ -323,6 +339,9 @@ def main():
     seed = config['dataset']['seed']
     dataset_overrides = config.get('dataset', {}).get('overrides', {})
 
+    # Compute temporal_length = t_input + num_steps for AR
+    temporal_length = t_input + multi_step_n  # e.g., 8 + 3 = 11
+
     train_loader, val_loader, train_sampler, val_sampler = create_pretrain_dataloaders(
         data_dir=data_dir,
         batch_size=batch_size,
@@ -330,6 +349,7 @@ def main():
         pin_memory=config['dataloader']['pin_memory'],
         seed=seed,
         dataset_overrides=dataset_overrides,
+        temporal_length=temporal_length,
     )
 
     steps_per_epoch = len(train_sampler)
@@ -346,7 +366,9 @@ def main():
         logger.info(f"Steps per Epoch: {steps_per_epoch}")
         logger.info(f"Total Steps: {total_steps}")
         logger.info(f"Teacher Forcing Steps: {tf_steps} ({teacher_forcing_ratio*100:.0f}%)")
+        logger.info(f"TF Phase Eval Interval: {eval_interval_tf if eval_interval_tf > 0 else 'every epoch'}")
         logger.info(f"AR Phase Eval Interval: {eval_interval_ar}")
+        logger.info(f"T_input: {t_input}, Temporal Length: {temporal_length}")
         logger.info(f"Resume from: {resume_path or 'scratch'}")
         logger.info(f"{'='*60}")
 
@@ -429,9 +451,8 @@ def main():
                 with accelerator.accumulate(model):
                     if in_tf_phase or not use_multi_step:
                         # Teacher forcing: single step loss
-                        T_input = min(8, data.shape[1] - 1)
-                        input_data = data[:, :T_input]
-                        target_data = data[:, 1:T_input + 1]
+                        input_data = data[:, :t_input]  # [B, 8, H, W, C]
+                        target_data = data[:, 1:t_input + 1]  # [B, 8, H, W, C]
 
                         output_norm, mean, std = model(input_data, return_normalized=True)
                         target_norm = (target_data - mean) / std
@@ -445,6 +466,7 @@ def main():
                             model, data, channel_mask,
                             num_steps=multi_step_n,
                             lambda_decay=multi_step_lambda,
+                            t_input=t_input,
                         )
 
                     accelerator.backward(loss)
@@ -478,9 +500,15 @@ def main():
                 should_validate = False
 
                 if in_tf_phase:
-                    # In TF phase: validate every epoch (at end of epoch)
-                    if global_step % steps_per_epoch == 0:
-                        should_validate = True
+                    # In TF phase: validate based on eval_interval_tf
+                    if eval_interval_tf > 0:
+                        # Validate every eval_interval_tf steps
+                        if global_step % eval_interval_tf == 0:
+                            should_validate = True
+                    else:
+                        # Validate every epoch (at end of epoch)
+                        if global_step % steps_per_epoch == 0:
+                            should_validate = True
                 else:
                     # In AR phase: validate every eval_interval_ar steps
                     if global_step % eval_interval_ar == 0:

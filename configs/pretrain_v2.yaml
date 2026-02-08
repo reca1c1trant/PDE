@@ -7,7 +7,7 @@ model:
   in_channels: 18          # 3 vector + 15 scalar
   hidden_dim: 768
   patch_size: 16
-  num_layers: 24
+  num_layers: 12
   num_heads: 12
   dropout: 0.0
 
@@ -25,7 +25,7 @@ model:
 
   # Inter-patch Neighborhood Attention
   na:
-    base_kernel: 7         # Adaptive: 7 for 1:1, 14 for 1:2, 28 for 1:4
+    base_kernel: 5        # Neighborhood size
 
   # Decoder settings
   decoder:
@@ -37,7 +37,7 @@ model:
   scalar_channels: 15
 
 training:
-  max_epochs: 100
+  max_epochs: 50
   learning_rate: 1.0e-4
   weight_decay: 0.01
   betas: [0.9, 0.95]
@@ -57,6 +57,7 @@ training:
     lambda: 0.5            # Decay factor: weights = [1.0, 0.5, 0.25]
 
   # Evaluation intervals
+  eval_interval_tf: 0      # Eval every N steps in TF phase (0 = every epoch)
   eval_interval_ar: 200    # Eval every N steps in AR phase
 
   # Early stopping
@@ -76,7 +77,8 @@ dataloader:
 dataset:
   path: ./data/pretrained
   seed: 42
-  temporal_length: 9       # T=8 for input, +1 for target
+  t_input: 8               # Number of input timesteps
+  # temporal_length = t_input + num_steps = 8 + 3 = 11 (computed automatically)
 
   # Datasets to use (ns_incom excluded)
   datasets:

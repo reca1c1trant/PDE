@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 NUM_VECTOR_CHANNELS = 3
 NUM_SCALAR_CHANNELS = 15
 TOTAL_CHANNELS = NUM_VECTOR_CHANNELS + NUM_SCALAR_CHANNELS  # 18
-TEMPORAL_LENGTH = 17  # 16 input + 1 for causal AR
+DEFAULT_TEMPORAL_LENGTH = 11  # V2: T_input=8 + num_steps=3 for AR rollout
 
 
 @dataclass
@@ -140,11 +140,13 @@ class SingleDataset:
         train_ratio: float = 0.9,
         seed: int = 42,
         clips_ratio: float = 0.2,
+        temporal_length: int = DEFAULT_TEMPORAL_LENGTH,
     ):
         self.config = config
         self.split = split
         self.train_ratio = train_ratio
         self.seed = seed
+        self.temporal_length = temporal_length
         # Apply per-dataset clips_ratio offset
         self.clips_ratio = clips_ratio + config.clips_ratio_offset
         self.val_time_interval = config.val_time_interval
@@ -181,10 +183,10 @@ class SingleDataset:
             else:
                 raise ValueError(f"No data found in {self.path}")
 
-        self.max_start = self.n_timesteps - TEMPORAL_LENGTH
+        self.max_start = self.n_timesteps - self.temporal_length
 
         logger.info(f"{self.config.name}: {self.n_samples} samples, T={self.n_timesteps}, "
-                   f"spatial={self.spatial_size}, max_start={self.max_start}")
+                   f"spatial={self.spatial_size}, temporal_len={self.temporal_length}, max_start={self.max_start}")
 
     def _split_samples(self):
         """Split samples into train/val sets.
@@ -270,7 +272,7 @@ class SingleDataset:
     def _get_train_time_clips(self, rng: np.random.RandomState) -> List[int]:
         """Get time clip starting points for training (20% sampling)."""
         if self.max_start <= 0:
-            return [0] if self.n_timesteps >= TEMPORAL_LENGTH else []
+            return [0] if self.n_timesteps >= self.temporal_length else []
 
         if self.n_timesteps <= 30:
             # Short sequence: use all
@@ -283,7 +285,7 @@ class SingleDataset:
     def _get_val_time_clips(self) -> List[int]:
         """Get time clip starting points for validation (fixed interval)."""
         if self.max_start <= 0:
-            return [0] if self.n_timesteps >= TEMPORAL_LENGTH else []
+            return [0] if self.n_timesteps >= self.temporal_length else []
 
         if self.n_timesteps <= 30:
             # Short sequence (e.g., 2D_CFD): use all
@@ -305,7 +307,7 @@ class SingleDataset:
             data: [T, H, W, 18] unified format
             channel_mask: [18] valid channel indicator
         """
-        end_t = start_t + TEMPORAL_LENGTH
+        end_t = start_t + self.temporal_length
 
         with h5py.File(self.path, 'r') as f:
             # Load vector if exists
@@ -317,8 +319,8 @@ class SingleDataset:
                     T, H, W = f['scalar'].shape[1:4]
                     H, W = min(H, 128), min(W, 128)  # Handle crop size
                 else:
-                    T, H, W = TEMPORAL_LENGTH, 128, 128
-                vector = np.zeros((TEMPORAL_LENGTH, H, W, NUM_VECTOR_CHANNELS), dtype=np.float32)
+                    T, H, W = self.temporal_length, 128, 128
+                vector = np.zeros((self.temporal_length, H, W, NUM_VECTOR_CHANNELS), dtype=np.float32)
 
             # Load scalar
             if 'scalar' in f:
@@ -375,10 +377,12 @@ class PretrainDataset(Dataset):
         train_ratio: float = 0.9,
         seed: int = 42,
         clips_ratio: float = 0.2,
+        temporal_length: int = DEFAULT_TEMPORAL_LENGTH,
     ):
         self.split = split
         self.seed = seed
         self.epoch = 0
+        self.temporal_length = temporal_length
 
         # Initialize individual datasets
         self.datasets: Dict[str, SingleDataset] = {}
@@ -389,6 +393,7 @@ class PretrainDataset(Dataset):
                 train_ratio=train_ratio,
                 seed=seed,
                 clips_ratio=clips_ratio,
+                temporal_length=temporal_length,
             )
 
         # Generate initial clips
@@ -621,6 +626,7 @@ def create_pretrain_dataloaders(
     pin_memory: bool = True,
     seed: int = 42,
     dataset_overrides: Optional[Dict[str, Dict]] = None,
+    temporal_length: int = DEFAULT_TEMPORAL_LENGTH,
 ):
     """
     Create train and validation dataloaders for pretraining.
@@ -633,6 +639,7 @@ def create_pretrain_dataloaders(
         seed: Random seed
         dataset_overrides: Optional dict to override dataset configs from YAML
             Example: {'2d_cfd': {'clips_per_epoch': 5000}, 'ns_incom': {'clips_per_epoch': 3000}}
+        temporal_length: Number of timesteps per clip (t_input + num_steps)
 
     Returns:
         train_loader, val_loader, train_sampler, val_sampler
@@ -711,6 +718,7 @@ def create_pretrain_dataloaders(
         train_ratio=0.9,
         seed=seed,
         clips_ratio=0.2,
+        temporal_length=temporal_length,
     )
 
     val_dataset = PretrainDataset(
@@ -719,6 +727,7 @@ def create_pretrain_dataloaders(
         train_ratio=0.9,
         seed=seed,
         clips_ratio=0.2,  # Not used for validation
+        temporal_length=temporal_length,
     )
 
     # Create samplers
