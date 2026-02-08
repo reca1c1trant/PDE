@@ -317,6 +317,11 @@ def main():
     eval_interval_ar = config['training'].get('eval_interval_ar', 200)
     t_input = config['dataset'].get('t_input', 8)  # Input timesteps (default 8)
 
+    # Multi-step loss config (needed early for temporal_length calculation)
+    use_multi_step = config['training'].get('multi_step_loss', {}).get('enabled', True)
+    multi_step_n = config['training'].get('multi_step_loss', {}).get('num_steps', 3)
+    multi_step_lambda = config['training'].get('multi_step_loss', {}).get('lambda', 0.5)
+
     resume_path = args.resume or config.get('checkpoint', {}).get('resume_from')
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
@@ -415,11 +420,6 @@ def main():
     early_stop = False
 
     start_epoch = global_step // steps_per_epoch if steps_per_epoch > 0 else 0
-
-    # Multi-step loss config
-    use_multi_step = config['training'].get('multi_step_loss', {}).get('enabled', True)
-    multi_step_n = config['training'].get('multi_step_loss', {}).get('num_steps', 3)
-    multi_step_lambda = config['training'].get('multi_step_loss', {}).get('lambda', 0.5)
 
     model.train()
 
