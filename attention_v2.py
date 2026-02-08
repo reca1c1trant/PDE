@@ -334,13 +334,15 @@ class NeighborhoodAttention3D(nn.Module):
         k_t, k_h, k_w = self.kernel_size
 
         # Pad input for neighborhood extraction
-        pad_t = k_t // 2
-        pad_h = k_h // 2
-        pad_w = k_w // 2
+        # For unfold to output same size: pad = (kernel - 1) // 2 on left, kernel // 2 on right
+        pad_t_left, pad_t_right = (k_t - 1) // 2, k_t // 2
+        pad_h_left, pad_h_right = (k_h - 1) // 2, k_h // 2
+        pad_w_left, pad_w_right = (k_w - 1) // 2, k_w // 2
 
         # Reshape for 3D unfold: [B, D, T, H, W]
         x_pad = x.permute(0, 4, 1, 2, 3)
-        x_pad = F.pad(x_pad, (pad_w, pad_w, pad_h, pad_h, pad_t, pad_t), mode='constant', value=0)
+        # F.pad order: (W_left, W_right, H_left, H_right, T_left, T_right)
+        x_pad = F.pad(x_pad, (pad_w_left, pad_w_right, pad_h_left, pad_h_right, pad_t_left, pad_t_right), mode='constant', value=0)
 
         # Project Q, K, V
         q = self.q_proj(x)  # [B, T, H, W, D]
@@ -391,12 +393,13 @@ class NeighborhoodAttention3D(nn.Module):
 
     def _create_causal_neighbor_mask(self, T: int, k_t: int, device: torch.device) -> torch.Tensor:
         """Create causal mask for temporal neighbors."""
-        pad_t = k_t // 2
+        # Left padding = (k_t - 1) // 2, so offset for neighbor index
+        pad_t_left = (k_t - 1) // 2
         mask = torch.zeros(T, k_t, dtype=torch.bool, device=device)
 
         for t in range(T):
             for dt in range(k_t):
-                neighbor_t = t - pad_t + dt
+                neighbor_t = t - pad_t_left + dt
                 # Mask future time steps
                 if neighbor_t > t:
                     mask[t, dt] = True
