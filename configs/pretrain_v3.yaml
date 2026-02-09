@@ -1,0 +1,79 @@
+# V3 Pretraining Configuration - Teacher Forcing Only
+# Use train_ar.py for AR fine-tuning after this
+
+model_name: pde_v3_tf
+
+model:
+  in_channels: 18          # 3 vector + 15 scalar
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 16
+  num_heads: 16
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+
+  vector_channels: 3
+  scalar_channels: 15
+
+training:
+  max_epochs: 50
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.95]
+  warmup_steps: 1000
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  # Eval interval (0 = every epoch)
+  eval_interval: 0
+
+  # Early stopping
+  early_stopping_patience: 30
+
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
+dataloader:
+  batch_size: 20
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: ./data
+  seed: 42
+  t_input: 8
+  # temporal_length = t_input + 1 = 9 (TF only needs one more step)
+  clips_ratio: 0.49
+
+  overrides:
+    diffusion_reaction:
+      clips_per_epoch: null
+    2d_cfd:
+      clips_per_epoch: null
+    swe:
+      clips_per_epoch: null
+
+logging:
+  project: pde-foundation-v3
+  entity: null
+  save_dir: ./checkpoints_v3
+  log_interval: 10
+
+checkpoint:
+  resume_from: null

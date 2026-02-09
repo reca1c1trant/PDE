@@ -7,8 +7,8 @@ model:
   in_channels: 18          # 3 vector + 15 scalar
   hidden_dim: 768
   patch_size: 16
-  num_layers: 12
-  num_heads: 12
+  num_layers: 16
+  num_heads: 16
   dropout: 0.0
 
   # Encoder settings
@@ -58,7 +58,7 @@ training:
 
   # Evaluation intervals
   eval_interval_tf: 0      # Eval every N steps in TF phase (0 = every epoch)
-  eval_interval_ar: 200    # Eval every N steps in AR phase
+  eval_interval_ar: 100    # Eval every N steps in AR phase
 
   # Early stopping
   early_stopping_patience: 30
@@ -67,10 +67,10 @@ training:
   mixed_precision: "no"    # "no", "fp16", or "bf16"
 
   # Gradient accumulation
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 1
 
 dataloader:
-  batch_size: 4            # Per GPU
+  batch_size: 20            # Per GPU
   num_workers: 4
   pin_memory: true
 
@@ -90,36 +90,6 @@ dataset:
     swe:
       clips_per_epoch: null  # Use default
 
-  # Datasets to use (ns_incom excluded)
-  datasets:
-    - name: diffusion_reaction
-      path: ./data/pretrained/2D_diff-react_NA_NA.hdf5
-      spatial_size: 128
-      needs_crop: false
-      train_spatial_points: 1
-      val_spatial_points: 1
-
-    - name: 2d_cfd
-      path: ./data/pretrained/2D_CFD_128_merged.hdf5
-      spatial_size: 128
-      needs_crop: false
-      train_spatial_points: 1
-      val_spatial_points: 1
-
-    - name: swe
-      path: ./data/pretrained/2D_rdb_NA_NA.h5
-      spatial_size: 128
-      needs_crop: false
-      train_spatial_points: 1
-      val_spatial_points: 1
-
-    # ns_incom excluded for now
-    # - name: ns_incom
-    #   path: ./data/pretrained/ns_incom_inhom_2d_512_full.hdf5
-    #   spatial_size: 512
-    #   needs_crop: true
-    #   train_spatial_points: 16
-    #   val_spatial_points: 4
 
 logging:
   project: pde-foundation-v2

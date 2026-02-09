@@ -1,0 +1,84 @@
+# AR Fine-tuning Configuration
+# Requires pretrained model from train_pretrain_v3.py
+
+model_name: pde_ar
+
+model:
+  in_channels: 18          # 3 vector + 15 scalar
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 16
+  num_heads: 16
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+
+  vector_channels: 3
+  scalar_channels: 15
+
+training:
+  max_epochs: 20           # Fewer epochs for fine-tuning
+  learning_rate: 2.0e-5    # Lower LR for fine-tuning
+  weight_decay: 0.01
+  betas: [0.9, 0.95]
+  warmup_steps: 500        # Shorter warmup
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  # Multi-step loss settings
+  multi_step_loss:
+    num_steps: 3           # Number of rollout steps
+    lambda: 0.5            # Decay factor: weights = [1.0, 0.5, 0.25]
+
+  # Eval every N steps
+  eval_interval: 200
+
+  # Early stopping (stricter for fine-tuning)
+  early_stopping_patience: 20
+
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
+dataloader:
+  batch_size: 16           # Slightly smaller due to AR memory usage
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: ./data
+  seed: 42
+  t_input: 8
+  # temporal_length = t_input + num_steps = 8 + 3 = 11
+  clips_ratio: 0.49
+
+  overrides:
+    diffusion_reaction:
+      clips_per_epoch: null
+    2d_cfd:
+      clips_per_epoch: null
+    swe:
+      clips_per_epoch: null
+
+logging:
+  project: pde-foundation-ar
+  entity: null
+  save_dir: ./checkpoints_ar
+  log_interval: 10
+
+checkpoint:
+  resume_from: null
