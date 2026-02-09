@@ -14,13 +14,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 import math
 
-# Try to import natten, fallback to custom implementation if not available
-try:
-    from natten import NeighborhoodAttention3D as NattenNA3D
-    NATTEN_AVAILABLE = True
-except ImportError:
-    NATTEN_AVAILABLE = False
-    print("Warning: natten not available, using custom NA implementation (slower)")
+from natten import NeighborhoodAttention3D as NattenNA3D
 
 
 class RMSNorm(nn.Module):
@@ -269,9 +263,7 @@ class IntraPatchAttentionLayer(nn.Module):
 
 class NeighborhoodAttention3D(nn.Module):
     """
-    3D Neighborhood Attention wrapper.
-
-    Uses natten if available, otherwise falls back to custom implementation.
+    3D Neighborhood Attention wrapper using natten.
 
     Args:
         hidden_dim: Hidden dimension
@@ -293,26 +285,14 @@ class NeighborhoodAttention3D(nn.Module):
         self.num_heads = num_heads
         self.kernel_size = kernel_size
         self.is_causal = is_causal
-        self.head_dim = hidden_dim // num_heads
 
-        if NATTEN_AVAILABLE:
-            # Use natten's optimized implementation
-            self.na = NattenNA3D(
-                dim=hidden_dim,
-                num_heads=num_heads,
-                kernel_size=kernel_size,
-                dilation=1,
-                is_causal=(is_causal, False, False),  # Causal only on time dim
-            )
-            self.use_natten = True
-        else:
-            # Fallback to custom implementation
-            self.q_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
-            self.k_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
-            self.v_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
-            self.o_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
-            self.use_natten = False
-
+        self.na = NattenNA3D(
+            dim=hidden_dim,
+            num_heads=num_heads,
+            kernel_size=kernel_size,
+            dilation=1,
+            is_causal=(is_causal, False, False),  # Causal only on time dim
+        )
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -322,92 +302,7 @@ class NeighborhoodAttention3D(nn.Module):
         Returns:
             out: [B, T, n_h, n_w, D]
         """
-        if self.use_natten:
-            # natten expects [B, T, H, W, D]
-            return self.na(x)
-        else:
-            return self._custom_na(x)
-
-    def _custom_na(self, x: torch.Tensor) -> torch.Tensor:
-        """Custom neighborhood attention using unfold (slower but works without natten)."""
-        B, T, H, W, D = x.shape
-        k_t, k_h, k_w = self.kernel_size
-
-        # Pad input for neighborhood extraction
-        # For unfold to output same size: pad = (kernel - 1) // 2 on left, kernel // 2 on right
-        pad_t_left, pad_t_right = (k_t - 1) // 2, k_t // 2
-        pad_h_left, pad_h_right = (k_h - 1) // 2, k_h // 2
-        pad_w_left, pad_w_right = (k_w - 1) // 2, k_w // 2
-
-        # Reshape for 3D unfold: [B, D, T, H, W]
-        x_pad = x.permute(0, 4, 1, 2, 3)
-        # F.pad order: (W_left, W_right, H_left, H_right, T_left, T_right)
-        x_pad = F.pad(x_pad, (pad_w_left, pad_w_right, pad_h_left, pad_h_right, pad_t_left, pad_t_right), mode='constant', value=0)
-
-        # Project Q, K, V
-        q = self.q_proj(x)  # [B, T, H, W, D]
-
-        # Extract neighborhoods for K, V using unfold
-        # This is memory-intensive but straightforward
-        x_unfolded = x_pad.unfold(2, k_t, 1).unfold(3, k_h, 1).unfold(4, k_w, 1)
-        # Shape: [B, D, T, H, W, k_t, k_h, k_w]
-        x_unfolded = x_unfolded.permute(0, 2, 3, 4, 5, 6, 7, 1)  # [B, T, H, W, k_t, k_h, k_w, D]
-        x_unfolded = x_unfolded.reshape(B, T, H, W, k_t * k_h * k_w, D)
-
-        k = self.k_proj(x_unfolded)  # [B, T, H, W, k³, D]
-        v = self.v_proj(x_unfolded)  # [B, T, H, W, k³, D]
-
-        # Reshape for multi-head attention
-        q = q.reshape(B, T, H, W, self.num_heads, self.head_dim)
-        k = k.reshape(B, T, H, W, k_t * k_h * k_w, self.num_heads, self.head_dim)
-        v = v.reshape(B, T, H, W, k_t * k_h * k_w, self.num_heads, self.head_dim)
-
-        # Compute attention: q @ k^T
-        # q: [B, T, H, W, heads, head_dim]
-        # k: [B, T, H, W, k³, heads, head_dim]
-        q = q.unsqueeze(4)  # [B, T, H, W, 1, heads, head_dim]
-        attn = torch.sum(q * k, dim=-1)  # [B, T, H, W, k³, heads]
-        attn = attn / math.sqrt(self.head_dim)
-
-        # Apply causal mask if needed
-        if self.is_causal:
-            causal_mask = self._create_causal_neighbor_mask(T, k_t, x.device)
-            # causal_mask: [T, k_t] -> expand to [1, T, 1, 1, k_t*k_h*k_w, 1]
-            causal_mask = causal_mask.unsqueeze(0).unsqueeze(2).unsqueeze(2)
-            causal_mask = causal_mask.unsqueeze(-1).expand(-1, -1, H, W, -1, self.num_heads)
-            # Repeat for spatial neighbors
-            causal_mask = causal_mask.repeat(1, 1, 1, 1, k_h * k_w, 1)
-            causal_mask = causal_mask.reshape(1, T, H, W, k_t * k_h * k_w, self.num_heads)
-            attn = attn.masked_fill(causal_mask, float('-inf'))
-
-        attn = F.softmax(attn, dim=4)
-        attn = self.dropout(attn)
-
-        # Apply attention to values
-        attn = attn.unsqueeze(-1)  # [B, T, H, W, k³, heads, 1]
-        out = torch.sum(attn * v, dim=4)  # [B, T, H, W, heads, head_dim]
-        out = out.reshape(B, T, H, W, D)
-        out = self.o_proj(out)
-
-        return out
-
-    def _create_causal_neighbor_mask(self, T: int, k_t: int, device: torch.device) -> torch.Tensor:
-        """Create causal mask for temporal neighbors."""
-        # Left padding = (k_t - 1) // 2, so offset for neighbor index
-        pad_t_left = (k_t - 1) // 2
-        mask = torch.zeros(T, k_t, dtype=torch.bool, device=device)
-
-        for t in range(T):
-            for dt in range(k_t):
-                neighbor_t = t - pad_t_left + dt
-                # Mask future time steps
-                if neighbor_t > t:
-                    mask[t, dt] = True
-                # Mask padded positions
-                if neighbor_t < 0 or neighbor_t >= T:
-                    mask[t, dt] = True
-
-        return mask
+        return self.na(x)
 
 
 class NATransformerLayer(nn.Module):
@@ -498,7 +393,6 @@ if __name__ == "__main__":
     out_na = na(x_na)
     print(f"   Input:  {x_na.shape}")
     print(f"   Output: {out_na.shape}")
-    print(f"   Using natten: {na.use_natten}")
     assert out_na.shape == x_na.shape, "Shape mismatch!"
     print("   ✓ Passed")
 
