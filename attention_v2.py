@@ -287,7 +287,7 @@ class NeighborhoodAttention3D(nn.Module):
         self.is_causal = is_causal
 
         self.na = NattenNA3D(
-            dim=hidden_dim,
+            embed_dim=hidden_dim,
             num_heads=num_heads,
             kernel_size=kernel_size,
             dilation=1,
