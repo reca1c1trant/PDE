@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 
 from model_v2 import PDEModelV2
 from dataset_pretrain import create_pretrain_dataloaders, DEFAULT_TEMPORAL_LENGTH
+import metrics
 from metrics import metric_func
 
 
@@ -126,6 +127,10 @@ def evaluate_model(
     all_preds_gathered = accelerator.gather(all_preds.to(accelerator.device))
     all_targets_gathered = accelerator.gather(all_targets.to(accelerator.device))
 
+    # Move to CPU immediately to avoid GPU OOM
+    all_preds_gathered = all_preds_gathered.cpu()
+    all_targets_gathered = all_targets_gathered.cpu()
+
     results = {}
 
     if accelerator.is_main_process:
@@ -133,7 +138,11 @@ def evaluate_model(
         all_preds_gathered = all_preds_gathered.unsqueeze(-2)
         all_targets_gathered = all_targets_gathered.unsqueeze(-2)
 
-        # Compute metrics using metric_func
+        # Compute metrics using metric_func (on CPU to avoid OOM)
+        # Temporarily override metrics.device to CPU
+        original_device = metrics.device
+        metrics.device = torch.device('cpu')
+
         (
             err_RMSE,
             err_nRMSE,
@@ -150,6 +159,9 @@ def evaluate_model(
             iLow=4, iHigh=12,
             initial_step=0
         )
+
+        # Restore original device
+        metrics.device = original_device
 
         results = {
             'rmse': err_RMSE.item() if hasattr(err_RMSE, 'item') else float(err_RMSE),
