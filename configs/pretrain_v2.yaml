@@ -7,8 +7,8 @@ model:
   in_channels: 18          # 3 vector + 15 scalar
   hidden_dim: 768
   patch_size: 16
-  num_layers: 16
-  num_heads: 16
+  num_layers: 12
+  num_heads: 12
   dropout: 0.0
 
   # Encoder settings
@@ -48,7 +48,7 @@ training:
   # Teacher forcing ratio: determines when to switch to multi-step loss
   # Front X% uses teacher forcing (eval every epoch)
   # Back (1-X)% uses multi-step loss (eval every eval_interval_ar steps)
-  teacher_forcing_ratio: 0.5
+  teacher_forcing_ratio: 0.2
 
   # Multi-step loss settings
   multi_step_loss:
@@ -70,7 +70,7 @@ training:
   gradient_accumulation_steps: 1
 
 dataloader:
-  batch_size: 20            # Per GPU
+  batch_size: 8            # Per GPU
   num_workers: 4
   pin_memory: true
 

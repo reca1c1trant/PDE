@@ -1,14 +1,14 @@
 # V3 Pretraining Configuration - Teacher Forcing Only
 # Use train_ar.py for AR fine-tuning after this
 
-model_name: pde_v3_tf
+model_name: pde_v3_tf_s
 
 model:
   in_channels: 18          # 3 vector + 15 scalar
   hidden_dim: 768
   patch_size: 16
-  num_layers: 16
-  num_heads: 16
+  num_layers: 12
+  num_heads: 12
   dropout: 0.0
 
   encoder:
@@ -70,9 +70,9 @@ dataset:
       clips_per_epoch: null
 
 logging:
-  project: pde-foundation-v3
+  project: pde-foundation-v3_s
   entity: null
-  save_dir: ./checkpoints_v3
+  save_dir: ./checkpoints_v3_s
   log_interval: 10
 
 checkpoint:
