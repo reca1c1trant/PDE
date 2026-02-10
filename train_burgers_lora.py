@@ -1,11 +1,13 @@
 """
 LoRA Finetuning for 2D Burgers Equation using PDEModelV2.
 
+Loss: BC loss + PDE loss (NO RMSE - that would be cheating!)
+- BC loss: RMSE on boundary pixels (outermost interior points)
+- PDE loss: Burgers equation residual
+
 Uses Neighborhood Attention model with LoRA on:
 - NA Attention: qkv, proj
 - FFN: gate_proj, up_proj, down_proj
-
-Encoder and Decoder are UNFROZEN by default for better adaptation.
 
 Usage:
     torchrun --nproc_per_node=8 train_burgers_lora.py --config configs/finetune_burgers.yaml
@@ -54,6 +56,7 @@ from dataset_finetune import (
     create_finetune_dataloaders, TOTAL_CHANNELS
 )
 from model_lora_v2 import PDELoRAModelV2, save_lora_checkpoint, load_lora_checkpoint
+from pde_loss import burgers_pde_loss
 
 logger = logging.getLogger(__name__)
 
@@ -90,50 +93,36 @@ def get_lr_scheduler(optimizer, config: dict, total_steps: int):
     return LambdaLR(optimizer, lr_lambda)
 
 
-def compute_rmse_loss(
-    pred: torch.Tensor,
-    target: torch.Tensor,
-    channel_mask: torch.Tensor,
-) -> torch.Tensor:
-    """Compute RMSE loss with channel masking."""
-    mask = channel_mask[:, None, None, None, :].float()
-    diff_sq = (pred - target) ** 2
-    masked_diff_sq = diff_sq * mask
-    total_error = masked_diff_sq.sum()
-    num_valid = mask.sum() * pred.shape[1] * pred.shape[2] * pred.shape[3]
-    mse = total_error / (num_valid + 1e-8)
-    rmse = torch.sqrt(mse + 1e-8)
-    return rmse
-
-
-def compute_normalized_rmse_loss(
-    pred_norm: torch.Tensor,
-    target_norm: torch.Tensor,
-    channel_mask: torch.Tensor,
-) -> torch.Tensor:
-    """Compute RMSE in normalized space."""
-    return compute_rmse_loss(pred_norm, target_norm, channel_mask)
-
-
 def compute_boundary_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
     channel_mask: torch.Tensor,
 ) -> torch.Tensor:
-    """Compute boundary RMSE on 4 edges."""
+    """
+    Compute boundary RMSE on 4 edges (outermost interior points).
+
+    These are the points at coordinates like (1/256, 1/256), (3/256, 1/256), etc.
+    """
     if channel_mask.dim() == 1:
         valid_ch = torch.where(channel_mask > 0)[0]
     else:
         valid_ch = torch.where(channel_mask[0] > 0)[0]
 
-    left_pred = pred[:, :, 1:-1, 0, :][:, :, :, valid_ch]
-    left_target = target[:, :, 1:-1, 0, :][:, :, :, valid_ch]
-    right_pred = pred[:, :, 1:-1, -1, :][:, :, :, valid_ch]
-    right_target = target[:, :, 1:-1, -1, :][:, :, :, valid_ch]
-    bottom_pred = pred[:, :, 0, 1:-1, :][:, :, :, valid_ch]
-    bottom_target = target[:, :, 0, 1:-1, :][:, :, :, valid_ch]
-    top_pred = pred[:, :, -1, 1:-1, :][:, :, :, valid_ch]
-    top_target = target[:, :, -1, 1:-1, :][:, :, :, valid_ch]
+    # Left edge (x = 1/256, all y)
+    left_pred = pred[:, :, :, 0, :][:, :, :, valid_ch]
+    left_target = target[:, :, :, 0, :][:, :, :, valid_ch]
+
+    # Right edge (x = 255/256, all y)
+    right_pred = pred[:, :, :, -1, :][:, :, :, valid_ch]
+    right_target = target[:, :, :, -1, :][:, :, :, valid_ch]
+
+    # Bottom edge (y = 1/256, all x)
+    bottom_pred = pred[:, :, 0, :, :][:, :, :, valid_ch]
+    bottom_target = target[:, :, 0, :, :][:, :, :, valid_ch]
+
+    # Top edge (y = 255/256, all x)
+    top_pred = pred[:, :, -1, :, :][:, :, :, valid_ch]
+    top_target = target[:, :, -1, :, :][:, :, :, valid_ch]
 
     bc_pred = torch.cat([
         left_pred.reshape(-1), right_pred.reshape(-1),
@@ -148,13 +137,72 @@ def compute_boundary_loss(
     return torch.sqrt(mse + 1e-8)
 
 
+def compute_pde_loss(
+    output: torch.Tensor,
+    input_data: torch.Tensor,
+    batch: dict,
+    config: dict,
+    device: torch.device,
+) -> tuple:
+    """
+    Compute PDE residual loss for Burgers equation.
+
+    Args:
+        output: Model output [B, T_out, H, W, C] (denormalized)
+        input_data: Model input [B, T_in, H, W, C]
+        batch: Batch dict with boundaries and nu
+        config: Config dict
+        device: Device
+
+    Returns:
+        pde_loss, loss_u, loss_v
+    """
+    # Disable autocast for numerical stability
+    with torch.autocast(device_type='cuda', enabled=False):
+        # Prepend t0 frame to output for time derivative
+        # output is prediction for t[1:t_input+1], we need t[0] from input
+        t0_frame = input_data[:, 0:1, ..., :2].float()  # [B, 1, H, W, 2]
+        output_uv = output[..., :2].float()  # [B, T_out, H, W, 2]
+        pred_with_t0 = torch.cat([t0_frame, output_uv], dim=1)  # [B, T_out+1, H, W, 2]
+
+        # Get boundaries
+        boundary_left = batch['boundary_left'].to(device).float()
+        boundary_right = batch['boundary_right'].to(device).float()
+        boundary_bottom = batch['boundary_bottom'].to(device).float()
+        boundary_top = batch['boundary_top'].to(device).float()
+        nu = batch['nu'].to(device).float()
+
+        # Physics params
+        dt = config.get('physics', {}).get('dt', 1/999)
+        Lx = config.get('physics', {}).get('Lx', 1.0)
+        Ly = config.get('physics', {}).get('Ly', 1.0)
+
+        # Use mean nu for batch (all samples in batch have same nu due to same-sample batching)
+        nu_mean = nu.mean().item()
+
+        # Compute PDE loss
+        pde_loss, loss_u, loss_v, _, _ = burgers_pde_loss(
+            pred=pred_with_t0,
+            boundary_left=boundary_left,
+            boundary_right=boundary_right,
+            boundary_bottom=boundary_bottom,
+            boundary_top=boundary_top,
+            nu=nu_mean,
+            dt=dt,
+            Lx=Lx,
+            Ly=Ly,
+        )
+
+    return pde_loss, loss_u, loss_v
+
+
 @torch.no_grad()
-def validate(model, val_loader, accelerator, t_input: int = 8):
-    """Validate and return (rmse, bc_loss)."""
+def validate(model, val_loader, accelerator, config, t_input: int = 8):
+    """Validate and return (bc_loss, pde_loss)."""
     model.eval()
 
-    total_rmse = torch.zeros(1, device=accelerator.device)
     total_bc = torch.zeros(1, device=accelerator.device)
+    total_pde = torch.zeros(1, device=accelerator.device)
     num_batches = torch.zeros(1, device=accelerator.device)
 
     for batch in val_loader:
@@ -164,29 +212,35 @@ def validate(model, val_loader, accelerator, t_input: int = 8):
         input_data = data[:, :t_input]
         target_data = data[:, 1:t_input + 1]
 
+        # Forward (get denormalized output)
         output_norm, mean, std = model(input_data, return_normalized=True)
-        target_norm = (target_data - mean) / std
-
-        rmse = compute_normalized_rmse_loss(output_norm, target_norm, channel_mask)
         output = output_norm * std + mean
+
+        # BC loss
         bc_loss = compute_boundary_loss(output, target_data, channel_mask)
 
-        total_rmse += rmse.detach()
+        # PDE loss (if boundaries available)
+        if 'boundary_left' in batch:
+            pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator.device)
+        else:
+            pde_loss = torch.tensor(0.0, device=accelerator.device)
+
         total_bc += bc_loss.detach()
+        total_pde += pde_loss.detach()
         num_batches += 1
 
     accelerator.wait_for_everyone()
 
-    total_rmse = accelerator.reduce(total_rmse, reduction='sum')
     total_bc = accelerator.reduce(total_bc, reduction='sum')
+    total_pde = accelerator.reduce(total_pde, reduction='sum')
     num_batches = accelerator.reduce(num_batches, reduction='sum')
 
     model.train()
 
-    avg_rmse = (total_rmse / num_batches).item() if num_batches.item() > 0 else 0
     avg_bc = (total_bc / num_batches).item() if num_batches.item() > 0 else 0
+    avg_pde = (total_pde / num_batches).item() if num_batches.item() > 0 else 0
 
-    return avg_rmse, avg_bc
+    return avg_bc, avg_pde
 
 
 def main():
@@ -198,6 +252,7 @@ def main():
     warmup_steps = config['training'].get('warmup_steps', 100)
     log_interval = config['logging']['log_interval']
     lambda_bc = config['training'].get('lambda_bc', 1.0)
+    lambda_pde = config['training'].get('lambda_pde', 1.0)
     grad_clip = config['training'].get('grad_clip', 1.0)
     eval_interval = config['training'].get('eval_interval', 100)
     early_stopping_patience = config['training'].get('early_stopping_patience', 15)
@@ -217,8 +272,8 @@ def main():
         logger.info(f"Burgers2D LoRA Finetuning (V2 Model)")
         logger.info(f"{'='*60}")
         logger.info(f"Config: {args.config}")
-        logger.info(f"Max Epochs: {max_epochs}")
-        logger.info(f"Lambda BC: {lambda_bc}")
+        logger.info(f"Loss: BC + PDE (NO RMSE!)")
+        logger.info(f"Lambda BC: {lambda_bc}, Lambda PDE: {lambda_pde}")
         logger.info(f"{'='*60}")
 
     temporal_length = t_input + 1
@@ -290,7 +345,7 @@ def main():
             init_kwargs={"wandb": {
                 "entity": config['logging'].get('entity'),
                 "name": run_name,
-                "tags": ["burgers", "lora", "v2", "NA"],
+                "tags": ["burgers", "lora", "v2", "NA", "BC+PDE"],
             }}
         )
 
@@ -321,8 +376,8 @@ def main():
                 break
 
             train_sampler.set_epoch(epoch)
-            epoch_rmse = 0.0
             epoch_bc = 0.0
+            epoch_pde = 0.0
             epoch_steps = 0
 
             for batch in train_loader:
@@ -337,13 +392,23 @@ def main():
                 in_warmup = global_step < warmup_steps
 
                 with accelerator.accumulate(model):
+                    # Forward pass
                     output_norm, mean, std = model(input_data, return_normalized=True)
-                    target_norm = (target_data - mean) / std
+                    output = output_norm * std + mean  # Denormalize
 
-                    rmse_loss = compute_normalized_rmse_loss(output_norm, target_norm, channel_mask)
-                    output = output_norm * std + mean
+                    # BC loss (boundary pixels)
                     bc_loss = compute_boundary_loss(output, target_data, channel_mask)
-                    loss = rmse_loss + lambda_bc * bc_loss
+
+                    # PDE loss
+                    if 'boundary_left' in batch:
+                        pde_loss, loss_u, loss_v = compute_pde_loss(
+                            output, input_data, batch, config, accelerator.device
+                        )
+                    else:
+                        pde_loss = torch.tensor(0.0, device=accelerator.device)
+
+                    # Total loss = BC + PDE (NO RMSE!)
+                    loss = lambda_bc * bc_loss + lambda_pde * pde_loss
 
                     accelerator.backward(loss)
                     if grad_clip > 0:
@@ -355,41 +420,41 @@ def main():
                 global_step += 1
                 epoch_steps += 1
 
-                rmse_reduced = accelerator.reduce(rmse_loss.detach(), reduction='mean')
                 bc_reduced = accelerator.reduce(bc_loss.detach(), reduction='mean')
-                epoch_rmse += rmse_reduced.item()
+                pde_reduced = accelerator.reduce(pde_loss.detach(), reduction='mean')
                 epoch_bc += bc_reduced.item()
+                epoch_pde += pde_reduced.item()
 
                 phase_str = "[warmup]" if in_warmup else f"[E{epoch+1}]"
                 progress.update(
                     train_task, advance=1,
-                    description=f"{phase_str} RMSE={rmse_reduced.item():.4f} BC={bc_reduced.item():.4f}"
+                    description=f"{phase_str} BC={bc_reduced.item():.4f} PDE={pde_reduced.item():.4f}"
                 )
 
                 if global_step % log_interval == 0:
                     accelerator.log({
-                        'train/rmse_loss': rmse_reduced.item(),
                         'train/bc_loss': bc_reduced.item(),
-                        'train/total_loss': rmse_reduced.item() + lambda_bc * bc_reduced.item(),
+                        'train/pde_loss': pde_reduced.item(),
+                        'train/total_loss': lambda_bc * bc_reduced.item() + lambda_pde * pde_reduced.item(),
                         'train/lr': scheduler.get_last_lr()[0],
                         'train/epoch': epoch + 1,
                     }, step=global_step)
 
                 if global_step % eval_interval == 0:
                     accelerator.wait_for_everyone()
-                    val_rmse, val_bc = validate(model, val_loader, accelerator, t_input)
-                    val_loss = val_rmse + lambda_bc * val_bc
+                    val_bc, val_pde = validate(model, val_loader, accelerator, config, t_input)
+                    val_loss = lambda_bc * val_bc + lambda_pde * val_pde
 
                     accelerator.log({
-                        'val/rmse_loss': val_rmse,
                         'val/bc_loss': val_bc,
+                        'val/pde_loss': val_pde,
                         'val/total_loss': val_loss,
                     }, step=global_step)
 
                     if accelerator.is_main_process:
                         console.print(
                             f"\n[green]Step {global_step}/{total_steps} {phase_str}:[/green] "
-                            f"val_rmse={val_rmse:.6f}, val_bc={val_bc:.6f}"
+                            f"val_bc={val_bc:.6f}, val_pde={val_pde:.6f}"
                         )
 
                     if not in_warmup:
@@ -402,7 +467,7 @@ def main():
                                     optimizer=optimizer,
                                     scheduler=scheduler,
                                     global_step=global_step,
-                                    metrics={'rmse': val_rmse, 'bc': val_bc},
+                                    metrics={'bc': val_bc, 'pde': val_pde},
                                     save_path=str(save_dir / 'best_lora.pt'),
                                     config=config,
                                     patience_counter=patience_counter,
@@ -425,11 +490,11 @@ def main():
                     model.train()
 
             if epoch_steps > 0 and accelerator.is_main_process:
-                avg_rmse = epoch_rmse / epoch_steps
                 avg_bc = epoch_bc / epoch_steps
+                avg_pde = epoch_pde / epoch_steps
                 console.print(
                     f"\n[blue]Epoch {epoch+1}/{max_epochs}:[/blue] "
-                    f"avg_rmse={avg_rmse:.6f}, avg_bc={avg_bc:.6f}"
+                    f"avg_bc={avg_bc:.6f}, avg_pde={avg_pde:.6f}"
                 )
 
     accelerator.end_training()

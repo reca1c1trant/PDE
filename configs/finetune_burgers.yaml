@@ -61,7 +61,8 @@ training:
   grad_clip: 1.0
 
   # Loss weights
-  lambda_bc: 1.0  # Boundary loss weight
+  lambda_bc: 1.0   # Boundary loss weight
+  lambda_pde: 0.1  # PDE loss weight (start smaller, can increase)
 
   # Eval interval (steps)
   eval_interval: 100
@@ -93,3 +94,8 @@ logging:
 
 checkpoint:
   resume_from: null
+
+physics:
+  dt: 0.001001001  # 1/999 (1000 timesteps over [0, 1])
+  Lx: 1.0
+  Ly: 1.0

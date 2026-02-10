@@ -225,6 +225,21 @@ class FinetuneDataset(Dataset):
             'vector_dim': torch.tensor(self.vector_dim, dtype=torch.long),
         }
 
+        # Load boundary data if available (for PDE loss)
+        if 'boundary_left' in f:
+            result['boundary_left'] = torch.from_numpy(
+                np.array(f['boundary_left'][sample_idx, start_t:end_t], dtype=np.float32)
+            )
+            result['boundary_right'] = torch.from_numpy(
+                np.array(f['boundary_right'][sample_idx, start_t:end_t], dtype=np.float32)
+            )
+            result['boundary_bottom'] = torch.from_numpy(
+                np.array(f['boundary_bottom'][sample_idx, start_t:end_t], dtype=np.float32)
+            )
+            result['boundary_top'] = torch.from_numpy(
+                np.array(f['boundary_top'][sample_idx, start_t:end_t], dtype=np.float32)
+            )
+
         return result
 
     def _load_old_format(
