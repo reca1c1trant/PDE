@@ -13,6 +13,7 @@
    - phi_e = 1.5*phiC - 0.5*phiW  (if uc_e >= 0)
    - phi_e = 1.5*phiE - 0.5*phiEE (if uc_e < 0)
 3. Flux 差分: (uc_e*phi_e - uc_w*phi_w) / dx
+4. Ghost cell使用domain边界值(x=0,1,y=0,1)线性外推
 
 Author: Ziye
 Date: January 2025
@@ -39,7 +40,10 @@ def pad_with_boundaries_2x(
     Parameters:
     -----------
     interior : torch.Tensor [B, T, H, W]
-    boundary_* : torch.Tensor
+    boundary_left : [B, T, H] (x=0的值)
+    boundary_right : [B, T, H] (x=1的值)
+    boundary_bottom : [B, T, W] (y=0的值)
+    boundary_top : [B, T, W] (y=1的值)
 
     Returns:
     --------
@@ -47,18 +51,18 @@ def pad_with_boundaries_2x(
     """
     B, T, H, W = interior.shape
 
-    bl = boundary_left.squeeze(-1)      # [B, T, H]
-    br = boundary_right.squeeze(-1)
-    bb = boundary_bottom.squeeze(-2)    # [B, T, W]
-    bt = boundary_top.squeeze(-2)
+    bl = boundary_left      # [B, T, H]
+    br = boundary_right
+    bb = boundary_bottom    # [B, T, W]
+    bt = boundary_top
 
-    # 第一层 ghost cells (1x距离)
+    # 第一层 ghost cells (1x距离外推)
     ghost_left_1 = 2 * bl - interior[..., 0]
     ghost_right_1 = 2 * br - interior[..., -1]
     ghost_bottom_1 = 2 * bb - interior[..., 0, :]
     ghost_top_1 = 2 * bt - interior[..., -1, :]
 
-    # 第二层 ghost cells (2x距离)
+    # 第二层 ghost cells (2x距离外推)
     ghost_left_2 = 2 * ghost_left_1 - bl
     ghost_right_2 = 2 * ghost_right_1 - br
     ghost_bottom_2 = 2 * ghost_bottom_1 - bb
@@ -309,8 +313,14 @@ def burgers_pde_loss(
     -----------
     pred : torch.Tensor [B, T, H, W, 2]
         预测的速度场，最后维度是 (u, v)
-    boundary_* : torch.Tensor
-        边界值
+    boundary_left : torch.Tensor [B, T, H, 1, 2]
+        左边界值 (x=0)
+    boundary_right : torch.Tensor [B, T, H, 1, 2]
+        右边界值 (x=1)
+    boundary_bottom : torch.Tensor [B, T, 1, W, 2]
+        下边界值 (y=0)
+    boundary_top : torch.Tensor [B, T, 1, W, 2]
+        上边界值 (y=1)
     nu : float
         粘度系数
     dt : float
@@ -337,14 +347,14 @@ def burgers_pde_loss(
     v = pred[..., 1]
 
     # 提取边界的 u 和 v
-    u_left = boundary_left[..., 0]
-    v_left = boundary_left[..., 1]
-    u_right = boundary_right[..., 0]
-    v_right = boundary_right[..., 1]
-    u_bottom = boundary_bottom[..., 0]
-    v_bottom = boundary_bottom[..., 1]
-    u_top = boundary_top[..., 0]
-    v_top = boundary_top[..., 1]
+    u_left = boundary_left[..., 0].squeeze(-1)      # [B, T, H]
+    v_left = boundary_left[..., 1].squeeze(-1)
+    u_right = boundary_right[..., 0].squeeze(-1)
+    v_right = boundary_right[..., 1].squeeze(-1)
+    u_bottom = boundary_bottom[..., 0].squeeze(-2)  # [B, T, W]
+    v_bottom = boundary_bottom[..., 1].squeeze(-2)
+    u_top = boundary_top[..., 0].squeeze(-2)
+    v_top = boundary_top[..., 1].squeeze(-2)
 
     # Padding (2层 ghost cells)
     u_padded = pad_with_boundaries_2x(u, u_left, u_right, u_bottom, u_top)

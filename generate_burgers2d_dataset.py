@@ -52,13 +52,13 @@ def generate_single_sample(nu, x_interior, y_interior, t):
     data : ndarray [T, H, W, 3]
         Interior domain data with [Vx, Vy, Vz] where Vz=0
     boundary_left : ndarray [T, H, 1, 2]
-        Left boundary (x=1/256, outermost interior) with [u, v]
+        Left boundary (x=0, domain edge) with [u, v] for ghost cell
     boundary_right : ndarray [T, H, 1, 2]
-        Right boundary (x=255/256, outermost interior) with [u, v]
+        Right boundary (x=1, domain edge) with [u, v] for ghost cell
     boundary_bottom : ndarray [T, 1, W, 2]
-        Bottom boundary (y=1/256, outermost interior) with [u, v]
+        Bottom boundary (y=0, domain edge) with [u, v] for ghost cell
     boundary_top : ndarray [T, 1, W, 2]
-        Top boundary (y=255/256, outermost interior) with [u, v]
+        Top boundary (y=1, domain edge) with [u, v] for ghost cell
     """
     T_steps, H, W = len(t), len(y_interior), len(x_interior)
 
@@ -80,27 +80,27 @@ def generate_single_sample(nu, x_interior, y_interior, t):
         data[k, :, :, 1] = v  # Vy
         # data[k, :, :, 2] = 0  # Vz (already zeros)
 
-        # Left boundary (x=1/256, outermost interior column)
+        # Left boundary (x=0, domain boundary for ghost cell)
         for i in range(H):
-            u_bnd, v_bnd = analytical_solution(x_interior[0], y_interior[i], t[k], nu)
+            u_bnd, v_bnd = analytical_solution(0.0, y_interior[i], t[k], nu)
             boundary_left[k, i, 0, 0] = u_bnd
             boundary_left[k, i, 0, 1] = v_bnd
 
-        # Right boundary (x=255/256, outermost interior column)
+        # Right boundary (x=1, domain boundary for ghost cell)
         for i in range(H):
-            u_bnd, v_bnd = analytical_solution(x_interior[-1], y_interior[i], t[k], nu)
+            u_bnd, v_bnd = analytical_solution(1.0, y_interior[i], t[k], nu)
             boundary_right[k, i, 0, 0] = u_bnd
             boundary_right[k, i, 0, 1] = v_bnd
 
-        # Bottom boundary (y=1/256, outermost interior row)
+        # Bottom boundary (y=0, domain boundary for ghost cell)
         for j in range(W):
-            u_bnd, v_bnd = analytical_solution(x_interior[j], y_interior[0], t[k], nu)
+            u_bnd, v_bnd = analytical_solution(x_interior[j], 0.0, t[k], nu)
             boundary_bottom[k, 0, j, 0] = u_bnd
             boundary_bottom[k, 0, j, 1] = v_bnd
 
-        # Top boundary (y=255/256, outermost interior row)
+        # Top boundary (y=1, domain boundary for ghost cell)
         for j in range(W):
-            u_bnd, v_bnd = analytical_solution(x_interior[j], y_interior[-1], t[k], nu)
+            u_bnd, v_bnd = analytical_solution(x_interior[j], 1.0, t[k], nu)
             boundary_top[k, 0, j, 0] = u_bnd
             boundary_top[k, 0, j, 1] = v_bnd
 
@@ -172,7 +172,7 @@ def generate_dataset():
 
     print(f"  Interior x grid: [{x_interior[0]:.8f}, {x_interior[-1]:.8f}]")
     print(f"  Interior y grid: [{y_interior[0]:.8f}, {y_interior[-1]:.8f}]")
-    print(f"  Boundary: outermost interior points (x=1/256, 255/256; y=1/256, 255/256)")
+    print(f"  Boundary: domain edges (x=0, x=1, y=0, y=1) for PDE ghost cell")
 
     # Step 3: Generate samples
     print(f"\n[Step 3/4] Generating {N_SAMPLES} samples...")
@@ -265,10 +265,10 @@ def generate_dataset():
     print(f"\nOutput: {OUTPUT_FILE}")
     print(f"\nFormat:")
     print(f"  - vector: [N, T, H, W, 3] (Vx, Vy, Vz=0)")
-    print(f"  - boundary_left: [N, T, H, 1, 2] (x=1/256)")
-    print(f"  - boundary_right: [N, T, H, 1, 2] (x=255/256)")
-    print(f"  - boundary_bottom: [N, T, 1, W, 2] (y=1/256)")
-    print(f"  - boundary_top: [N, T, 1, W, 2] (y=255/256)")
+    print(f"  - boundary_left: [N, T, H, 1, 2] (x=0, for ghost cell)")
+    print(f"  - boundary_right: [N, T, H, 1, 2] (x=1, for ghost cell)")
+    print(f"  - boundary_bottom: [N, T, 1, W, 2] (y=0, for ghost cell)")
+    print(f"  - boundary_top: [N, T, 1, W, 2] (y=1, for ghost cell)")
     print(f"  - nu: [N] (viscosity)")
 
 

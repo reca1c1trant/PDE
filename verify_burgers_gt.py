@@ -165,17 +165,6 @@ def main():
 
         all_bc_rmses.append(bc_rmse.item())
 
-        # Verify boundary data matches interior edges
-        print(f"\n  Boundary consistency check:")
-        left_interior = data[0, :, :, 0, :]  # [T, H, 2]
-        left_boundary = sample['boundary_left'][:, :, 0, :]  # [T, H, 2]
-        left_diff = (left_interior - left_boundary).abs().max().item()
-        print(f"    Left: interior[:,0] vs boundary_left diff = {left_diff:.2e}")
-
-        right_interior = data[0, :, :, -1, :]
-        right_boundary = sample['boundary_right'][:, :, 0, :]
-        right_diff = (right_interior - right_boundary).abs().max().item()
-        print(f"    Right: interior[:,-1] vs boundary_right diff = {right_diff:.2e}")
 
     # Summary
     print("\n" + "=" * 60)
