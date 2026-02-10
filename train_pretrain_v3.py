@@ -249,6 +249,9 @@ def main():
     eval_interval = config['training'].get('eval_interval', 0)  # 0 = every epoch
     t_input = config['dataset'].get('t_input', 8)
 
+    # Per-dataset loss weights
+    loss_weights = config['dataset'].get('loss_weights', {})
+
     resume_path = args.resume or config.get('checkpoint', {}).get('resume_from')
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
@@ -383,6 +386,11 @@ def main():
                     loss = compute_normalized_rmse_loss(
                         output_norm.float(), target_norm.float(), channel_mask
                     )
+
+                    # Apply per-dataset loss weight
+                    ds_name = batch['dataset_names'][0]
+                    weight = loss_weights.get(ds_name, 1.0)
+                    loss = loss * weight
 
                     accelerator.backward(loss)
 

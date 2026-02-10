@@ -331,6 +331,9 @@ def main():
     num_steps = config['training'].get('multi_step_loss', {}).get('num_steps', 3)
     lambda_decay = config['training'].get('multi_step_loss', {}).get('lambda', 0.5)
 
+    # Per-dataset loss weights
+    loss_weights = config['dataset'].get('loss_weights', {})
+
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
     accelerator = Accelerator(
@@ -468,6 +471,11 @@ def main():
                         lambda_decay=lambda_decay,
                         t_input=t_input,
                     )
+
+                    # Apply per-dataset loss weight
+                    ds_name = batch['dataset_names'][0]
+                    weight = loss_weights.get(ds_name, 1.0)
+                    loss = loss * weight
 
                     accelerator.backward(loss)
 

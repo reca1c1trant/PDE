@@ -61,6 +61,13 @@ dataset:
   # temporal_length = t_input + 1 = 9 (TF only needs one more step)
   clips_ratio: 0.49
 
+  # Per-dataset loss weights (optional, default=1.0)
+  # Use to balance contributions from datasets with different RMSE scales
+  loss_weights:
+    diffusion_reaction: 1.0
+    2d_cfd: 1.0
+    swe: 1.0
+
   overrides:
     diffusion_reaction:
       clips_per_epoch: null
