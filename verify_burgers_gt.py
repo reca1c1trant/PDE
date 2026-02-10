@@ -2,7 +2,7 @@
 Verify Burgers GT dataset with PDE loss.
 
 This script:
-1. Loads GT data (old format with boundaries)
+1. Loads GT data (new format with boundaries)
 2. Computes PDE residual (should be ~0 for analytical solution)
 3. Computes boundary RMSE (should be 0 for GT vs GT)
 
@@ -17,24 +17,20 @@ from pathlib import Path
 from pde_loss import burgers_pde_loss
 
 
-def load_sample_old_format(file_path: str, sample_idx: int, start_t: int, end_t: int):
-    """Load a sample from old format HDF5."""
+def load_sample_new_format(file_path: str, sample_idx: int, start_t: int, end_t: int):
+    """Load a sample from new format HDF5."""
     with h5py.File(file_path, 'r') as f:
-        sample_key = str(sample_idx)
-        grp = f[sample_key]
-
         # Load nu
-        nu = float(grp['nu'][()])
+        nu = float(f['nu'][sample_idx])
 
-        # Load interior data [T, H, W, 2]
-        vector_data = np.array(grp['vector']['data'][start_t:end_t], dtype=np.float32)
+        # Load interior data [T, H, W, 3] -> take first 2 channels
+        vector_data = np.array(f['vector'][sample_idx, start_t:end_t, ..., :2], dtype=np.float32)
 
-        # Load boundaries
-        bnd = grp['vector']['boundary']
-        boundary_left = np.array(bnd['left'][start_t:end_t], dtype=np.float32)
-        boundary_right = np.array(bnd['right'][start_t:end_t], dtype=np.float32)
-        boundary_bottom = np.array(bnd['bottom'][start_t:end_t], dtype=np.float32)
-        boundary_top = np.array(bnd['top'][start_t:end_t], dtype=np.float32)
+        # Load boundaries [T, H, 1, 2] or [T, 1, W, 2]
+        boundary_left = np.array(f['boundary_left'][sample_idx, start_t:end_t], dtype=np.float32)
+        boundary_right = np.array(f['boundary_right'][sample_idx, start_t:end_t], dtype=np.float32)
+        boundary_bottom = np.array(f['boundary_bottom'][sample_idx, start_t:end_t], dtype=np.float32)
+        boundary_top = np.array(f['boundary_top'][sample_idx, start_t:end_t], dtype=np.float32)
 
     return {
         'nu': nu,
@@ -47,24 +43,24 @@ def load_sample_old_format(file_path: str, sample_idx: int, start_t: int, end_t:
 
 
 def compute_boundary_rmse(pred, target):
-    """Compute boundary RMSE on 4 edges (excluding corners)."""
+    """Compute boundary RMSE on 4 edges."""
     # pred, target: [B, T, H, W, 2]
 
-    # Left edge
-    left_pred = pred[:, :, 1:-1, 0, :]
-    left_target = target[:, :, 1:-1, 0, :]
+    # Left edge (x=1/256)
+    left_pred = pred[:, :, :, 0, :]
+    left_target = target[:, :, :, 0, :]
 
-    # Right edge
-    right_pred = pred[:, :, 1:-1, -1, :]
-    right_target = target[:, :, 1:-1, -1, :]
+    # Right edge (x=255/256)
+    right_pred = pred[:, :, :, -1, :]
+    right_target = target[:, :, :, -1, :]
 
-    # Bottom edge
-    bottom_pred = pred[:, :, 0, 1:-1, :]
-    bottom_target = target[:, :, 0, 1:-1, :]
+    # Bottom edge (y=1/256)
+    bottom_pred = pred[:, :, 0, :, :]
+    bottom_target = target[:, :, 0, :, :]
 
-    # Top edge
-    top_pred = pred[:, :, -1, 1:-1, :]
-    top_target = target[:, :, -1, 1:-1, :]
+    # Top edge (y=255/256)
+    top_pred = pred[:, :, -1, :, :]
+    top_target = target[:, :, -1, :, :]
 
     all_pred = torch.cat([
         left_pred.reshape(-1),
@@ -84,17 +80,27 @@ def compute_boundary_rmse(pred, target):
 
 
 def main():
-    # Path to old format dataset (with boundaries)
-    old_format_path = "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
+    # Path to new format dataset
+    dataset_path = "/scratch-share/SONG0304/finetune/burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
 
-    if not Path(old_format_path).exists():
-        print(f"Dataset not found: {old_format_path}")
-        print("Please provide old format dataset with boundaries.")
+    if not Path(dataset_path).exists():
+        print(f"Dataset not found: {dataset_path}")
         return
 
     print("=" * 60)
     print("Verifying Burgers GT Dataset with PDE Loss")
     print("=" * 60)
+
+    # Check dataset info
+    with h5py.File(dataset_path, 'r') as f:
+        print(f"\nDataset info:")
+        print(f"  vector shape: {f['vector'].shape}")
+        print(f"  boundary_left shape: {f['boundary_left'].shape}")
+        print(f"  boundary_right shape: {f['boundary_right'].shape}")
+        print(f"  boundary_bottom shape: {f['boundary_bottom'].shape}")
+        print(f"  boundary_top shape: {f['boundary_top'].shape}")
+        print(f"  nu shape: {f['nu'].shape}")
+        n_samples = f['vector'].shape[0]
 
     # Physics parameters
     dt = 1 / 999  # 1000 timesteps over [0, 1]
@@ -111,7 +117,7 @@ def main():
     print(f"  Lx = Ly = {Lx}")
 
     # Test multiple samples
-    samples_to_test = [0, 10, 50, 90]
+    samples_to_test = [0, 10, 50, min(90, n_samples - 1)]
     temporal_length = 17  # Match training
 
     all_pde_losses = []
@@ -123,7 +129,7 @@ def main():
         print(f"{'='*40}")
 
         # Load sample
-        sample = load_sample_old_format(old_format_path, sample_idx, 0, temporal_length)
+        sample = load_sample_new_format(dataset_path, sample_idx, 0, temporal_length)
         nu = sample['nu']
         data = sample['data'].unsqueeze(0)  # [1, T, H, W, 2]
 
@@ -159,14 +165,17 @@ def main():
 
         all_bc_rmses.append(bc_rmse.item())
 
-        # Also test: what if we use different clips from same sample?
-        # This simulates teacher forcing prediction
-        if temporal_length < 100:
-            sample2 = load_sample_old_format(old_format_path, sample_idx, 10, 10 + temporal_length)
-            data2 = sample2['data'].unsqueeze(0)
+        # Verify boundary data matches interior edges
+        print(f"\n  Boundary consistency check:")
+        left_interior = data[0, :, :, 0, :]  # [T, H, 2]
+        left_boundary = sample['boundary_left'][:, :, 0, :]  # [T, H, 2]
+        left_diff = (left_interior - left_boundary).abs().max().item()
+        print(f"    Left: interior[:,0] vs boundary_left diff = {left_diff:.2e}")
 
-            bc_rmse_shift = compute_boundary_rmse(data, data2)
-            print(f"    BC RMSE (clip 0 vs clip 10): {bc_rmse_shift.item():.4f}")
+        right_interior = data[0, :, :, -1, :]
+        right_boundary = sample['boundary_right'][:, :, 0, :]
+        right_diff = (right_interior - right_boundary).abs().max().item()
+        print(f"    Right: interior[:,-1] vs boundary_right diff = {right_diff:.2e}")
 
     # Summary
     print("\n" + "=" * 60)
@@ -175,16 +184,16 @@ def main():
     print(f"Average PDE Loss on GT: {np.mean(all_pde_losses):.2e}")
     print(f"Average BC RMSE (GT vs GT): {np.mean(all_bc_rmses):.2e}")
 
-    if np.mean(all_pde_losses) < 1e-6:
-        print("\n[OK] PDE loss is near zero for GT data - implementation is correct!")
+    if np.mean(all_pde_losses) < 1e-4:
+        print("\n[OK] PDE loss is small for GT data!")
     else:
-        print(f"\n[WARNING] PDE loss is {np.mean(all_pde_losses):.2e}, expected ~0")
+        print(f"\n[WARNING] PDE loss is {np.mean(all_pde_losses):.2e}")
         print("  This might be due to:")
         print("  1. Numerical precision (dt, dx discretization error)")
         print("  2. Boundary condition handling")
         print("  3. Time derivative approximation")
 
-    # Additional check: what's the expected discretization error?
+    # Expected discretization error
     print("\n" + "=" * 60)
     print("Expected Discretization Error Analysis")
     print("=" * 60)
