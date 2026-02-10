@@ -1,97 +1,95 @@
-# Burgers2D LoRA Finetuning Configuration
-# Pure PDE Loss Training (no ground truth supervision)
-#
-# Training Budget (with default settings):
-#   - 90 train samples x 100 clips/sample = 9000 clips/epoch
-#   - batch_size=4 -> 2250 steps/epoch
-#   - 10 epochs -> ~22500 total steps
+# Burgers2D LoRA Finetuning Configuration (V2 Model)
+# Uses PDEModelV2 with Neighborhood Attention
 
-# Model
+model_name: burgers_lora_v2
+
 model:
-  pretrained_path: "./checkpoints_e2e_medium_full_v3/best.pt"
+  # Must match pretrained model architecture
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 16
+  num_heads: 16
+  dropout: 0.0
 
-  # Must match pretrained model config
-  in_channels: 6
-  noise_level: 0.0  # Disable noise for finetuning
-  use_flash_attention: false
-  gradient_checkpointing: true
-
-  # Encoder config (must match pretrained)
   encoder:
-    version: "v2"
-    channels: [64, 128, 256]
-    use_resblock: true
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
 
-  # Transformer config (must match pretrained)
-  transformer:
-    hidden_size: 768
-    num_hidden_layers: 10
-    num_attention_heads: 12
-    num_key_value_heads: 4
-    intermediate_size: 3072
-    hidden_act: "silu"
-    max_position_embeddings: 4096
-    rms_norm_eps: 1.0e-5
-    rope_theta: 500000.0
-    attention_dropout: 0.0
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
 
-  # LoRA config
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+
+  vector_channels: 3
+  scalar_channels: 15
+
+  # Pretrained checkpoint path
+  pretrained_path: ./checkpoints_v3/best_tf.pt
+
+  # Freeze options (default: both unfrozen for better adaptation)
+  freeze_encoder: false
+  freeze_decoder: false
+
+  # LoRA configuration
   lora:
     r: 16
     alpha: 32
     dropout: 0.05
     target_modules:
-      - "q_proj"
-      - "k_proj"
-      - "v_proj"
-      - "o_proj"
-      - "gate_proj"
-      - "up_proj"
-      - "down_proj"
+      - qkv       # NA Attention QKV projection
+      - proj      # NA Attention output projection
+      - gate_proj # FFN SwiGLU
+      - up_proj   # FFN SwiGLU
+      - down_proj # FFN SwiGLU
 
-# Dataset
-dataset:
-  path: "./burgers2d_nu0.1_0.15_res128_t1000_n100.h5"
-  temporal_length: 16  # Will load 17 frames (16+1)
-  train_ratio: 0.9
-  seed: 42
-  clips_per_sample: null  # K=100 clips per sample per epoch (方案C)
+training:
+  max_epochs: 30
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_steps: 200
+  min_lr: 1.0e-6
+  grad_clip: 1.0
 
-# Physics parameters
-physics:
-  dt: 0.001001001  # 1/999, time step from Burgers dataset
-  dx: 0.0078125    # 1/128, spatial step
-  Lx: 1.0          # Domain length in x
-  Ly: 1.0          # Domain length in y
+  # Loss weights
+  lambda_bc: 1.0  # Boundary loss weight
 
-# DataLoader
+  # Eval interval (steps)
+  eval_interval: 100
+
+  # Early stopping
+  early_stopping_patience: 20
+
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
 dataloader:
   batch_size: 8
   num_workers: 4
   pin_memory: true
 
-# Training
-training:
-  max_epochs: 15  # Epoch-based training with balanced sampling
-  warmup_steps: 200
-  learning_rate: 1.0e-4
-  min_lr: 1.0e-6
-  weight_decay: 1.0e-4
-  betas: [0.9, 0.999]
-  grad_clip: 5.0
+dataset:
+  path: /scratch-share/SONG0304/finetune/burgers2d_nu0.1_0.15_res128_t1000_n100.h5
+  seed: 42
+  t_input: 8
+  train_ratio: 0.9
+  clips_per_sample: 100
+  vector_dim: 2  # 2D velocity (Vz=0)
 
-  # Loss weights (matching train_flow_lora.py)
-  lambda_pde: 0.01    # PDE residual loss weight
-  lambda_bc: 1.0     # Boundary loss weight
-
-  mixed_precision: "no"
-  gradient_accumulation_steps: 1
-  eval_interval: 100  # Validate every N steps
-  early_stopping_patience: 20  # Stop if no improvement for N validations
-
-# Logging
 logging:
-  project: "pde-burgers-lora"
-  entity: "reca1c1trant-ntu"  # Update with your wandb entity
-  save_dir: "./checkpoints_burgers_lora"
+  project: pde-burgers-lora
+  entity: null
+  save_dir: ./checkpoints_burgers_lora
   log_interval: 10
+
+checkpoint:
+  resume_from: null
