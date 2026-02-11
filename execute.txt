@@ -1,27 +1,2 @@
-# 安装 the_well 库
-pip install the_well
-
-# 下载并测试 Rayleigh-Bénard 数据
-python -c "
-from the_well.data import WellDataset
-import torch
-import h5py
-
-# 加载少量数据
-ds = WellDataset(
-    'hf://datasets/polymathic-ai/rayleigh_benard',
-    split='train',
-    n_samples=2,  # 只下载2个样本
-)
-
-print(f'Loaded {len(ds)} samples')
-
-# 检查数据格式
-sample = ds[0]
-print(f'\\nSample keys: {sample.keys()}')
-for k, v in sample.items():
-    if hasattr(v, 'shape'):
-        print(f'  {k}: shape={v.shape}, dtype={v.dtype}')
-    else:
-        print(f'  {k}: {v}')
-"
+# 测试 Rayleigh-Bénard PDE loss
+python finetune/pde_loss_rayleigh_benard.py --data_path /scratch-share/SONG0304/finetune/rayleigh_benard_Rayleigh_1e10_Prandtl_1.hdf5
