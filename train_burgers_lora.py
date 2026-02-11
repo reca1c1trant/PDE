@@ -291,6 +291,7 @@ def main():
         train_ratio=config['dataset'].get('train_ratio', 0.9),
         clips_per_sample=config['dataset'].get('clips_per_sample', 100),
         vector_dim=config['dataset'].get('vector_dim', 2),
+        val_time_interval=config['dataset'].get('val_time_interval', 8),
     )
 
     steps_per_epoch = len(train_sampler)

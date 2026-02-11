@@ -50,6 +50,7 @@ class FinetuneDataset(Dataset):
         seed: int = 42,
         clips_per_sample: Optional[int] = 100,
         vector_dim: int = 2,  # 2 for 2D velocity, 3 for 3D
+        val_time_interval: int = 8,  # Interval for validation clips (0, 8, 16, ...)
     ):
         """
         Args:
@@ -58,8 +59,9 @@ class FinetuneDataset(Dataset):
             split: 'train' or 'val'
             train_ratio: Fraction for training
             seed: Random seed
-            clips_per_sample: Clips per sample per epoch (None = all)
+            clips_per_sample: Clips per sample per epoch (None = all for train, interval for val)
             vector_dim: 2 for 2D velocity (Vz=0), 3 for 3D
+            val_time_interval: Time interval for validation clip sampling (e.g., 8 = 0,8,16,...)
         """
         super().__init__()
         self.data_path = Path(data_path)
@@ -69,6 +71,7 @@ class FinetuneDataset(Dataset):
         self.seed = seed
         self.clips_per_sample = clips_per_sample
         self.vector_dim = vector_dim
+        self.val_time_interval = val_time_interval
 
         # Detect format and load metadata
         self._detect_format()
@@ -150,9 +153,14 @@ class FinetuneDataset(Dataset):
         for i, sample_idx in enumerate(self.sample_indices):
             num_available = self.max_start + 1
 
-            if self.clips_per_sample is None:
+            if self.split == 'val':
+                # Validation: use interval sampling (0, 8, 16, ...)
+                starts = list(range(0, num_available, self.val_time_interval))
+            elif self.clips_per_sample is None:
+                # Train with all clips
                 starts = list(range(num_available))
             else:
+                # Train with random sampling
                 if self.clips_per_sample <= num_available:
                     starts = rng.choice(num_available, self.clips_per_sample, replace=False)
                 else:
@@ -420,6 +428,7 @@ def create_finetune_dataloaders(
     train_ratio: float = 0.9,
     clips_per_sample: Optional[int] = 100,
     vector_dim: int = 2,
+    val_time_interval: int = 8,
 ):
     """Create train and validation dataloaders."""
     train_dataset = FinetuneDataset(
@@ -430,6 +439,7 @@ def create_finetune_dataloaders(
         seed=seed,
         clips_per_sample=clips_per_sample,
         vector_dim=vector_dim,
+        val_time_interval=val_time_interval,
     )
 
     val_dataset = FinetuneDataset(
@@ -438,8 +448,9 @@ def create_finetune_dataloaders(
         split='val',
         train_ratio=train_ratio,
         seed=seed,
-        clips_per_sample=None,  # Use all clips for validation
+        clips_per_sample=None,  # Not used for val (uses interval sampling)
         vector_dim=vector_dim,
+        val_time_interval=val_time_interval,
     )
 
     train_sampler = FinetuneSampler(train_dataset, batch_size, shuffle=True, seed=seed)

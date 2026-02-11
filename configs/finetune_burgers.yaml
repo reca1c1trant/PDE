@@ -83,8 +83,9 @@ dataset:
   seed: 42
   t_input: 8
   train_ratio: 0.9
-  clips_per_sample: 100
-  vector_dim: 2  # 2D velocity (Vz=0)
+  clips_per_sample: 100      # Train: random clips per sample per epoch
+  val_time_interval: 8       # Val: interval sampling (0, 8, 16, ...)
+  vector_dim: 2              # 2D velocity (Vz=0)
 
 logging:
   project: pde-burgers-lora

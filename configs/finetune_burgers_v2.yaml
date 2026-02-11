@@ -54,10 +54,12 @@ model:
 # Dataset
 dataset:
   path: "/scratch-share/SONG0304/finetune/burgers2d_nu0.1_0.15_n500.h5"
-  temporal_length: 8      # t_input (model outputs t_input frames)
+  t_input: 8              # Model input frames
   train_ratio: 0.9
   seed: 42
-  clips_per_sample: null
+  clips_per_sample: 100   # Train: random clips per sample per epoch
+  val_time_interval: 8    # Val: interval sampling (0, 8, 16, ...)
+  vector_dim: 2           # 2D velocity (Vz=0)
 
 # Physics parameters
 physics:
