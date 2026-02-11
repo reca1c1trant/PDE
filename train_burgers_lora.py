@@ -188,11 +188,13 @@ def compute_pde_loss(
 
 @torch.no_grad()
 def validate(model, val_loader, accelerator, config, t_input: int = 8):
-    """Validate and return (bc_loss, pde_loss)."""
+    """Validate and return (bc_loss, pde_loss, rmse)."""
+    accelerator.wait_for_everyone()
     model.eval()
 
     total_bc = torch.zeros(1, device=accelerator.device)
     total_pde = torch.zeros(1, device=accelerator.device)
+    total_rmse = torch.zeros(1, device=accelerator.device)
     num_batches = torch.zeros(1, device=accelerator.device)
 
     for batch in val_loader:
@@ -206,31 +208,42 @@ def validate(model, val_loader, accelerator, config, t_input: int = 8):
         output_norm, mean, std = model(input_data, return_normalized=True)
         output = output_norm * std + mean
 
-        # BC loss
+        # BC loss (denormalized)
         bc_loss = compute_boundary_loss(output, target_data, channel_mask)
 
-        # PDE loss (requires nu, no longer needs boundary)
+        # PDE loss (denormalized, requires nu)
         if 'nu' in batch:
             pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator.device)
         else:
             pde_loss = torch.tensor(0.0, device=accelerator.device)
 
+        # RMSE (denormalized, for monitoring only)
+        valid_ch = torch.where(channel_mask[0] > 0)[0] if channel_mask.dim() > 1 else torch.where(channel_mask > 0)[0]
+        output_valid = output[..., valid_ch]
+        target_valid = target_data[..., valid_ch]
+        mse = torch.mean((output_valid - target_valid) ** 2)
+        rmse = torch.sqrt(mse + 1e-8)
+
         total_bc += bc_loss.detach()
         total_pde += pde_loss.detach()
+        total_rmse += rmse.detach()
         num_batches += 1
 
     accelerator.wait_for_everyone()
 
     total_bc = accelerator.reduce(total_bc, reduction='sum')
     total_pde = accelerator.reduce(total_pde, reduction='sum')
+    total_rmse = accelerator.reduce(total_rmse, reduction='sum')
     num_batches = accelerator.reduce(num_batches, reduction='sum')
 
+    accelerator.wait_for_everyone()
     model.train()
 
     avg_bc = (total_bc / num_batches).item() if num_batches.item() > 0 else 0
     avg_pde = (total_pde / num_batches).item() if num_batches.item() > 0 else 0
+    avg_rmse = (total_rmse / num_batches).item() if num_batches.item() > 0 else 0
 
-    return avg_bc, avg_pde
+    return avg_bc, avg_pde, avg_rmse
 
 
 def main():
@@ -431,20 +444,20 @@ def main():
                     }, step=global_step)
 
                 if global_step % eval_interval == 0:
-                    accelerator.wait_for_everyone()
-                    val_bc, val_pde = validate(model, val_loader, accelerator, config, t_input)
+                    val_bc, val_pde, val_rmse = validate(model, val_loader, accelerator, config, t_input)
                     val_loss = lambda_bc * val_bc + lambda_pde * val_pde
 
                     accelerator.log({
                         'val/bc_loss': val_bc,
                         'val/pde_loss': val_pde,
+                        'val/rmse': val_rmse,
                         'val/total_loss': val_loss,
                     }, step=global_step)
 
                     if accelerator.is_main_process:
                         console.print(
                             f"\n[green]Step {global_step}/{total_steps} {phase_str}:[/green] "
-                            f"val_bc={val_bc:.6f}, val_pde={val_pde:.6f}"
+                            f"val_bc={val_bc:.6f}, val_pde={val_pde:.6f}, val_rmse={val_rmse:.6f}"
                         )
 
                     if not in_warmup:
@@ -457,7 +470,7 @@ def main():
                                     optimizer=optimizer,
                                     scheduler=scheduler,
                                     global_step=global_step,
-                                    metrics={'bc': val_bc, 'pde': val_pde},
+                                    metrics={'bc': val_bc, 'pde': val_pde, 'rmse': val_rmse},
                                     save_path=str(save_dir / 'best_lora.pt'),
                                     config=config,
                                     patience_counter=patience_counter,
