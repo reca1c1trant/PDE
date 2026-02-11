@@ -196,11 +196,11 @@ class FinetuneDataset(Dataset):
             scalar = None
 
         # Build 18-channel output
-        T, H, W, _ = vector.shape
+        T, H, W, C_vec = vector.shape
         data = np.zeros((T, H, W, TOTAL_CHANNELS), dtype=np.float32)
 
-        # Vector channels [0:3]
-        data[..., :NUM_VECTOR_CHANNELS] = vector
+        # Vector channels [0:C_vec] (2 for 2D, 3 for 3D)
+        data[..., :C_vec] = vector
 
         # Scalar channels [3:18] - map using scalar_indices
         if scalar is not None and len(self.scalar_indices) > 0:

@@ -62,7 +62,7 @@ training:
 
   # Loss weights
   lambda_bc: 1.0   # Boundary loss weight
-  lambda_pde: 0.1  # PDE loss weight (start smaller, can increase)
+  lambda_pde: 0.01 # PDE loss weight
 
   # Eval interval (steps)
   eval_interval: 100
@@ -79,7 +79,7 @@ dataloader:
   pin_memory: true
 
 dataset:
-  path: /scratch-share/SONG0304/finetune/burgers2d_nu0.1_0.15_res128_t1000_n100.h5
+  path: /scratch-share/SONG0304/finetune/burgers2d_nu0.1_0.15_n500.h5
   seed: 42
   t_input: 8
   train_ratio: 0.9
@@ -97,5 +97,5 @@ checkpoint:
 
 physics:
   dt: 0.001001001  # 1/999 (1000 timesteps over [0, 1])
-  Lx: 1.0
-  Ly: 1.0
+  dx: 0.007874016  # 1/127 (128 grid points, boundary-inclusive)
+  dy: 0.007874016  # 1/127

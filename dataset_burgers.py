@@ -40,8 +40,8 @@ class BurgersDataset(Dataset):
                 ├── left/right/bottom/top
 
     Output per clip:
-        - data: [T=17, H=128, W=128, C=6] padded to 6 channels
-        - channel_mask: [6] = [1, 1, 0, 0, 0, 0]
+        - data: [T=9, H=128, W=128, C=18] padded to 18 channels (v3 model)
+        - channel_mask: [18] = [1, 1, 0, 0, ..., 0]
         - boundaries: [T=17, ...]
         - nu: float viscosity
     """
@@ -178,16 +178,17 @@ class BurgersDataset(Dataset):
             boundary_bottom = np.array(bnd['bottom'][start_t:end_t], dtype=np.float32)
             boundary_top = np.array(bnd['top'][start_t:end_t], dtype=np.float32)
 
-        # Pad to 6 channels: [u, v, 0, 0, 0, 0]
+        # Pad to 18 channels for v3 model: [u, v, 0, 0, ..., 0]
         T, H, W, _ = data_2ch.shape
-        data_6ch = np.zeros((T, H, W, 6), dtype=np.float32)
-        data_6ch[..., :2] = data_2ch
+        data_18ch = np.zeros((T, H, W, 18), dtype=np.float32)
+        data_18ch[..., :2] = data_2ch
 
-        # Channel mask
-        channel_mask = np.array([1, 1, 0, 0, 0, 0], dtype=np.float32)
+        # Channel mask (18 channels, first 2 are valid)
+        channel_mask = np.zeros(18, dtype=np.float32)
+        channel_mask[:2] = 1.0
 
         return {
-            'data': torch.from_numpy(data_6ch),
+            'data': torch.from_numpy(data_18ch),
             'channel_mask': torch.from_numpy(channel_mask),
             'boundary_left': torch.from_numpy(boundary_left),
             'boundary_right': torch.from_numpy(boundary_right),

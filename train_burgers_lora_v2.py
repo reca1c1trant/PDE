@@ -47,7 +47,7 @@ else:
     logging.disable(logging.CRITICAL)
 
 from dataset_burgers import BurgersDataset, BurgersSampler, burgers_collate_fn
-from model_lora import PDELoRAModel
+from model_lora_v2 import PDELoRAModelV2
 from pde_loss import burgers_pde_loss
 
 logger = logging.getLogger(__name__)
@@ -232,13 +232,13 @@ def unfreeze_encoder_decoder(model):
     enc_params = 0
     dec_params = 0
 
-    # Unfreeze encoder
-    for param in model.model.encoder_2d.parameters():
+    # Unfreeze encoder (v3 uses model.model.encoder)
+    for param in model.model.encoder.parameters():
         param.requires_grad = True
         enc_params += param.numel()
 
-    # Unfreeze decoder
-    for param in model.model.decoder_2d.parameters():
+    # Unfreeze decoder (v3 uses model.model.decoder)
+    for param in model.model.decoder.parameters():
         param.requires_grad = True
         dec_params += param.numel()
 
@@ -255,12 +255,12 @@ def log_param_summary(model, accelerator):
     if not accelerator.is_main_process:
         return
 
-    # Count parameters
-    enc_total = sum(p.numel() for p in model.model.encoder_2d.parameters())
-    enc_train = sum(p.numel() for p in model.model.encoder_2d.parameters() if p.requires_grad)
+    # Count parameters (v3 uses encoder/decoder instead of encoder_2d/decoder_2d)
+    enc_total = sum(p.numel() for p in model.model.encoder.parameters())
+    enc_train = sum(p.numel() for p in model.model.encoder.parameters() if p.requires_grad)
 
-    dec_total = sum(p.numel() for p in model.model.decoder_2d.parameters())
-    dec_train = sum(p.numel() for p in model.model.decoder_2d.parameters() if p.requires_grad)
+    dec_total = sum(p.numel() for p in model.model.decoder.parameters())
+    dec_train = sum(p.numel() for p in model.model.decoder.parameters() if p.requires_grad)
 
     trans_total = sum(p.numel() for p in model.model.transformer.parameters())
     trans_train = sum(p.numel() for p in model.model.transformer.parameters() if p.requires_grad)
@@ -425,9 +425,9 @@ def main():
     steps_per_epoch = len(train_loader)
     total_steps = max_epochs * steps_per_epoch
 
-    # Create model with LoRA
+    # Create model with LoRA (V3 architecture with NA Transformer)
     pretrained_path = config['model'].get('pretrained_path', None)
-    model = PDELoRAModel(config, pretrained_path=pretrained_path)
+    model = PDELoRAModelV2(config, pretrained_path=pretrained_path)
 
     # KEY CHANGE: Unfreeze Encoder and Decoder
     enc_params, dec_params = unfreeze_encoder_decoder(model)

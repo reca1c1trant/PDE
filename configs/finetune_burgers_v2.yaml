@@ -1,56 +1,60 @@
-# Burgers2D LoRA V2 Finetuning Configuration
-# Key difference: Encoder and Decoder are UNFROZEN (trainable)
+# Burgers2D LoRA V2 Finetuning Configuration (V3 Architecture)
+# Uses PDEModelV2 with Neighborhood Attention
 #
-# This allows spatial feature adaptation to new physics (Burgers equation)
-# while still using LoRA for efficient Transformer fine-tuning.
+# Key features:
+# - NA Transformer (not Llama)
+# - LoRA applied to: qkv, proj, gate_proj, up_proj, down_proj
+# - Encoder and Decoder UNFROZEN for domain adaptation
 
-# Model
+# Model (must match pretrain_v3.yaml)
 model:
-  pretrained_path: "./checkpoints_e2e_medium_full_v3/best.pt"
+  pretrained_path: "./checkpoints_v3/best_tf.pt"
 
-  # Must match pretrained model config
-  in_channels: 6
-  noise_level: 0.0
-  use_flash_attention: false
-  gradient_checkpointing: true
+  # Core dimensions
+  in_channels: 18          # 3 vector + 15 scalar (will use 2 for Burgers)
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 16
+  num_heads: 16
+  dropout: 0.0
 
-  # Encoder config (must match pretrained)
+  # Encoder config
   encoder:
-    version: "v2"
-    channels: [64, 128, 256]
-    use_resblock: true
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
 
-  # Transformer config (must match pretrained)
-  transformer:
-    hidden_size: 768
-    num_hidden_layers: 10
-    num_attention_heads: 12
-    num_key_value_heads: 4
-    intermediate_size: 3072
-    hidden_act: "silu"
-    max_position_embeddings: 4096
-    rms_norm_eps: 1.0e-5
-    rope_theta: 500000.0
-    attention_dropout: 0.0
+  # Intra-patch attention
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
 
-  # LoRA config (applied to Transformer only)
+  # Neighborhood Attention
+  na:
+    base_kernel: 5
+
+  # Decoder config
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+
+  # LoRA config (applied to NA Transformer)
   lora:
     r: 16
     alpha: 32
     dropout: 0.05
     target_modules:
-      - "q_proj"
-      - "k_proj"
-      - "v_proj"
-      - "o_proj"
-      - "gate_proj"
-      - "up_proj"
-      - "down_proj"
+      - "qkv"           # NA Attention
+      - "proj"          # NA Attention
+      - "gate_proj"     # SwiGLU FFN
+      - "up_proj"       # SwiGLU FFN
+      - "down_proj"     # SwiGLU FFN
 
 # Dataset
 dataset:
   path: "/scratch-share/SONG0304/finetune/burgers2d_nu0.1_0.15_n500.h5"
-  temporal_length: 16
+  temporal_length: 8      # t_input (model outputs t_input frames)
   train_ratio: 0.9
   seed: 42
   clips_per_sample: null
@@ -77,7 +81,7 @@ training:
   betas: [0.9, 0.999]
   grad_clip: 5.0
 
-  # Loss weights (same as UNet baseline)
+  # Loss weights
   lambda_pde: 0.01
   lambda_bc: 1.0
 

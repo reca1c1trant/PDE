@@ -56,7 +56,7 @@ from dataset_finetune import (
     create_finetune_dataloaders, TOTAL_CHANNELS
 )
 from model_lora_v2 import PDELoRAModelV2, save_lora_checkpoint, load_lora_checkpoint
-from pde_loss import burgers_pde_loss_upwind as burgers_pde_loss
+from pde_loss import burgers_pde_loss
 
 logger = logging.getLogger(__name__)
 
@@ -147,50 +147,40 @@ def compute_pde_loss(
     """
     Compute PDE residual loss for Burgers equation.
 
+    Uses ghost cell extrapolation for boundary derivatives.
+    PDE loss computed on [1:127, 1:127] (126x126 interior points).
+
     Args:
         output: Model output [B, T_out, H, W, C] (denormalized)
         input_data: Model input [B, T_in, H, W, C]
-        batch: Batch dict with boundaries and nu
+        batch: Batch dict with nu
         config: Config dict
         device: Device
 
     Returns:
         pde_loss, loss_u, loss_v
     """
-    # Disable autocast for numerical stability
     with torch.autocast(device_type='cuda', enabled=False):
         # Prepend t0 frame to output for time derivative
-        # output is prediction for t[1:t_input+1], we need t[0] from input
-        t0_frame = input_data[:, 0:1, ..., :2].float()  # [B, 1, H, W, 2]
-        output_uv = output[..., :2].float()  # [B, T_out, H, W, 2]
-        pred_with_t0 = torch.cat([t0_frame, output_uv], dim=1)  # [B, T_out+1, H, W, 2]
+        t0_frame = input_data[:, 0:1, ..., :2].float()
+        output_uv = output[..., :2].float()
+        pred_with_t0 = torch.cat([t0_frame, output_uv], dim=1)
 
-        # Get boundaries
-        boundary_left = batch['boundary_left'].to(device).float()
-        boundary_right = batch['boundary_right'].to(device).float()
-        boundary_bottom = batch['boundary_bottom'].to(device).float()
-        boundary_top = batch['boundary_top'].to(device).float()
         nu = batch['nu'].to(device).float()
+        nu_mean = nu.mean().item()
 
         # Physics params
         dt = config.get('physics', {}).get('dt', 1/999)
-        Lx = config.get('physics', {}).get('Lx', 1.0)
-        Ly = config.get('physics', {}).get('Ly', 1.0)
+        dx = config.get('physics', {}).get('dx', 1/127)
+        dy = config.get('physics', {}).get('dy', 1/127)
 
-        # Use mean nu for batch (all samples in batch have same nu due to same-sample batching)
-        nu_mean = nu.mean().item()
-
-        # Compute PDE loss
+        # Compute PDE loss (ghost cell version)
         pde_loss, loss_u, loss_v, _, _ = burgers_pde_loss(
             pred=pred_with_t0,
-            boundary_left=boundary_left,
-            boundary_right=boundary_right,
-            boundary_bottom=boundary_bottom,
-            boundary_top=boundary_top,
             nu=nu_mean,
             dt=dt,
-            Lx=Lx,
-            Ly=Ly,
+            dx=dx,
+            dy=dy,
         )
 
     return pde_loss, loss_u, loss_v
@@ -219,8 +209,8 @@ def validate(model, val_loader, accelerator, config, t_input: int = 8):
         # BC loss
         bc_loss = compute_boundary_loss(output, target_data, channel_mask)
 
-        # PDE loss (if boundaries available)
-        if 'boundary_left' in batch:
+        # PDE loss (requires nu, no longer needs boundary)
+        if 'nu' in batch:
             pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator.device)
         else:
             pde_loss = torch.tensor(0.0, device=accelerator.device)
@@ -399,8 +389,8 @@ def main():
                     # BC loss (boundary pixels)
                     bc_loss = compute_boundary_loss(output, target_data, channel_mask)
 
-                    # PDE loss
-                    if 'boundary_left' in batch:
+                    # PDE loss (requires nu, no longer needs boundary)
+                    if 'nu' in batch:
                         pde_loss, loss_u, loss_v = compute_pde_loss(
                             output, input_data, batch, config, accelerator.device
                         )
