@@ -11,7 +11,7 @@ import h5py
 import numpy as np
 from pathlib import Path
 
-from pde_loss import burgers_pde_loss
+from pde_loss import burgers_pde_loss, burgers_pde_loss_with_ghost
 
 
 def load_sample(file_path: str, sample_idx: int, start_t: int, end_t: int):
@@ -86,14 +86,19 @@ def main():
             dy=dx,
         )
 
-        print(f"\n  PDE Residual (should be ~1e-5 for GT):")
-        print(f"    Total Loss: {total_loss.item():.2e}")
-        print(f"    Loss U:     {loss_u.item():.2e}")
-        print(f"    Loss V:     {loss_v.item():.2e}")
-        print(f"    Residual U: max={res_u.abs().max().item():.2e}, mean={res_u.abs().mean().item():.2e}")
-        print(f"    Residual V: max={res_v.abs().max().item():.2e}, mean={res_v.abs().mean().item():.2e}")
+        print(f"\n  PDE Loss (no ghost, [2:126]):")
+        print(f"    Total: {total_loss.item():.2e}, U: {loss_u.item():.2e}, V: {loss_v.item():.2e}")
+        print(f"    Residual shape: {res_u.shape}")
 
         all_pde_losses.append(total_loss.item())
+
+        # Test with ghost cell version
+        total_loss_g, loss_u_g, loss_v_g, res_u_g, res_v_g = burgers_pde_loss_with_ghost(
+            pred=data, nu=nu, dt=dt, dx=dx, dy=dx,
+        )
+        print(f"\n  PDE Loss (with ghost, [1:127]):")
+        print(f"    Total: {total_loss_g.item():.2e}, U: {loss_u_g.item():.2e}, V: {loss_v_g.item():.2e}")
+        print(f"    Residual shape: {res_u_g.shape}")
 
     # Summary
     print("\n" + "=" * 60)
