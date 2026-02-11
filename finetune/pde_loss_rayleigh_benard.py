@@ -1,5 +1,5 @@
 """
-Rayleigh-Bénard Convection PDE residual loss - 二阶迎风格式
+Rayleigh-Bénard Convection PDE residual loss - 谱方法 (Spectral)
 
 控制方程 (无量纲形式):
     ∂b/∂t + u·∂b/∂x + w·∂b/∂y = κ·∇²b           (浮力方程)
@@ -12,16 +12,16 @@ Rayleigh-Bénard Convection PDE residual loss - 二阶迎风格式
     ν = (Ra / Pr)^(-1/2)  运动粘度
 
 边界条件:
-    x方向: 周期性 (用 torch.roll 处理)
+    x方向: 周期性 → FFT 谱导数
     y方向: Dirichlet (y=0: b=1, u=w=0; y=1: b=0, u=w=0)
-          -> 边界点不参与 PDE loss 计算，排除 [2:-2]
+          → 中心差分，排除边界 [2:-2]
 
-差分格式:
-    对流项: 二阶迎风
-        u >= 0: (3φ_C - 4φ_W + φ_WW) / (2Δx)
-        u < 0:  (-3φ_C + 4φ_E - φ_EE) / (2Δx)
-    扩散项: 二阶中心差分
-    压力梯度: 二阶中心差分
+差分格式 (匹配 Dedalus 谱方法生成的数据):
+    x方向: FFT 谱导数 (精确匹配周期性 Fourier 基)
+        ∂f/∂x = IFFT(i·k·FFT(f))
+        ∂²f/∂x² = IFFT(-k²·FFT(f))
+    y方向: 二阶中心差分 (Dirichlet 边界，内部点)
+    时间导数: 一阶前向差分
 
 Author: Ziye
 Date: February 2025
@@ -38,9 +38,48 @@ def compute_transport_coefficients(Ra: float, Pr: float) -> Tuple[float, float]:
     return kappa, nu
 
 
+def spectral_derivative_x(phi: torch.Tensor, Lx: float) -> torch.Tensor:
+    """
+    X方向谱导数 (周期性边界, FFT)。
+
+    ∂f/∂x in Fourier space: i * k * f̂(k)
+
+    phi: [*, X, Y]
+    Lx: 域长度
+    """
+    X = phi.shape[-2]
+    # 波数
+    kx = torch.fft.fftfreq(X, d=Lx/X, device=phi.device, dtype=phi.dtype) * 2 * torch.pi
+    kx = kx.view(*([1] * (phi.dim() - 2)), X, 1)
+
+    # FFT -> 乘以 ik -> IFFT
+    phi_hat = torch.fft.fft(phi, dim=-2)
+    dphi_hat = 1j * kx * phi_hat
+    dphi = torch.fft.ifft(dphi_hat, dim=-2).real
+
+    return dphi
+
+
+def spectral_derivative_xx(phi: torch.Tensor, Lx: float) -> torch.Tensor:
+    """
+    X方向二阶谱导数 (周期性边界, FFT)。
+
+    ∂²f/∂x² in Fourier space: -k² * f̂(k)
+    """
+    X = phi.shape[-2]
+    kx = torch.fft.fftfreq(X, d=Lx/X, device=phi.device, dtype=phi.dtype) * 2 * torch.pi
+    kx = kx.view(*([1] * (phi.dim() - 2)), X, 1)
+
+    phi_hat = torch.fft.fft(phi, dim=-2)
+    d2phi_hat = -kx**2 * phi_hat
+    d2phi = torch.fft.ifft(d2phi_hat, dim=-2).real
+
+    return d2phi
+
+
 def upwind_x_periodic(phi: torch.Tensor, vel_x: torch.Tensor, dx: float) -> torch.Tensor:
     """
-    X方向二阶迎风 (周期性边界)。
+    X方向二阶迎风 (周期性边界) - 保留作为备用。
 
     phi, vel_x: [*, X, Y]
     """
@@ -117,6 +156,8 @@ def rayleigh_benard_pde_loss(
     dx: float,
     dy: float,
     dt: float,
+    Lx: float = 4.0,
+    use_spectral: bool = True,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     """
     计算 Rayleigh-Bénard 方程的 PDE 残差 (二阶迎风格式)。
@@ -153,48 +194,69 @@ def rayleigh_benard_pde_loss(
     du_dt = (u[..., 1:, :, :] - u[..., :-1, :, :]) / dt
     dw_dt = (w[..., 1:, :, :] - w[..., :-1, :, :]) / dt
 
-    # 取 n+1 时刻做空间导数 (与 Burgers pde_loss 一致)
-    b_n = b[..., 1:, :, :]
-    u_n = u[..., 1:, :, :]
-    w_n = w[..., 1:, :, :]
-    p_n = p[..., 1:, :, :]
+    # 取 n 时刻做空间导数
+    b_n = b[..., :-1, :, :]
+    u_n = u[..., :-1, :, :]
+    w_n = w[..., :-1, :, :]
+    p_n = p[..., :-1, :, :]
 
-    # X方向对流项 (二阶迎风, 周期性)
-    db_dx = upwind_x_periodic(b_n, u_n, dx)
-    du_dx = upwind_x_periodic(u_n, u_n, dx)
-    dw_dx = upwind_x_periodic(w_n, u_n, dx)
+    if use_spectral:
+        # X方向用谱导数 (FFT)
+        db_dx = spectral_derivative_x(b_n, Lx)
+        du_dx = spectral_derivative_x(u_n, Lx)
+        dw_dx = spectral_derivative_x(w_n, Lx)
+        dp_dx = spectral_derivative_x(p_n, Lx)
 
-    # Y方向对流项 (二阶迎风, 内部点)
-    db_dy = upwind_y_interior(b_n, w_n, dy)
-    du_dy = upwind_y_interior(u_n, w_n, dy)
-    dw_dy = upwind_y_interior(w_n, w_n, dy)
+        # X方向二阶导数 (FFT)
+        d2b_dx2 = spectral_derivative_xx(b_n, Lx)
+        d2u_dx2 = spectral_derivative_xx(u_n, Lx)
+        d2w_dx2 = spectral_derivative_xx(w_n, Lx)
+    else:
+        # X方向用有限差分
+        db_dx = upwind_x_periodic(b_n, u_n, dx)
+        du_dx = upwind_x_periodic(u_n, u_n, dx)
+        dw_dx = upwind_x_periodic(w_n, u_n, dx)
+        dp_dx = pressure_grad_x_periodic(p_n, dx)
 
-    # 压力梯度
-    dp_dx = pressure_grad_x_periodic(p_n, dx)[..., 2:-2]
-    dp_dy = pressure_grad_y_interior(p_n, dy)
+        d2b_dx2 = (torch.roll(b_n, -1, dims=-2) - 2*b_n + torch.roll(b_n, 1, dims=-2)) / dx**2
+        d2u_dx2 = (torch.roll(u_n, -1, dims=-2) - 2*u_n + torch.roll(u_n, 1, dims=-2)) / dx**2
+        d2w_dx2 = (torch.roll(w_n, -1, dims=-2) - 2*w_n + torch.roll(w_n, 1, dims=-2)) / dx**2
 
-    # Laplacian
-    lap_b = laplacian_mixed_bc(b_n, dx, dy)
-    lap_u = laplacian_mixed_bc(u_n, dx, dy)
-    lap_w = laplacian_mixed_bc(w_n, dx, dy)
+    # Y方向用中心差分 (Dirichlet 边界，排除边界2层 → 内部点 [2:-2])
+    # 一阶导数: (φ[j+1] - φ[j-1]) / (2dy) for j in [2:-2]
+    db_dy = (b_n[..., 3:-1] - b_n[..., 1:-3]) / (2 * dy)  # [*, X, Y-4]
+    du_dy = (u_n[..., 3:-1] - u_n[..., 1:-3]) / (2 * dy)
+    dw_dy = (w_n[..., 3:-1] - w_n[..., 1:-3]) / (2 * dy)
+    dp_dy = (p_n[..., 3:-1] - p_n[..., 1:-3]) / (2 * dy)
 
-    # 取内部点
+    # Y方向二阶导数 (中心差分): (φ[j+1] - 2φ[j] + φ[j-1]) / dy² for j in [2:-2]
+    d2b_dy2 = (b_n[..., 3:-1] - 2*b_n[..., 2:-2] + b_n[..., 1:-3]) / dy**2
+    d2u_dy2 = (u_n[..., 3:-1] - 2*u_n[..., 2:-2] + u_n[..., 1:-3]) / dy**2
+    d2w_dy2 = (w_n[..., 3:-1] - 2*w_n[..., 2:-2] + w_n[..., 1:-3]) / dy**2
+
+    # Laplacian = d²/dx² + d²/dy² (取内部点 [2:-2])
+    lap_b = d2b_dx2[..., 2:-2] + d2b_dy2
+    lap_u = d2u_dx2[..., 2:-2] + d2u_dy2
+    lap_w = d2w_dx2[..., 2:-2] + d2w_dy2
+
+    # 所有变量取内部点 [2:-2]
     db_dt_int = db_dt[..., 2:-2]
     du_dt_int = du_dt[..., 2:-2]
     dw_dt_int = dw_dt[..., 2:-2]
     db_dx_int = db_dx[..., 2:-2]
     du_dx_int = du_dx[..., 2:-2]
     dw_dx_int = dw_dx[..., 2:-2]
+    dp_dx_int = dp_dx[..., 2:-2]
     b_int = b_n[..., 2:-2]
     u_int = u_n[..., 2:-2]
     w_int = w_n[..., 2:-2]
 
-    # PDE 残差
+    # PDE 残差 (所有项 shape: [*, T-1, X, Y-4])
     # 浮力: ∂b/∂t + u·∂b/∂x + w·∂b/∂y - κ·∇²b = 0
     R_b = db_dt_int + u_int * db_dx_int + w_int * db_dy - kappa * lap_b
 
     # x动量: ∂u/∂t + u·∂u/∂x + w·∂u/∂y + ∂p/∂x - ν·∇²u = 0
-    R_u = du_dt_int + u_int * du_dx_int + w_int * du_dy + dp_dx - nu * lap_u
+    R_u = du_dt_int + u_int * du_dx_int + w_int * du_dy + dp_dx_int - nu * lap_u
 
     # y动量: ∂w/∂t + u·∂w/∂x + w·∂w/∂y + ∂p/∂y - ν·∇²w - b = 0
     R_w = dw_dt_int + u_int * dw_dx_int + w_int * dw_dy + dp_dy - nu * lap_w - b_int
@@ -226,7 +288,7 @@ def test_with_gt_data(data_path: str):
     import h5py
 
     print("=" * 60)
-    print("Testing Rayleigh-Bénard PDE Loss (二阶迎风格式)")
+    print("Testing Rayleigh-Bénard PDE Loss (谱方法)")
     print("=" * 60)
 
     with h5py.File(data_path, 'r') as f:
@@ -243,9 +305,14 @@ def test_with_gt_data(data_path: str):
         y = f['dimensions/y'][:]
         t = f['dimensions/time'][:]
 
+        # 域长度 (用于谱导数)
+        Lx = float(x[-1] - x[0]) + (x[1] - x[0])  # 周期性边界，加一个dx
+        Ly = float(y[-1] - y[0])
+
         dx = x[1] - x[0]
         dy = y[1] - y[0]
         dt = t[1] - t[0]
+        print(f"Lx = {Lx:.6f}, Ly = {Ly:.6f}")
         print(f"dx = {dx:.6f}, dy = {dy:.6f}, dt = {dt:.4f}")
 
         # 加载数据 (第一个 trajectory, 前20个时间步)
@@ -258,9 +325,9 @@ def test_with_gt_data(data_path: str):
         print(f"\nData shapes: b={b.shape}, u={u.shape}, w={w.shape}, p={p.shape}")
         print("  Format: [T, X, Y] where X=512 (periodic), Y=128 (Dirichlet)")
 
-    # 计算 PDE 残差
+    # 计算 PDE 残差 (用谱方法)
     total_loss, losses = rayleigh_benard_pde_loss(
-        b, u, w, p, Ra, Pr, dx, dy, dt
+        b, u, w, p, Ra, Pr, dx, dy, dt, Lx=Lx, use_spectral=True
     )
 
     print(f"\n{'='*50}")

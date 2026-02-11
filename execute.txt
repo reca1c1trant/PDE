@@ -1,2 +1,2 @@
-# 测试 Rayleigh-Bénard PDE loss
+# 测试 Rayleigh-Bénard PDE loss (谱方法)
 python finetune/pde_loss_rayleigh_benard.py --data_path /scratch-share/SONG0304/finetune/rayleigh_benard_Rayleigh_1e10_Prandtl_1.hdf5
