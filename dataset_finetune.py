@@ -81,9 +81,12 @@ class FinetuneDataset(Dataset):
         self.epoch = 0
         self._generate_clips()
 
-        clips_info = "all" if clips_per_sample is None else str(clips_per_sample)
+        if split == 'val':
+            clips_info = f"interval={val_time_interval} (~{len(self.clips)//max(1,len(self.sample_indices))}/sample)"
+        else:
+            clips_info = "all" if clips_per_sample is None else f"{clips_per_sample}/sample"
         logger.info(f"FinetuneDataset ({split}): {len(self.sample_indices)} samples, "
-                   f"{clips_info} clips/sample, {len(self.clips)} total clips")
+                   f"{clips_info}, {len(self.clips)} total clips")
 
     def _detect_format(self):
         """Detect HDF5 format (old per-sample or new global arrays)."""
@@ -156,6 +159,9 @@ class FinetuneDataset(Dataset):
             if self.split == 'val':
                 # Validation: use interval sampling (0, 8, 16, ...)
                 starts = list(range(0, num_available, self.val_time_interval))
+                if i == 0:  # Log once
+                    logger.info(f"[Val] Interval sampling: max_start={self.max_start}, "
+                               f"interval={self.val_time_interval}, clips/sample={len(starts)}")
             elif self.clips_per_sample is None:
                 # Train with all clips
                 starts = list(range(num_available))
@@ -380,8 +386,8 @@ class FinetuneSampler(Sampler):
         self._all_batches = self._all_batches[:usable]
 
         if self.rank == 0:
-            logger.info(f"FinetuneSampler: {len(self._all_batches)} batches, "
-                       f"{self.num_batches_per_rank} per rank")
+            logger.info(f"FinetuneSampler ({self.dataset.split}): {len(self._all_batches)} total batches, "
+                       f"{self.num_batches_per_rank} per rank, batch_size={self.batch_size}")
 
     def set_epoch(self, epoch: int):
         """Set epoch and regenerate clips/batches."""

@@ -197,7 +197,11 @@ def validate(model, val_loader, accelerator, config, t_input: int = 8):
     total_rmse = torch.zeros(1, device=accelerator.device)
     num_batches = torch.zeros(1, device=accelerator.device)
 
-    for batch in val_loader:
+    total_val_batches = len(val_loader)
+    if accelerator.is_main_process:
+        logger.info(f"[Val] Starting validation: {total_val_batches} batches")
+
+    for batch_idx, batch in enumerate(val_loader):
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
@@ -228,6 +232,13 @@ def validate(model, val_loader, accelerator, config, t_input: int = 8):
         total_pde += pde_loss.detach()
         total_rmse += rmse.detach()
         num_batches += 1
+
+        if accelerator.is_main_process and (batch_idx + 1) % 10 == 0:
+            logger.info(f"[Val] Batch {batch_idx + 1}/{total_val_batches} | "
+                       f"bc={bc_loss.item():.4f} pde={pde_loss.item():.4f} rmse={rmse.item():.4f}")
+
+    if accelerator.is_main_process:
+        logger.info(f"[Val] Finished {num_batches.item():.0f} batches, reducing...")
 
     accelerator.wait_for_everyone()
 
