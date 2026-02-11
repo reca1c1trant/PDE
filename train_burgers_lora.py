@@ -197,19 +197,9 @@ def validate(model, val_loader, accelerator, config, t_input: int = 8):
     total_rmse = torch.zeros(1, device=accelerator.device)
     num_batches = torch.zeros(1, device=accelerator.device)
 
-    total_val_batches = len(val_loader)
-    if accelerator.is_main_process:
-        logger.info(f"[Val] Starting validation: {total_val_batches} batches")
-
-    for batch_idx, batch in enumerate(val_loader):
-        if accelerator.is_main_process:
-            logger.info(f"[Val][{batch_idx+1}/{total_val_batches}] Loading data...")
-
+    for batch in val_loader:
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
-
-        if accelerator.is_main_process:
-            logger.info(f"[Val][{batch_idx+1}] Data shape: {data.shape}, doing forward...")
 
         input_data = data[:, :t_input]
         target_data = data[:, 1:t_input + 1]
@@ -218,23 +208,14 @@ def validate(model, val_loader, accelerator, config, t_input: int = 8):
         output_norm, mean, std = model(input_data, return_normalized=True)
         output = output_norm * std + mean
 
-        if accelerator.is_main_process:
-            logger.info(f"[Val][{batch_idx+1}] Forward done, computing BC loss...")
-
         # BC loss (denormalized)
         bc_loss = compute_boundary_loss(output, target_data, channel_mask)
-
-        if accelerator.is_main_process:
-            logger.info(f"[Val][{batch_idx+1}] BC done={bc_loss.item():.4f}, computing PDE loss...")
 
         # PDE loss (denormalized, requires nu)
         if 'nu' in batch:
             pde_loss, _, _ = compute_pde_loss(output, input_data, batch, config, accelerator.device)
         else:
             pde_loss = torch.tensor(0.0, device=accelerator.device)
-
-        if accelerator.is_main_process:
-            logger.info(f"[Val][{batch_idx+1}] PDE done={pde_loss.item():.4f}, computing RMSE...")
 
         # RMSE (denormalized, for monitoring only)
         valid_ch = torch.where(channel_mask[0] > 0)[0] if channel_mask.dim() > 1 else torch.where(channel_mask > 0)[0]
@@ -243,16 +224,10 @@ def validate(model, val_loader, accelerator, config, t_input: int = 8):
         mse = torch.mean((output_valid - target_valid) ** 2)
         rmse = torch.sqrt(mse + 1e-8)
 
-        if accelerator.is_main_process:
-            logger.info(f"[Val][{batch_idx+1}] RMSE done={rmse.item():.4f}, batch complete!")
-
         total_bc += bc_loss.detach()
         total_pde += pde_loss.detach()
         total_rmse += rmse.detach()
         num_batches += 1
-
-    if accelerator.is_main_process:
-        logger.info(f"[Val] Finished {num_batches.item():.0f} batches, reducing...")
 
     accelerator.wait_for_everyone()
 
