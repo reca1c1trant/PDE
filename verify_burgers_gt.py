@@ -62,11 +62,14 @@ def main():
     print(f"  Grid: {H}x{H} (boundary-inclusive)")
     print(f"  PDE region: [1:{H-1}, 1:{H-1}] = {H-2}x{H-2} interior points (with ghost cell)")
 
-    # Test samples (limit to first 10 for quick verification)
+    # Test samples (randomly select 10 for quick verification)
     all_pde_losses = []
-    test_samples = min(10, n_samples)
+    test_count = min(10, n_samples)
+    np.random.seed(42)
+    test_indices = np.random.choice(n_samples, test_count, replace=False)
+    test_indices = np.sort(test_indices)
 
-    for sample_idx in range(test_samples):
+    for sample_idx in test_indices:
         print(f"\n{'='*40}")
         print(f"Sample {sample_idx}")
         print(f"{'='*40}")
@@ -96,7 +99,7 @@ def main():
 
     # Summary
     print("\n" + "=" * 60)
-    print(f"Summary (tested {test_samples}/{n_samples} samples)")
+    print(f"Summary (tested {test_count}/{n_samples} samples, indices: {test_indices.tolist()})")
     print("=" * 60)
     avg_loss = np.mean(all_pde_losses)
     print(f"Average PDE Loss: {avg_loss:.2e}")
