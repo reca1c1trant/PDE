@@ -67,6 +67,7 @@ dataset:
     diffusion_reaction: 1.0
     2d_cfd: 1.0
     swe: 1.0
+    ns_incom: 1.0
 
   overrides:
     diffusion_reaction:
@@ -74,6 +75,8 @@ dataset:
     2d_cfd:
       clips_per_epoch: null
     swe:
+      clips_per_epoch: null
+    ns_incom:
       clips_per_epoch: null
 
 logging:

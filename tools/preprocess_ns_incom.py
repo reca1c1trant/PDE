@@ -75,7 +75,7 @@ def convert_ns_incom(input_dir: str):
     # Output to pretrained/ folder
     output_dir = input_dir.parent / 'pretrained'
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / 'ns_incom_inhom_2d_512_merged.hdf5'
+    output_path = output_dir / 'ns_incom_inhom_2d_512.hdf5'
 
     # Scalar indices for NS_incom: passive_tracer (11)
     scalar_indices = np.array([

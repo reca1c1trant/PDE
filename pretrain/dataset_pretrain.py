@@ -681,11 +681,11 @@ def create_pretrain_dataloaders(
         ),
         DatasetConfig(
             name='ns_incom',
-            path=str(data_dir / 'pretrained' / 'ns_incom_inhom_2d_128_split.hdf5'),
-            spatial_size=128,
-            needs_crop=False,
-            train_spatial_points=1,
-            val_spatial_points=1,
+            path=str(data_dir / 'pretrained' / 'ns_incom_inhom_2d_512.hdf5'),
+            spatial_size=512,
+            needs_crop=True,
+            train_spatial_points=11,  # ~3x3 grid for 512->128 crops
+            val_spatial_points=16,    # 4x4 grid
             clips_ratio_offset=-0.05,  # 20% instead of 25%
             val_time_interval=7,
             vector_dim=2,  # 2D velocity (vx, vy), vz is padded zero
