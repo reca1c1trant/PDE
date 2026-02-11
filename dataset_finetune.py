@@ -199,8 +199,8 @@ class FinetuneDataset(Dataset):
         T, H, W, C_vec = vector.shape
         data = np.zeros((T, H, W, TOTAL_CHANNELS), dtype=np.float32)
 
-        # Vector channels [0:C_vec] (2 for 2D, 3 for 3D)
-        data[..., :C_vec] = vector
+        # Vector channels [0:3] - pad to 3 channels if 2D data (Vz=0)
+        data[..., :C_vec] = vector  # Fill actual channels, rest stays 0
 
         # Scalar channels [3:18] - map using scalar_indices
         if scalar is not None and len(self.scalar_indices) > 0:
