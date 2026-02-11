@@ -135,33 +135,28 @@ def get_lr_scheduler(optimizer, config, total_steps: int):
 
 
 def compute_pde_loss(output, input_data, batch, config, accelerator):
-    """Compute PDE residual loss for Burgers equation."""
+    """Compute PDE residual loss for Burgers equation.
+
+    PDE loss computed on [1:127, 1:127] using ghost cell extrapolation.
+    """
     with torch.autocast(device_type='cuda', enabled=False):
         t0_frame = input_data[:, 0:1, ..., :2].float()
         output_uv = output[..., :2].float()
         pred_with_t0 = torch.cat([t0_frame, output_uv], dim=1)
 
-        boundary_left = batch['boundary_left'].to(accelerator.device).float()
-        boundary_right = batch['boundary_right'].to(accelerator.device).float()
-        boundary_bottom = batch['boundary_bottom'].to(accelerator.device).float()
-        boundary_top = batch['boundary_top'].to(accelerator.device).float()
         nu = batch['nu'].to(accelerator.device).float()
+        nu_mean = nu.mean().item()
 
         dt = config.get('physics', {}).get('dt', 1/999)
-        Lx = config.get('physics', {}).get('Lx', 1.0)
-        Ly = config.get('physics', {}).get('Ly', 1.0)
-        nu_mean = nu.mean().item()
+        dx = config.get('physics', {}).get('dx', 1/127)
+        dy = config.get('physics', {}).get('dy', 1/127)
 
         pde_loss, loss_u, loss_v, _, _ = burgers_pde_loss(
             pred=pred_with_t0,
-            boundary_left=boundary_left,
-            boundary_right=boundary_right,
-            boundary_bottom=boundary_bottom,
-            boundary_top=boundary_top,
             nu=nu_mean,
             dt=dt,
-            Lx=Lx,
-            Ly=Ly,
+            dx=dx,
+            dy=dy,
         )
 
     return pde_loss, loss_u, loss_v
@@ -408,7 +403,7 @@ def main():
     max_epochs = config['training'].get('max_epochs', 10)
     warmup_steps = config['training'].get('warmup_steps', 100)
     log_interval = config['logging']['log_interval']
-    lambda_pde = config['training'].get('lambda_pde', 1.0)
+    lambda_pde = config['training'].get('lambda_pde', 0.01)
     lambda_bc = config['training'].get('lambda_bc', 1.0)
     grad_clip = config['training'].get('grad_clip', 1.0)
     clips_per_sample = config['dataset'].get('clips_per_sample', 100)
