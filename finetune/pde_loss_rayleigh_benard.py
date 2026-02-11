@@ -28,7 +28,57 @@ Date: February 2025
 """
 
 import torch
+import numpy as np
 from typing import Tuple, Dict
+
+
+def chebyshev_derivative_matrix(N: int, Ly: float = 1.0) -> torch.Tensor:
+    """
+    构建 Chebyshev 微分矩阵 (Chebyshev-Gauss-Lobatto 点).
+
+    D[i,j] = dT_j(y_i) / dy，其中 y_i = cos(πi/N) 映射到 [0, Ly]
+
+    Returns: D [N+1, N+1]
+    """
+    # Chebyshev-Gauss-Lobatto 点 (在 [-1, 1] 上)
+    j = np.arange(N + 1)
+    y = np.cos(np.pi * j / N)  # y_j = cos(πj/N), j=0,...,N
+
+    # 系数 c_j
+    c = np.ones(N + 1)
+    c[0] = 2.0
+    c[N] = 2.0
+
+    # 构建微分矩阵
+    D = np.zeros((N + 1, N + 1))
+    for i in range(N + 1):
+        for k in range(N + 1):
+            if i != k:
+                D[i, k] = (c[i] / c[k]) * ((-1) ** (i + k)) / (y[i] - y[k])
+            elif i == 0:
+                D[i, i] = (2 * N * N + 1) / 6.0
+            elif i == N:
+                D[i, i] = -(2 * N * N + 1) / 6.0
+            else:
+                D[i, i] = -y[i] / (2 * (1 - y[i] ** 2))
+
+    # 缩放: [-1, 1] -> [0, Ly]，导数乘以 2/Ly
+    D = D * (2.0 / Ly)
+
+    return torch.tensor(D, dtype=torch.float64)
+
+
+def spectral_derivative_y_chebyshev(phi: torch.Tensor, D: torch.Tensor) -> torch.Tensor:
+    """
+    Y方向 Chebyshev 谱导数。
+
+    phi: [*, X, Y] where Y = N+1 (Chebyshev points)
+    D: [Y, Y] Chebyshev differentiation matrix
+
+    Returns: [*, X, Y]
+    """
+    # phi @ D.T 对最后一维做矩阵乘法
+    return torch.einsum('...y,zy->...z', phi, D)
 
 
 def compute_transport_coefficients(Ra: float, Pr: float) -> Tuple[float, float]:
@@ -157,7 +207,9 @@ def rayleigh_benard_pde_loss(
     dy: float,
     dt: float,
     Lx: float = 4.0,
+    Ly: float = 1.0,
     use_spectral: bool = True,
+    D_cheb: torch.Tensor = None,  # Chebyshev differentiation matrix
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     """
     计算 Rayleigh-Bénard 方程的 PDE 残差 (二阶迎风格式)。
@@ -222,17 +274,38 @@ def rayleigh_benard_pde_loss(
         d2u_dx2 = (torch.roll(u_n, -1, dims=-2) - 2*u_n + torch.roll(u_n, 1, dims=-2)) / dx**2
         d2w_dx2 = (torch.roll(w_n, -1, dims=-2) - 2*w_n + torch.roll(w_n, 1, dims=-2)) / dx**2
 
-    # Y方向用中心差分 (Dirichlet 边界，排除边界2层 → 内部点 [2:-2])
-    # 一阶导数: (φ[j+1] - φ[j-1]) / (2dy) for j in [2:-2]
-    db_dy = (b_n[..., 3:-1] - b_n[..., 1:-3]) / (2 * dy)  # [*, X, Y-4]
-    du_dy = (u_n[..., 3:-1] - u_n[..., 1:-3]) / (2 * dy)
-    dw_dy = (w_n[..., 3:-1] - w_n[..., 1:-3]) / (2 * dy)
-    dp_dy = (p_n[..., 3:-1] - p_n[..., 1:-3]) / (2 * dy)
+    # Y方向导数
+    if use_spectral and D_cheb is not None:
+        # Chebyshev 谱导数 (精确匹配 Dedalus 的 Chebyshev 基)
+        db_dy_full = spectral_derivative_y_chebyshev(b_n, D_cheb)
+        du_dy_full = spectral_derivative_y_chebyshev(u_n, D_cheb)
+        dw_dy_full = spectral_derivative_y_chebyshev(w_n, D_cheb)
+        dp_dy_full = spectral_derivative_y_chebyshev(p_n, D_cheb)
 
-    # Y方向二阶导数 (中心差分): (φ[j+1] - 2φ[j] + φ[j-1]) / dy² for j in [2:-2]
-    d2b_dy2 = (b_n[..., 3:-1] - 2*b_n[..., 2:-2] + b_n[..., 1:-3]) / dy**2
-    d2u_dy2 = (u_n[..., 3:-1] - 2*u_n[..., 2:-2] + u_n[..., 1:-3]) / dy**2
-    d2w_dy2 = (w_n[..., 3:-1] - 2*w_n[..., 2:-2] + w_n[..., 1:-3]) / dy**2
+        # 二阶导数: D @ D
+        D2_cheb = D_cheb @ D_cheb
+        d2b_dy2_full = spectral_derivative_y_chebyshev(b_n, D2_cheb)
+        d2u_dy2_full = spectral_derivative_y_chebyshev(u_n, D2_cheb)
+        d2w_dy2_full = spectral_derivative_y_chebyshev(w_n, D2_cheb)
+
+        # 取内部点 [2:-2]
+        db_dy = db_dy_full[..., 2:-2]
+        du_dy = du_dy_full[..., 2:-2]
+        dw_dy = dw_dy_full[..., 2:-2]
+        dp_dy = dp_dy_full[..., 2:-2]
+        d2b_dy2 = d2b_dy2_full[..., 2:-2]
+        d2u_dy2 = d2u_dy2_full[..., 2:-2]
+        d2w_dy2 = d2w_dy2_full[..., 2:-2]
+    else:
+        # 中心差分 (Dirichlet 边界，排除边界2层 → 内部点 [2:-2])
+        db_dy = (b_n[..., 3:-1] - b_n[..., 1:-3]) / (2 * dy)
+        du_dy = (u_n[..., 3:-1] - u_n[..., 1:-3]) / (2 * dy)
+        dw_dy = (w_n[..., 3:-1] - w_n[..., 1:-3]) / (2 * dy)
+        dp_dy = (p_n[..., 3:-1] - p_n[..., 1:-3]) / (2 * dy)
+
+        d2b_dy2 = (b_n[..., 3:-1] - 2*b_n[..., 2:-2] + b_n[..., 1:-3]) / dy**2
+        d2u_dy2 = (u_n[..., 3:-1] - 2*u_n[..., 2:-2] + u_n[..., 1:-3]) / dy**2
+        d2w_dy2 = (w_n[..., 3:-1] - 2*w_n[..., 2:-2] + u_n[..., 1:-3]) / dy**2
 
     # Laplacian = d²/dx² + d²/dy² (取内部点 [2:-2])
     lap_b = d2b_dx2[..., 2:-2] + d2b_dy2
@@ -322,12 +395,29 @@ def test_with_gt_data(data_path: str):
         u = vel[..., 0]
         w = vel[..., 1]
 
+        Ny = b.shape[-1]  # Y方向点数
+
         print(f"\nData shapes: b={b.shape}, u={u.shape}, w={w.shape}, p={p.shape}")
         print("  Format: [T, X, Y] where X=512 (periodic), Y=128 (Dirichlet)")
+        print(f"  Ny = {Ny}")
+
+        # 检查 y 网格是否为 Chebyshev 点
+        y_expected_cheb = Ly * (1 - np.cos(np.pi * np.arange(Ny) / (Ny - 1))) / 2
+        y_diff = np.abs(y - y_expected_cheb)
+        is_chebyshev = np.max(y_diff) < 1e-10
+        print(f"  Y grid is Chebyshev: {is_chebyshev} (max diff: {np.max(y_diff):.2e})")
+
+    # 构建 Chebyshev 微分矩阵
+    if is_chebyshev:
+        print("\n使用 Chebyshev 谱导数 (Y方向)")
+        D_cheb = chebyshev_derivative_matrix(Ny - 1, Ly)
+    else:
+        print("\n使用中心差分 (Y方向非 Chebyshev 网格)")
+        D_cheb = None
 
     # 计算 PDE 残差 (用谱方法)
     total_loss, losses = rayleigh_benard_pde_loss(
-        b, u, w, p, Ra, Pr, dx, dy, dt, Lx=Lx, use_spectral=True
+        b, u, w, p, Ra, Pr, dx, dy, dt, Lx=Lx, Ly=Ly, use_spectral=True, D_cheb=D_cheb
     )
 
     print(f"\n{'='*50}")
