@@ -51,20 +51,24 @@ SCALAR_INDICES = {
 NUM_VECTOR_CHANNELS = 3
 
 
-def convert_ns_incom(input_dir: str):
+def convert_ns_incom(input_dir: str, output_dir: str = None):
     """
     Convert NS_incom dataset to unified format.
 
     Merges all files in input_dir into a single output file.
-    Output saved to pretrained/ folder, original files deleted after conversion.
 
     Args:
         input_dir: Directory containing NS_incom HDF5 files
+        output_dir: Output directory (default: same as input_dir)
     """
     input_dir = Path(input_dir)
 
-    # Find all HDF5 files
-    h5_files = sorted(list(input_dir.glob("ns_incom*.h5")) + list(input_dir.glob("ns_incom*.hdf5")))
+    # Find all HDF5 files matching ns_incom_inhom_2d_512-*.h5
+    h5_files = sorted(
+        list(input_dir.glob("ns_incom_inhom_2d_512-*.h5")) +
+        list(input_dir.glob("ns_incom_inhom_2d_512-*.hdf5")),
+        key=lambda x: int(x.stem.split('-')[-1])  # Sort by number suffix
+    )
     if not h5_files:
         raise ValueError(f"No NS_incom HDF5 files found in {input_dir}")
 
@@ -72,8 +76,11 @@ def convert_ns_incom(input_dir: str):
     for f in h5_files:
         print(f"  {f.name}")
 
-    # Output to pretrained/ folder
-    output_dir = input_dir.parent / 'pretrained'
+    # Output directory
+    if output_dir is None:
+        output_dir = input_dir
+    else:
+        output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / 'ns_incom_inhom_2d_512.hdf5'
 
@@ -230,9 +237,10 @@ def convert_ns_incom(input_dir: str):
 def main():
     parser = argparse.ArgumentParser(description="Convert NS_incom dataset to unified format")
     parser.add_argument('--input_dir', type=str, required=True, help='Directory containing NS_incom HDF5 files')
+    parser.add_argument('--output_dir', type=str, default=None, help='Output directory (default: same as input_dir)')
     args = parser.parse_args()
 
-    convert_ns_incom(args.input_dir)
+    convert_ns_incom(args.input_dir, args.output_dir)
 
 
 if __name__ == "__main__":

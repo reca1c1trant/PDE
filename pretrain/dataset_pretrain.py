@@ -681,7 +681,7 @@ def create_pretrain_dataloaders(
         ),
         DatasetConfig(
             name='ns_incom',
-            path=str(data_dir / 'pretrained' / 'ns_incom_inhom_2d_512.hdf5'),
+            path='/scratch-share/SONG0304/pretrained/ns_incom_inhom_2d_512.hdf5',
             spatial_size=512,
             needs_crop=True,
             train_spatial_points=11,  # ~3x3 grid for 512->128 crops

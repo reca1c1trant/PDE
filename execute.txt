@@ -1,0 +1,2 @@
+# 预处理 ns_incom 数据集
+python tools/preprocess_ns_incom.py --input_dir /scratch-share/SONG0304/pretrained --output_dir /scratch-share/SONG0304/pretrained
