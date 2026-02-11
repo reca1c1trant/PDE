@@ -14,7 +14,7 @@ import h5py
 import numpy as np
 from pathlib import Path
 
-from pde_loss import burgers_pde_loss
+from pde_loss import burgers_pde_loss_upwind as burgers_pde_loss
 
 
 def load_sample_new_format(file_path: str, sample_idx: int, start_t: int, end_t: int):
@@ -34,11 +34,11 @@ def load_sample_new_format(file_path: str, sample_idx: int, start_t: int, end_t:
 
     return {
         'nu': nu,
-        'data': torch.from_numpy(vector_data),  # [T, H, W, 2]
-        'boundary_left': torch.from_numpy(boundary_left),
-        'boundary_right': torch.from_numpy(boundary_right),
-        'boundary_bottom': torch.from_numpy(boundary_bottom),
-        'boundary_top': torch.from_numpy(boundary_top),
+        'data': torch.from_numpy(vector_data).double(),  # [T, H, W, 2] fp64
+        'boundary_left': torch.from_numpy(boundary_left).double(),
+        'boundary_right': torch.from_numpy(boundary_right).double(),
+        'boundary_bottom': torch.from_numpy(boundary_bottom).double(),
+        'boundary_top': torch.from_numpy(boundary_top).double(),
     }
 
 

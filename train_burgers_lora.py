@@ -56,7 +56,7 @@ from dataset_finetune import (
     create_finetune_dataloaders, TOTAL_CHANNELS
 )
 from model_lora_v2 import PDELoRAModelV2, save_lora_checkpoint, load_lora_checkpoint
-from pde_loss import burgers_pde_loss
+from pde_loss import burgers_pde_loss_upwind as burgers_pde_loss
 
 logger = logging.getLogger(__name__)
 
