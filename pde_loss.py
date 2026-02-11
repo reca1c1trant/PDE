@@ -1,19 +1,24 @@
 """
-2D Burgers方程PDE residual loss计算 - Conservative Flux Form (n-PINN style)
+2D Burgers方程PDE residual loss计算 - Non-conservative Form + 二阶迎风
 
 适用于 boundary-inclusive grid (128点从0到1)。
 PDE loss 只在内部区域 [2:126, 2:126] 计算（索引2到125）。
 
-公式 (conservative form):
-    u_t + (u*u)_x + (v*u)_y = ν∇²u
-    v_t + (u*v)_x + (v*v)_y = ν∇²v
+公式 (non-conservative form):
+    u_t + u*u_x + v*u_y = ν∇²u
+    v_t + u*v_x + v*v_y = ν∇²v
+
+注意：这与 conservative form 不同！
+    - Conservative: u_t + (u*u)_x + (v*u)_y = ν∇²u
+    - Non-conservative: u_t + u*u_x + v*u_y = ν∇²u
+
+两者只有在 div(u,v)=0 时才等价。Burgers方程的解析解不满足连续性，
+所以必须用 non-conservative form。
 
 二阶迎风格式:
-1. Cell face 平均速度: uc_e = 0.5*(uE + uC)
-2. 二阶迎风插值:
-   - phi_e = 1.5*phiC - 0.5*phiW  (if uc_e >= 0)
-   - phi_e = 1.5*phiE - 0.5*phiEE (if uc_e < 0)
-3. Flux 差分: (uc_e*phi_e - uc_w*phi_w) / dx
+- u_x: 根据u的符号选择迎风方向
+  - u >= 0: u_x = (3*u_C - 4*u_W + u_WW) / (2*dx)  (后向)
+  - u < 0:  u_x = (-3*u_C + 4*u_E - u_EE) / (2*dx) (前向)
 
 Author: Ziye
 Date: January 2025
@@ -28,21 +33,7 @@ def extract_stencil_interior(field: torch.Tensor, H: int, W: int) -> dict:
     从完整场中提取内部区域的 stencil。
 
     内部区域: [2:H-2, 2:W-2]，即索引2到H-3（对于H=128就是2到125）
-
-    Parameters:
-    -----------
-    field : torch.Tensor [B, T, H, W]
-        完整场（包含边界）
-    H, W : int
-        网格尺寸（128）
-
-    Returns:
-    --------
-    dict: 包含 C, E, W, N, S, EE, WW, NN, SS（都是内部区域大小）
     """
-    # 内部区域: [2:H-2, 2:W-2]
-    # 对于128x128，就是[2:126, 2:126]，共124x124个点
-
     C = field[:, :, 2:H-2, 2:W-2]      # Center
     E = field[:, :, 2:H-2, 3:W-1]      # East (x+dx)
     W_ = field[:, :, 2:H-2, 1:W-3]     # West (x-dx)
@@ -60,74 +51,62 @@ def extract_stencil_interior(field: torch.Tensor, H: int, W: int) -> dict:
     }
 
 
-def compute_convection_flux_x(
-    u_stencil: dict,
+def compute_upwind_derivative_x(
     phi_stencil: dict,
+    u_stencil: dict,
     dx: float,
 ) -> torch.Tensor:
     """
-    计算 x 方向的对流 flux (n-PINN conservative flux splitting)。
+    计算 phi_x 使用二阶迎风格式（non-conservative）。
 
-    (u*phi)_x ≈ (uc_e * phi_e - uc_w * phi_w) / dx
+    根据 u 的符号选择迎风方向：
+    - u >= 0: phi_x = (3*phi_C - 4*phi_W + phi_WW) / (2*dx)
+    - u < 0:  phi_x = (-3*phi_C + 4*phi_E - phi_EE) / (2*dx)
     """
-    uC, uE, uW = u_stencil['C'], u_stencil['E'], u_stencil['W']
+    uC = u_stencil['C']
     phiC = phi_stencil['C']
     phiE, phiW = phi_stencil['E'], phi_stencil['W']
     phiEE, phiWW = phi_stencil['EE'], phi_stencil['WW']
 
-    # Cell face 平均速度
-    uc_e = 0.5 * (uE + uC)  # East face
-    uc_w = 0.5 * (uW + uC)  # West face
+    # 二阶后向差分 (u >= 0)
+    phi_x_backward = (3*phiC - 4*phiW + phiWW) / (2*dx)
 
-    # 二阶迎风插值
-    # East face: phi_e
-    phi_e_minus = 1.5 * phiC - 0.5 * phiW    # 从左边插值 (uc_e >= 0)
-    phi_e_plus = 1.5 * phiE - 0.5 * phiEE    # 从右边插值 (uc_e < 0)
-    phi_e = torch.where(uc_e >= 0, phi_e_minus, phi_e_plus)
+    # 二阶前向差分 (u < 0)
+    phi_x_forward = (-3*phiC + 4*phiE - phiEE) / (2*dx)
 
-    # West face: phi_w
-    phi_w_minus = 1.5 * phiW - 0.5 * phiWW   # 从左边插值 (uc_w >= 0)
-    phi_w_plus = 1.5 * phiC - 0.5 * phiE     # 从右边插值 (uc_w < 0)
-    phi_w = torch.where(uc_w >= 0, phi_w_minus, phi_w_plus)
+    # 迎风选择
+    phi_x = torch.where(uC >= 0, phi_x_backward, phi_x_forward)
 
-    # Flux 差分
-    flux_x = (uc_e * phi_e - uc_w * phi_w) / dx
-    return flux_x
+    return phi_x
 
 
-def compute_convection_flux_y(
-    v_stencil: dict,
+def compute_upwind_derivative_y(
     phi_stencil: dict,
+    v_stencil: dict,
     dy: float,
 ) -> torch.Tensor:
     """
-    计算 y 方向的对流 flux (n-PINN conservative flux splitting)。
+    计算 phi_y 使用二阶迎风格式（non-conservative）。
 
-    (v*phi)_y ≈ (vc_n * phi_n - vc_s * phi_s) / dy
+    根据 v 的符号选择迎风方向：
+    - v >= 0: phi_y = (3*phi_C - 4*phi_S + phi_SS) / (2*dy)
+    - v < 0:  phi_y = (-3*phi_C + 4*phi_N - phi_NN) / (2*dy)
     """
-    vC, vN, vS = v_stencil['C'], v_stencil['N'], v_stencil['S']
+    vC = v_stencil['C']
     phiC = phi_stencil['C']
     phiN, phiS = phi_stencil['N'], phi_stencil['S']
     phiNN, phiSS = phi_stencil['NN'], phi_stencil['SS']
 
-    # Cell face 平均速度
-    vc_n = 0.5 * (vN + vC)  # North face
-    vc_s = 0.5 * (vS + vC)  # South face
+    # 二阶后向差分 (v >= 0)
+    phi_y_backward = (3*phiC - 4*phiS + phiSS) / (2*dy)
 
-    # 二阶迎风插值
-    # North face: phi_n
-    phi_n_minus = 1.5 * phiC - 0.5 * phiS    # 从下边插值 (vc_n >= 0)
-    phi_n_plus = 1.5 * phiN - 0.5 * phiNN    # 从上边插值 (vc_n < 0)
-    phi_n = torch.where(vc_n >= 0, phi_n_minus, phi_n_plus)
+    # 二阶前向差分 (v < 0)
+    phi_y_forward = (-3*phiC + 4*phiN - phiNN) / (2*dy)
 
-    # South face: phi_s
-    phi_s_minus = 1.5 * phiS - 0.5 * phiSS   # 从下边插值 (vc_s >= 0)
-    phi_s_plus = 1.5 * phiC - 0.5 * phiN     # 从上边插值 (vc_s < 0)
-    phi_s = torch.where(vc_s >= 0, phi_s_minus, phi_s_plus)
+    # 迎风选择
+    phi_y = torch.where(vC >= 0, phi_y_backward, phi_y_forward)
 
-    # Flux 差分
-    flux_y = (vc_n * phi_n - vc_s * phi_s) / dy
-    return flux_y
+    return phi_y
 
 
 def compute_laplacian(phi_stencil: dict, dx: float, dy: float) -> torch.Tensor:
@@ -154,7 +133,11 @@ def burgers_pde_loss(
     dy: float = 1/127,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    计算 2D Burgers 方程的 PDE residual loss。
+    计算 2D Burgers 方程的 PDE residual loss（non-conservative form）。
+
+    PDE (non-conservative):
+        u_t + u*u_x + v*u_y = ν∇²u
+        v_t + u*v_x + v*v_y = ν∇²v
 
     只在内部区域 [2:H-2, 2:W-2] 计算（对于128x128就是[2:126, 2:126]）。
 
@@ -187,7 +170,6 @@ def burgers_pde_loss(
     v = pred[..., 1]
 
     # ========== 时间导数 (后向差分) ==========
-    # 使用当前时刻的空间导数
     u_t = (u[:, 1:] - u[:, :-1]) / dt  # [B, T-1, H, W]
     v_t = (v[:, 1:] - v[:, :-1]) / dt
 
@@ -203,23 +185,27 @@ def burgers_pde_loss(
     u_t_interior = u_t[:, :, 2:H-2, 2:W-2]
     v_t_interior = v_t[:, :, 2:H-2, 2:W-2]
 
-    # ========== 对流项 (n-PINN flux splitting) ==========
-    # u 方程: (u*u)_x + (v*u)_y
-    UUx = compute_convection_flux_x(u_stencil, u_stencil, dx)
-    VUy = compute_convection_flux_y(v_stencil, u_stencil, dy)
+    # ========== 空间导数 (二阶迎风, non-conservative) ==========
+    # u 方程: u*u_x + v*u_y
+    u_x = compute_upwind_derivative_x(u_stencil, u_stencil, dx)
+    u_y = compute_upwind_derivative_y(u_stencil, v_stencil, dy)
 
-    # v 方程: (u*v)_x + (v*v)_y
-    UVx = compute_convection_flux_x(u_stencil, v_stencil, dx)
-    VVy = compute_convection_flux_y(v_stencil, v_stencil, dy)
+    # v 方程: u*v_x + v*v_y
+    v_x = compute_upwind_derivative_x(v_stencil, u_stencil, dx)
+    v_y = compute_upwind_derivative_y(v_stencil, v_stencil, dy)
+
+    # 中心点速度
+    uC = u_stencil['C']
+    vC = v_stencil['C']
 
     # ========== 扩散项 (二阶中心差分) ==========
     laplacian_u = compute_laplacian(u_stencil, dx, dy)
     laplacian_v = compute_laplacian(v_stencil, dx, dy)
 
-    # ========== PDE Residual ==========
-    # Burgers: u_t + (u*u)_x + (v*u)_y = ν∇²u
-    residual_u = u_t_interior + UUx + VUy - nu * laplacian_u
-    residual_v = v_t_interior + UVx + VVy - nu * laplacian_v
+    # ========== PDE Residual (non-conservative form) ==========
+    # u_t + u*u_x + v*u_y = ν∇²u
+    residual_u = u_t_interior + uC * u_x + vC * u_y - nu * laplacian_u
+    residual_v = v_t_interior + uC * v_x + vC * v_y - nu * laplacian_v
 
     # MSE Loss
     loss_u = torch.mean(residual_u ** 2)
@@ -236,7 +222,7 @@ burgers_pde_loss_upwind = burgers_pde_loss
 if __name__ == "__main__":
     """Test PDE loss computation."""
     print("=" * 60)
-    print("Testing Burgers PDE Loss (n-PINN, boundary-inclusive grid)")
+    print("Testing Burgers PDE Loss (non-conservative, 2nd order upwind)")
     print("=" * 60)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
