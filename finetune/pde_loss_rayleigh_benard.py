@@ -249,9 +249,9 @@ def test_with_gt_data(data_path: str):
         print(f"dx = {dx:.6f}, dy = {dy:.6f}, dt = {dt:.4f}")
 
         # 加载数据 (第一个 trajectory, 前20个时间步)
-        b = torch.tensor(f['t0_fields/buoyancy'][0, :20], dtype=torch.float32)
-        p = torch.tensor(f['t0_fields/pressure'][0, :20], dtype=torch.float32)
-        vel = torch.tensor(f['t1_fields/velocity'][0, :20], dtype=torch.float32)
+        b = torch.tensor(f['t0_fields/buoyancy'][0, :20], dtype=torch.float64)
+        p = torch.tensor(f['t0_fields/pressure'][0, :20], dtype=torch.float64)
+        vel = torch.tensor(f['t1_fields/velocity'][0, :20], dtype=torch.float64)
         u = vel[..., 0]
         w = vel[..., 1]
 
