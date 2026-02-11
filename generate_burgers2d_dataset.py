@@ -5,8 +5,8 @@ Grid: 128 points from 0 to 1 (including boundaries)
   - Points: 0, 1/127, 2/127, ..., 126/127, 1
   - Spacing: dx = 1/127
 
-PDE loss will be computed on interior [2:126, 2:126] (indices 2 to 125).
-Boundary points (indices 0, 1, 126, 127) use BC RMSE loss.
+With ghost cell extrapolation, PDE loss computed on [1:127, 1:127] (126x126 points).
+Boundary points (indices 0, 127) used for ghost cell extrapolation.
 
 Author: Ziye
 Date: January 2025
@@ -135,7 +135,7 @@ def generate_dataset(n_samples: int = 5, output_suffix: str = "_test"):
 
     print(f"  x grid: [{x_grid[0]:.6f}, {x_grid[1]:.6f}, ..., {x_grid[-2]:.6f}, {x_grid[-1]:.6f}]")
     print(f"  y grid: [{y_grid[0]:.6f}, {y_grid[1]:.6f}, ..., {y_grid[-2]:.6f}, {y_grid[-1]:.6f}]")
-    print(f"  PDE loss region: indices [2:126, 2:126] = [{x_grid[2]:.6f}, {x_grid[125]:.6f}]")
+    print(f"  PDE loss region (with ghost): indices [1:127, 1:127] = [{x_grid[1]:.6f}, {x_grid[126]:.6f}]")
 
     # Generate samples
     print(f"\n[Step 3/3] Generating {N_SAMPLES} samples...")
@@ -168,7 +168,7 @@ def generate_dataset(n_samples: int = 5, output_suffix: str = "_test"):
         f.attrs['dx'] = dx
         f.attrs['temporal_steps'] = N_T
         f.attrs['nu_range'] = (NU_MIN, NU_MAX)
-        f.attrs['pde_region'] = (2, 126)  # indices for PDE loss
+        f.attrs['pde_region'] = (1, 127)  # indices for PDE loss (with ghost cell)
 
     # Verify saved file
     with h5py.File(OUTPUT_FILE, 'r') as f:
@@ -182,15 +182,15 @@ def generate_dataset(n_samples: int = 5, output_suffix: str = "_test"):
     print("Done!")
     print("=" * 70)
     print(f"\nOutput: {OUTPUT_FILE}")
-    print(f"\nGrid layout:")
+    print(f"\nGrid layout (with ghost cell extrapolation):")
     print(f"  Index:    0      1       2      ...    125     126     127")
     print(f"  Coord:    0    1/127   2/127   ...  125/127  126/127    1")
     print(f"            |      |       |              |       |      |")
-    print(f"           BC    BC     PDE...          PDE      BC     BC")
+    print(f"          ghost  PDE    PDE...          PDE     PDE   ghost")
 
     return OUTPUT_FILE
 
 
 if __name__ == "__main__":
-    # Generate 5 samples for testing
-    generate_dataset(n_samples=5, output_suffix="_test")
+    # Generate 500 samples for training/validation
+    generate_dataset(n_samples=500, output_suffix="")

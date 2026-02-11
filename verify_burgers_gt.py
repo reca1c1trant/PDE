@@ -2,8 +2,9 @@
 Verify Burgers GT dataset with PDE loss.
 
 For boundary-inclusive grid (128 points from 0 to 1):
-- PDE loss computed on interior [2:126, 2:126]
-- Expected PDE residual: ~1e-5 for GT data (discretization error)
+- Uses ghost cell extrapolation to compute PDE on [1:127, 1:127] (126x126 points)
+- Ghost cell: ghost[-1] = 2*data[0] - data[1]
+- Expected PDE residual: ~1e-8 for GT data (discretization error)
 """
 
 import torch
@@ -11,7 +12,7 @@ import h5py
 import numpy as np
 from pathlib import Path
 
-from pde_loss import burgers_pde_loss, burgers_pde_loss_with_ghost
+from pde_loss import burgers_pde_loss
 
 
 def load_sample(file_path: str, sample_idx: int, start_t: int, end_t: int):
@@ -28,8 +29,8 @@ def load_sample(file_path: str, sample_idx: int, start_t: int, end_t: int):
 
 
 def main():
-    # Path to test dataset
-    dataset_path = "/scratch-share/SONG0304/finetune/burgers2d_nu0.1_0.15_n5_test.h5"
+    # Path to dataset
+    dataset_path = "/scratch-share/SONG0304/finetune/burgers2d_nu0.1_0.15_n500.h5"
 
     if not Path(dataset_path).exists():
         print(f"Dataset not found: {dataset_path}")
@@ -59,12 +60,13 @@ def main():
     print(f"  dt = {dt:.6f}")
     print(f"  dx = dy = {dx:.6f}")
     print(f"  Grid: {H}x{H} (boundary-inclusive)")
-    print(f"  PDE region: [2:{H-2}, 2:{H-2}] = {H-4}x{H-4} interior points")
+    print(f"  PDE region: [1:{H-1}, 1:{H-1}] = {H-2}x{H-2} interior points (with ghost cell)")
 
-    # Test all samples
+    # Test samples (limit to first 10 for quick verification)
     all_pde_losses = []
+    test_samples = min(10, n_samples)
 
-    for sample_idx in range(n_samples):
+    for sample_idx in range(test_samples):
         print(f"\n{'='*40}")
         print(f"Sample {sample_idx}")
         print(f"{'='*40}")
@@ -86,31 +88,23 @@ def main():
             dy=dx,
         )
 
-        print(f"\n  PDE Loss (no ghost, [2:126]):")
+        print(f"\n  PDE Loss (ghost cell, [1:127]):")
         print(f"    Total: {total_loss.item():.2e}, U: {loss_u.item():.2e}, V: {loss_v.item():.2e}")
-        print(f"    Residual shape: {res_u.shape}")
+        print(f"    Residual shape: {res_u.shape} (expected: [1, T-1, 126, 126])")
 
         all_pde_losses.append(total_loss.item())
 
-        # Test with ghost cell version
-        total_loss_g, loss_u_g, loss_v_g, res_u_g, res_v_g = burgers_pde_loss_with_ghost(
-            pred=data, nu=nu, dt=dt, dx=dx, dy=dx,
-        )
-        print(f"\n  PDE Loss (with ghost, [1:127]):")
-        print(f"    Total: {total_loss_g.item():.2e}, U: {loss_u_g.item():.2e}, V: {loss_v_g.item():.2e}")
-        print(f"    Residual shape: {res_u_g.shape}")
-
     # Summary
     print("\n" + "=" * 60)
-    print("Summary")
+    print(f"Summary (tested {test_samples}/{n_samples} samples)")
     print("=" * 60)
     avg_loss = np.mean(all_pde_losses)
     print(f"Average PDE Loss: {avg_loss:.2e}")
 
-    if avg_loss < 1e-4:
+    if avg_loss < 1e-6:
         print("\n[OK] PDE loss is small for GT data!")
     else:
-        print(f"\n[WARNING] PDE loss is {avg_loss:.2e}, expected ~1e-5")
+        print(f"\n[WARNING] PDE loss is {avg_loss:.2e}, expected ~1e-8")
 
     # Expected discretization error
     print(f"\nExpected discretization error:")
