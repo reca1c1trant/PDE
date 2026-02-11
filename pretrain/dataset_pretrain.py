@@ -2,10 +2,10 @@
 Unified Dataset for PDE Foundation Model Pretraining.
 
 Supports multiple datasets with different formats:
-- diffusion-reaction: scalar only (concentration_u, concentration_v)
-- 2D_CFD: vector (Vx, Vy) + scalar (density, pressure)
-- SWE: scalar only (height)
-- NS_incom: vector (vx, vy) + scalar (passive_tracer), pre-split 128x128 patches
+- diffusion-reaction: 128x128, scalar only (concentration_u, concentration_v)
+- 2D_CFD: 128x128, vector (Vx, Vy) + scalar (density, pressure)
+- SWE: 128x128, scalar only (height)
+- NS_incom: 512x512, vector (vx, vy) + scalar (passive_tracer)
 
 Data Format (after preprocessing):
     dataset.hdf5
@@ -16,10 +16,6 @@ Data Format (after preprocessing):
 Output Format:
     data: [T, H, W, 18]      # 3 vector + 15 scalar (unified)
     channel_mask: [18]       # valid channel indicator
-
-Note on NS_incom:
-    Original 512x512 samples are pre-split into 128x128 patches (16 per original).
-    patches_per_original=16 ensures train/val split by original sample, not patch.
 """
 
 import h5py
@@ -46,12 +42,6 @@ class DatasetConfig:
     """Configuration for a single dataset."""
     name: str
     path: str
-    spatial_size: int  # 128 or 512
-    needs_crop: bool   # True for 512x512 datasets
-    train_spatial_points: int  # number of spatial crop points for training
-    val_spatial_points: int    # number of spatial crop points for validation
-    patches_per_original: int = 1  # For split datasets: group this many consecutive patches as one original sample
-    clips_ratio_offset: float = 0.0  # Offset from base clips_ratio (e.g., -0.05 for ns_incom)
     val_time_interval: int = 2  # Time interval for validation clips
     vector_dim: int = 0  # Actual vector dimensions (0=no vector, 2=2D, 3=3D)
     clips_per_epoch: Optional[int] = None  # If set, override clips_ratio with fixed number per epoch
@@ -77,55 +67,6 @@ SCALAR_INDICES = {
 }
 
 
-def generate_spatial_points(
-    n_points: int,
-    max_coord: int = 384,
-    rng: np.random.RandomState = None
-) -> List[Tuple[int, int]]:
-    """
-    Generate n spatial crop starting points using deterministic grid.
-
-    For n_points=11: use ~3.3x3.3 grid, take first 11 points
-    For n_points=16: use 4x4 grid
-
-    Args:
-        n_points: Number of points to generate
-        max_coord: Maximum coordinate value (crop starts in [0, max_coord])
-        rng: Not used, kept for API compatibility
-
-    Returns:
-        List of (x, y) tuples with spacing >= 128
-    """
-    # Determine grid size
-    grid_size = int(np.ceil(np.sqrt(n_points)))
-    step = max_coord // (grid_size - 1) if grid_size > 1 else 0
-
-    points = []
-    for i in range(grid_size):
-        for j in range(grid_size):
-            if len(points) < n_points:
-                points.append((i * step, j * step))
-
-    return points
-
-
-def get_validation_spatial_points(n_points: int = 16, max_coord: int = 384) -> List[Tuple[int, int]]:
-    """
-    Generate fixed grid of spatial points for validation.
-
-    For 16 points: 4x4 grid at (0, 128, 256, 384)
-    """
-    grid_size = int(np.sqrt(n_points))
-    step = max_coord // (grid_size - 1) if grid_size > 1 else 0
-
-    points = []
-    for i in range(grid_size):
-        for j in range(grid_size):
-            points.append((i * step, j * step))
-
-    return points[:n_points]
-
-
 class SingleDataset:
     """
     Handler for a single dataset file.
@@ -147,13 +88,9 @@ class SingleDataset:
         self.train_ratio = train_ratio
         self.seed = seed
         self.temporal_length = temporal_length
-        # Apply per-dataset clips_ratio offset
-        self.clips_ratio = clips_ratio + config.clips_ratio_offset
+        self.clips_ratio = clips_ratio
         self.val_time_interval = config.val_time_interval
-
         self.path = Path(config.path)
-        self.needs_crop = config.needs_crop
-        self.crop_size = 128
 
         # Load metadata
         self._load_metadata()
@@ -189,83 +126,36 @@ class SingleDataset:
                    f"spatial={self.spatial_size}, temporal_len={self.temporal_length}, max_start={self.max_start}")
 
     def _split_samples(self):
-        """Split samples into train/val sets.
-
-        If patches_per_original > 1, splits by original sample groups to avoid
-        data leakage (patches from same original sample stay together).
-        """
+        """Split samples into train/val sets."""
         rng = np.random.RandomState(self.seed)
-        patches_per_original = self.config.patches_per_original
+        indices = rng.permutation(self.n_samples)
+        split_idx = int(self.n_samples * self.train_ratio)
 
-        if patches_per_original > 1:
-            # Split by original sample groups
-            n_originals = self.n_samples // patches_per_original
-            original_indices = rng.permutation(n_originals)
-            split_idx = int(n_originals * self.train_ratio)
-
-            if self.split == 'train':
-                selected_originals = original_indices[:split_idx]
-            else:
-                selected_originals = original_indices[split_idx:]
-
-            # Expand to patch indices
-            self.sample_indices = []
-            for orig_idx in selected_originals:
-                start = orig_idx * patches_per_original
-                self.sample_indices.extend(range(start, start + patches_per_original))
-
-            logger.info(f"{self.config.name} ({self.split}): {len(selected_originals)} originals "
-                       f"-> {len(self.sample_indices)} patches")
+        if self.split == 'train':
+            self.sample_indices = indices[:split_idx].tolist()
         else:
-            # Standard split by individual samples
-            indices = rng.permutation(self.n_samples)
-            split_idx = int(self.n_samples * self.train_ratio)
+            self.sample_indices = indices[split_idx:].tolist()
 
-            if self.split == 'train':
-                self.sample_indices = indices[:split_idx].tolist()
-            else:
-                self.sample_indices = indices[split_idx:].tolist()
+        logger.info(f"{self.config.name} ({self.split}): {len(self.sample_indices)} samples")
 
-            logger.info(f"{self.config.name} ({self.split}): {len(self.sample_indices)} samples")
-
-    def generate_clips(self, epoch: int = 0) -> List[Tuple[int, int, Optional[Tuple[int, int]]]]:
+    def generate_clips(self, epoch: int = 0) -> List[Tuple[int, int]]:
         """
         Generate clips for current epoch.
 
         Returns:
-            List of (sample_idx, start_t, spatial_point) tuples.
-            spatial_point is None for 128x128 datasets, (x, y) for 512x512.
+            List of (sample_idx, start_t) tuples.
         """
         rng = np.random.RandomState(self.seed + epoch)
         clips = []
 
         for sample_idx in self.sample_indices:
-            # Determine time clips
             if self.split == 'train':
                 time_clips = self._get_train_time_clips(rng)
             else:
                 time_clips = self._get_val_time_clips()
 
-            # Determine spatial points
-            if self.needs_crop:
-                if self.split == 'train':
-                    spatial_points = generate_spatial_points(
-                        self.config.train_spatial_points,
-                        max_coord=self.spatial_size - self.crop_size,
-                        rng=rng
-                    )
-                else:
-                    spatial_points = get_validation_spatial_points(
-                        self.config.val_spatial_points,
-                        max_coord=self.spatial_size - self.crop_size
-                    )
-            else:
-                spatial_points = [None]
-
-            # Generate all combinations
             for start_t in time_clips:
-                for sp in spatial_points:
-                    clips.append((sample_idx, start_t, sp))
+                clips.append((sample_idx, start_t))
 
         return clips
 
@@ -294,12 +184,7 @@ class SingleDataset:
             # Use per-dataset validation interval
             return list(range(0, self.max_start + 1, self.val_time_interval))
 
-    def load_clip(
-        self,
-        sample_idx: int,
-        start_t: int,
-        spatial_point: Optional[Tuple[int, int]] = None
-    ) -> Dict[str, np.ndarray]:
+    def load_clip(self, sample_idx: int, start_t: int) -> Dict[str, np.ndarray]:
         """
         Load a single clip from the dataset.
 
@@ -316,10 +201,9 @@ class SingleDataset:
             else:
                 # Create zero vector
                 if 'scalar' in f:
-                    T, H, W = f['scalar'].shape[1:4]
-                    H, W = min(H, 128), min(W, 128)  # Handle crop size
+                    _, _, H, W, _ = f['scalar'].shape
                 else:
-                    T, H, W = self.temporal_length, 128, 128
+                    H, W = 128, 128
                 vector = np.zeros((self.temporal_length, H, W, NUM_VECTOR_CHANNELS), dtype=np.float32)
 
             # Load scalar
@@ -329,13 +213,6 @@ class SingleDataset:
             else:
                 scalar_compact = None
                 scalar_indices = np.array([], dtype=np.int32)
-
-        # Apply spatial crop if needed
-        if spatial_point is not None:
-            x, y = spatial_point
-            vector = vector[:, x:x+self.crop_size, y:y+self.crop_size, :]
-            if scalar_compact is not None:
-                scalar_compact = scalar_compact[:, x:x+self.crop_size, y:y+self.crop_size, :]
 
         # Expand scalar to full 15 channels
         T, H, W = vector.shape[:3]
@@ -348,13 +225,11 @@ class SingleDataset:
         data = np.concatenate([vector, scalar_full], axis=-1).astype(np.float32)
 
         # Create channel mask
-        # Only mark actually valid channels (not padded Vz for 2D data)
         channel_mask = np.zeros(TOTAL_CHANNELS, dtype=np.float32)
         if self.has_vector and self.config.vector_dim > 0:
-            # Only mark actual vector dimensions (e.g., 2 for 2D data, not 3)
             channel_mask[:self.config.vector_dim] = 1.0
         for idx in scalar_indices:
-            channel_mask[NUM_VECTOR_CHANNELS + idx] = 1.0  # scalar channels
+            channel_mask[NUM_VECTOR_CHANNELS + idx] = 1.0
 
         return {
             'data': data,
@@ -408,8 +283,8 @@ class PretrainDataset(Dataset):
 
     def _generate_all_clips(self):
         """Generate clips from all datasets."""
-        self.clips = []  # List of (dataset_name, sample_idx, start_t, spatial_point)
-        self.clips_by_equiv_sample: Dict[Tuple[str, int, Optional[Tuple[int, int]]], List[int]] = {}
+        self.clips = []  # List of (dataset_name, sample_idx, start_t)
+        self.clips_by_sample: Dict[Tuple[str, int], List[int]] = {}
 
         clip_idx = 0
         rng = np.random.RandomState(self.seed + self.epoch)
@@ -425,14 +300,14 @@ class PretrainDataset(Dataset):
                 ds_clips = [ds_clips[i] for i in selected_indices]
                 logger.info(f"  {name}: limited to {clips_per_epoch} clips per epoch")
 
-            for sample_idx, start_t, spatial_point in ds_clips:
-                self.clips.append((name, sample_idx, start_t, spatial_point))
+            for sample_idx, start_t in ds_clips:
+                self.clips.append((name, sample_idx, start_t))
 
-                # Group by equivalent sample (dataset, sample, spatial_point)
-                equiv_key = (name, sample_idx, spatial_point)
-                if equiv_key not in self.clips_by_equiv_sample:
-                    self.clips_by_equiv_sample[equiv_key] = []
-                self.clips_by_equiv_sample[equiv_key].append(clip_idx)
+                # Group by sample (dataset, sample)
+                sample_key = (name, sample_idx)
+                if sample_key not in self.clips_by_sample:
+                    self.clips_by_sample[sample_key] = []
+                self.clips_by_sample[sample_key].append(clip_idx)
 
                 clip_idx += 1
 
@@ -445,10 +320,10 @@ class PretrainDataset(Dataset):
         return len(self.clips)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        dataset_name, sample_idx, start_t, spatial_point = self.clips[idx]
+        dataset_name, sample_idx, start_t = self.clips[idx]
         ds = self.datasets[dataset_name]
 
-        result = ds.load_clip(sample_idx, start_t, spatial_point)
+        result = ds.load_clip(sample_idx, start_t)
 
         return {
             'data': torch.from_numpy(result['data']),
@@ -503,7 +378,7 @@ class PretrainSampler(Sampler):
         rng = np.random.RandomState(self.seed + self.epoch)
 
         # Get all equivalent sample keys and shuffle
-        equiv_keys = list(self.dataset.clips_by_equiv_sample.keys())
+        equiv_keys = list(self.dataset.clips_by_sample.keys())
         if self.shuffle:
             rng.shuffle(equiv_keys)
 
@@ -511,7 +386,7 @@ class PretrainSampler(Sampler):
         small_clips_pool = []  # Pool for merging small equiv samples
 
         for equiv_key in equiv_keys:
-            clip_indices = list(self.dataset.clips_by_equiv_sample[equiv_key])
+            clip_indices = list(self.dataset.clips_by_sample[equiv_key])
 
             if len(clip_indices) == 0:
                 continue
@@ -655,40 +530,26 @@ def create_pretrain_dataloaders(
         DatasetConfig(
             name='diffusion_reaction',
             path=str(data_dir / 'pretrained' / '2D_diff-react_NA_NA.hdf5'),
-            spatial_size=128,
-            needs_crop=False,
-            train_spatial_points=1,
-            val_spatial_points=1,
-            vector_dim=0,  # No vector field, only scalar (concentration_u, concentration_v)
+            val_time_interval=2,
+            vector_dim=0,  # No vector, only scalar (concentration_u, concentration_v)
         ),
         DatasetConfig(
             name='2d_cfd',
             path=str(data_dir / 'pretrained' / '2D_CFD_128_merged.hdf5'),
-            spatial_size=128,
-            needs_crop=False,
-            train_spatial_points=1,
-            val_spatial_points=1,
-            vector_dim=2,  # 2D velocity (Vx, Vy), Vz is padded zero
+            val_time_interval=2,
+            vector_dim=2,  # 2D velocity (Vx, Vy)
         ),
         DatasetConfig(
             name='swe',
             path=str(data_dir / 'pretrained' / '2D_rdb_NA_NA.h5'),
-            spatial_size=128,
-            needs_crop=False,
-            train_spatial_points=1,
-            val_spatial_points=1,
-            vector_dim=0,  # No vector field, only scalar (height)
+            val_time_interval=2,
+            vector_dim=0,  # No vector, only scalar (height)
         ),
         DatasetConfig(
             name='ns_incom',
             path='/scratch-share/SONG0304/pretrained/ns_incom_inhom_2d_512.hdf5',
-            spatial_size=512,
-            needs_crop=True,
-            train_spatial_points=11,  # ~3x3 grid for 512->128 crops
-            val_spatial_points=16,    # 4x4 grid
-            clips_ratio_offset=-0.05,  # 20% instead of 25%
-            val_time_interval=7,
-            vector_dim=2,  # 2D velocity (vx, vy), vz is padded zero
+            val_time_interval=8,
+            vector_dim=2,  # 2D velocity (vx, vy)
         ),
     ]
 
@@ -762,31 +623,12 @@ if __name__ == "__main__":
     """Test the dataset."""
     import sys
 
-    # Test with mock data directory
     data_dir = "./data"
 
     print("=" * 60)
     print("Testing PretrainDataset")
     print("=" * 60)
 
-    # Test spatial point generation
-    print("\nTesting spatial point generation:")
-    points = generate_spatial_points(11, max_coord=384)
-    print(f"Generated {len(points)} points: {points}")
-
-    # Verify distances
-    for i, (x1, y1) in enumerate(points):
-        for j, (x2, y2) in enumerate(points):
-            if i < j:
-                dist = max(abs(x1 - x2), abs(y1 - y2))
-                if dist < 128:
-                    print(f"WARNING: Points {i} and {j} too close: {dist}")
-
-    print("\nValidation spatial points (4x4 grid):")
-    val_points = get_validation_spatial_points(16, max_coord=384)
-    print(val_points)
-
-    # Test with actual data if available
     pretrained_dir = Path(data_dir) / 'pretrained'
     if pretrained_dir.exists():
         try:
