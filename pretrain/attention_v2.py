@@ -14,7 +14,9 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 import math
 
+from natten import NeighborhoodAttention2D as NattenNA2D
 from natten import NeighborhoodAttention3D as NattenNA3D
+from natten import NeighborhoodAttention4D as NattenNA4D
 
 
 class RMSNorm(nn.Module):
@@ -261,6 +263,230 @@ class IntraPatchAttentionLayer(nn.Module):
         return x
 
 
+class AttentionPool1D(nn.Module):
+    """
+    Learnable attention pooling for 1D: sub_x -> 1.
+
+    Uses a learnable query to compute attention weights over spatial positions.
+    """
+
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.query = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+        self.key_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.scale = math.sqrt(hidden_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, T, n_x, sub_x, D]
+        Returns:
+            out: [B, T, n_x, D]
+        """
+        B, T, n_x, sub_x, D = x.shape
+
+        x = x.reshape(B * T * n_x, sub_x, D)
+
+        keys = self.key_proj(x)
+        query = self.query.expand(x.shape[0], -1, -1)
+
+        attn_weights = torch.bmm(query, keys.transpose(1, 2)) / self.scale
+        attn_weights = F.softmax(attn_weights, dim=-1)
+
+        out = torch.bmm(attn_weights, x)
+        out = out.squeeze(1)
+
+        out = out.reshape(B, T, n_x, D)
+        return out
+
+
+class AttentionPool3D(nn.Module):
+    """
+    Learnable attention pooling for 3D: sub_d*sub_h*sub_w -> 1.
+
+    Uses a learnable query to compute attention weights over spatial positions.
+    """
+
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.query = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+        self.key_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.scale = math.sqrt(hidden_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, T, n_d, n_h, n_w, sub_d, sub_h, sub_w, D]
+        Returns:
+            out: [B, T, n_d, n_h, n_w, D]
+        """
+        B, T, n_d, n_h, n_w, sub_d, sub_h, sub_w, D = x.shape
+        num_pos = sub_d * sub_h * sub_w
+
+        x = x.reshape(B * T * n_d * n_h * n_w, num_pos, D)
+
+        keys = self.key_proj(x)
+        query = self.query.expand(x.shape[0], -1, -1)
+
+        attn_weights = torch.bmm(query, keys.transpose(1, 2)) / self.scale
+        attn_weights = F.softmax(attn_weights, dim=-1)
+
+        out = torch.bmm(attn_weights, x)
+        out = out.squeeze(1)
+
+        out = out.reshape(B, T, n_d, n_h, n_w, D)
+        return out
+
+
+class IntraPatchTemporalAttention1D(nn.Module):
+    """
+    Causal self-attention within 1D patches across time steps.
+
+    For each sub-patch position, collects tokens from multiple time steps
+    and applies causal self-attention.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_heads: int = 8,
+        num_layers: int = 2,
+        temporal_window: int = 3,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.temporal_window = temporal_window
+        self.head_dim = hidden_dim // num_heads
+
+        assert hidden_dim % num_heads == 0
+
+        self.layers = nn.ModuleList([
+            IntraPatchAttentionLayer(hidden_dim, num_heads, dropout)
+            for _ in range(num_layers)
+        ])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, T, n_x, sub_x, D]
+        Returns:
+            out: [B, T, n_x, sub_x, D]
+        """
+        B, T, n_x, sub_x, D = x.shape
+
+        # [B, T, n_x, sub_x, D] -> [B, n_x, T, sub_x, D]
+        x = x.permute(0, 2, 1, 3, 4)
+        x = x.reshape(B * n_x, T * sub_x, D)
+
+        causal_mask = self._create_temporal_causal_mask(T, sub_x, x.device)
+
+        for layer in self.layers:
+            x = layer(x, causal_mask)
+
+        x = x.reshape(B, n_x, T, sub_x, D)
+        x = x.permute(0, 2, 1, 3, 4)  # [B, T, n_x, sub_x, D]
+
+        return x
+
+    def _create_temporal_causal_mask(
+        self, T: int, sub_patches: int, device: torch.device
+    ) -> torch.Tensor:
+        seq_len = T * sub_patches
+        positions = torch.arange(seq_len, device=device)
+        time_indices = positions // sub_patches
+
+        time_i = time_indices.unsqueeze(0)
+        time_j = time_indices.unsqueeze(1)
+
+        causal_ok = time_i <= time_j
+        window_ok = time_i >= (time_j - self.temporal_window + 1)
+        can_attend = causal_ok & window_ok
+
+        mask = ~can_attend
+        return mask
+
+
+class IntraPatchTemporalAttention3D(nn.Module):
+    """
+    Causal self-attention within 3D patches across time steps.
+
+    For each sub-patch position, collects tokens from multiple time steps
+    and applies causal self-attention.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_heads: int = 8,
+        num_layers: int = 2,
+        temporal_window: int = 3,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.temporal_window = temporal_window
+        self.head_dim = hidden_dim // num_heads
+
+        assert hidden_dim % num_heads == 0
+
+        self.layers = nn.ModuleList([
+            IntraPatchAttentionLayer(hidden_dim, num_heads, dropout)
+            for _ in range(num_layers)
+        ])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, T, n_d, n_h, n_w, sub_d, sub_h, sub_w, D]
+        Returns:
+            out: [B, T, n_d, n_h, n_w, sub_d, sub_h, sub_w, D]
+        """
+        B, T, n_d, n_h, n_w, sub_d, sub_h, sub_w, D = x.shape
+        sub_patches = sub_d * sub_h * sub_w
+        N_patches = n_d * n_h * n_w
+
+        # [B, T, n_d, n_h, n_w, sub_d, sub_h, sub_w, D]
+        # -> [B, n_d, n_h, n_w, T, sub_patches, D]
+        x = x.reshape(B, T, N_patches, sub_patches, D)
+        x = x.permute(0, 2, 1, 3, 4)  # [B, N_patches, T, sub_patches, D]
+        x = x.reshape(B * N_patches, T * sub_patches, D)
+
+        causal_mask = self._create_temporal_causal_mask(T, sub_patches, x.device)
+
+        for layer in self.layers:
+            x = layer(x, causal_mask)
+
+        x = x.reshape(B, N_patches, T, sub_patches, D)
+        x = x.permute(0, 2, 1, 3, 4)  # [B, T, N_patches, sub_patches, D]
+        x = x.reshape(B, T, n_d, n_h, n_w, sub_d, sub_h, sub_w, D)
+
+        return x
+
+    def _create_temporal_causal_mask(
+        self, T: int, sub_patches: int, device: torch.device
+    ) -> torch.Tensor:
+        seq_len = T * sub_patches
+        positions = torch.arange(seq_len, device=device)
+        time_indices = positions // sub_patches
+
+        time_i = time_indices.unsqueeze(0)
+        time_j = time_indices.unsqueeze(1)
+
+        causal_ok = time_i <= time_j
+        window_ok = time_i >= (time_j - self.temporal_window + 1)
+        can_attend = causal_ok & window_ok
+
+        mask = ~can_attend
+        return mask
+
+
 class NeighborhoodAttention3D(nn.Module):
     """
     3D Neighborhood Attention wrapper using natten.
@@ -347,6 +573,63 @@ class NATransformerLayer(nn.Module):
         x = residual + self.dropout(x)
 
         # FFN with pre-norm
+        residual = x
+        x = self.norm2(x)
+        x = residual + self.dropout(self.ffn(x))
+
+        return x
+
+
+class NATransformerLayerND(nn.Module):
+    """
+    Generic transformer layer with Neighborhood Attention for any spatial dim.
+
+    Supports na_dim=2 (1D PDE), na_dim=3 (2D PDE), na_dim=4 (3D PDE).
+    RMSNorm and SwiGLU operate on last dim, so they are dimension-agnostic.
+    """
+
+    _NA_CLASSES = {2: NattenNA2D, 3: NattenNA3D, 4: NattenNA4D}
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_heads: int,
+        kernel_size: tuple,
+        na_dim: int,
+        is_causal: bool = True,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        assert na_dim in (2, 3, 4), f"na_dim must be 2, 3, or 4, got {na_dim}"
+        assert len(kernel_size) == na_dim, \
+            f"kernel_size length {len(kernel_size)} != na_dim {na_dim}"
+
+        causal_tuple = (is_causal,) + (False,) * (na_dim - 1)
+
+        self.norm1 = RMSNorm(hidden_dim)
+        self.na = self._NA_CLASSES[na_dim](
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            kernel_size=kernel_size,
+            dilation=1,
+            is_causal=causal_tuple,
+        )
+        self.norm2 = RMSNorm(hidden_dim)
+        self.ffn = SwiGLU(hidden_dim, hidden_dim * 4)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, *spatial_dims, D] where len(spatial_dims) == na_dim
+        Returns:
+            out: same shape as x
+        """
+        residual = x
+        x = self.norm1(x)
+        x = self.na(x)
+        x = residual + self.dropout(x)
+
         residual = x
         x = self.norm2(x)
         x = residual + self.dropout(self.ffn(x))

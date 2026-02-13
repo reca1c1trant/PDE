@@ -10,7 +10,7 @@ Uses Neighborhood Attention model with LoRA on:
 - FFN: gate_proj, up_proj, down_proj
 
 Usage:
-    torchrun --nproc_per_node=8 train_burgers_lora.py --config configs/finetune_burgers.yaml
+    torchrun --nproc_per_node=8 finetune/train_burgers_lora.py --config configs/finetune_burgers.yaml
 """
 
 import os

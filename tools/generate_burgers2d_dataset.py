@@ -99,8 +99,8 @@ def generate_dataset(n_samples: int = 5, output_suffix: str = "_test"):
     N_SAMPLES = n_samples
     N_GRID = 128  # 128 points including boundaries
     N_T = 1000
-    NU_MIN = 0.1
-    NU_MAX = 0.15
+    NU_MIN = 0.005
+    NU_MAX = 0.02
     SEED = 42
 
     # Grid spacing
@@ -193,4 +193,4 @@ def generate_dataset(n_samples: int = 5, output_suffix: str = "_test"):
 
 if __name__ == "__main__":
     # Generate 500 samples for training/validation
-    generate_dataset(n_samples=500, output_suffix="")
+    generate_dataset(n_samples=100, output_suffix="")

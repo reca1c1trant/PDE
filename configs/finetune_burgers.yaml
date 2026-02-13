@@ -65,7 +65,7 @@ training:
   lambda_pde: 0.01 # PDE loss weight
 
   # Eval interval (steps)
-  eval_interval: 180
+  eval_interval: 90
 
   # Early stopping
   early_stopping_patience: 30
@@ -79,7 +79,7 @@ dataloader:
   pin_memory: true
 
 dataset:
-  path: /scratch-share/SONG0304/finetune/burgers2d_nu0.1_0.15_n200.h5
+  path: /scratch-share/SONG0304/finetune/burgers2d_nu0.005_0.02_n100.h5
   seed: 42
   t_input: 8
   train_ratio: 0.9

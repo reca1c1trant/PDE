@@ -2,20 +2,24 @@
 Unified Dataset for PDE Foundation Model Pretraining.
 
 Supports multiple datasets with different formats:
+- 1D_CFD: 1024 (1D), vector (Vx) + scalar (density, pressure)
 - diffusion-reaction: 128x128, scalar only (concentration_u, concentration_v)
 - 2D_CFD: 128x128, vector (Vx, Vy) + scalar (density, pressure)
 - SWE: 128x128, scalar only (height)
 - NS_incom: 512x512, vector (vx, vy) + scalar (passive_tracer)
+- 3D_CFD: 128x128x128 (3D), vector (Vx, Vy, Vz) + scalar (density, pressure)
 
 Data Format (after preprocessing):
     dataset.hdf5
-    ├── vector: [N, T, H, W, 3]          # optional
-    ├── scalar: [N, T, H, W, C_actual]   # compact storage
+    ├── vector: [N, T, ..., 3]           # optional (1D/2D/3D spatial)
+    ├── scalar: [N, T, ..., C_actual]    # compact storage
     └── scalar_indices: [C_actual]        # global index mapping
 
 Output Format:
-    data: [T, H, W, 18]      # 3 vector + 15 scalar (unified)
-    channel_mask: [18]       # valid channel indicator
+    1D: data: [T, X, 18]          # 3 vector + 15 scalar (unified)
+    2D: data: [T, H, W, 18]       # 3 vector + 15 scalar (unified)
+    3D: data: [T, D, H, W, 18]    # 3 vector + 15 scalar (unified)
+    channel_mask: [18]             # valid channel indicator
 """
 
 import h5py
@@ -80,7 +84,6 @@ class SingleDataset:
         split: str,
         train_ratio: float = 0.9,
         seed: int = 42,
-        clips_ratio: float = 0.2,
         temporal_length: int = DEFAULT_TEMPORAL_LENGTH,
     ):
         self.config = config
@@ -88,7 +91,6 @@ class SingleDataset:
         self.train_ratio = train_ratio
         self.seed = seed
         self.temporal_length = temporal_length
-        self.clips_ratio = clips_ratio
         self.val_time_interval = config.val_time_interval
         self.path = Path(config.path)
 
@@ -160,17 +162,11 @@ class SingleDataset:
         return clips
 
     def _get_train_time_clips(self, rng: np.random.RandomState) -> List[int]:
-        """Get time clip starting points for training (20% sampling)."""
+        """Get time clip starting points for training (use all, clips_per_epoch controls total)."""
         if self.max_start <= 0:
             return [0] if self.n_timesteps >= self.temporal_length else []
 
-        if self.n_timesteps <= 30:
-            # Short sequence: use all
-            return list(range(self.max_start + 1))
-        else:
-            # Long sequence: sample 20%
-            n_clips = max(1, int(self.clips_ratio * (self.max_start + 1)))
-            return rng.choice(self.max_start + 1, n_clips, replace=False).tolist()
+        return list(range(self.max_start + 1))
 
     def _get_val_time_clips(self) -> List[int]:
         """Get time clip starting points for validation (fixed interval)."""
@@ -189,7 +185,7 @@ class SingleDataset:
         Load a single clip from the dataset.
 
         Returns:
-            data: [T, H, W, 18] unified format
+            data: [T, ..., 18] unified format (1D: [T, X, 18], 2D: [T, H, W, 18])
             channel_mask: [18] valid channel indicator
         """
         end_t = start_t + self.temporal_length
@@ -197,31 +193,31 @@ class SingleDataset:
         with h5py.File(self.path, 'r') as f:
             # Load vector if exists
             if self.has_vector:
-                vector = f['vector'][sample_idx, start_t:end_t]  # [T, H, W, 3]
+                vector = f['vector'][sample_idx, start_t:end_t]  # [T, ..., 3]
             else:
-                # Create zero vector
+                # Create zero vector matching spatial shape
                 if 'scalar' in f:
-                    _, _, H, W, _ = f['scalar'].shape
+                    spatial_dims = f['scalar'].shape[2:-1]  # (X,) for 1D, (H, W) for 2D
                 else:
-                    H, W = 128, 128
-                vector = np.zeros((self.temporal_length, H, W, NUM_VECTOR_CHANNELS), dtype=np.float32)
+                    spatial_dims = (128, 128)
+                vector = np.zeros((self.temporal_length,) + spatial_dims + (NUM_VECTOR_CHANNELS,), dtype=np.float32)
 
             # Load scalar
             if 'scalar' in f:
-                scalar_compact = f['scalar'][sample_idx, start_t:end_t]  # [T, H, W, C_actual]
+                scalar_compact = f['scalar'][sample_idx, start_t:end_t]  # [T, ..., C_actual]
                 scalar_indices = f['scalar_indices'][:]
             else:
                 scalar_compact = None
                 scalar_indices = np.array([], dtype=np.int32)
 
         # Expand scalar to full 15 channels
-        T, H, W = vector.shape[:3]
-        scalar_full = np.zeros((T, H, W, NUM_SCALAR_CHANNELS), dtype=np.float32)
+        spatial_shape = vector.shape[:-1]  # (T, X) for 1D, (T, H, W) for 2D
+        scalar_full = np.zeros(spatial_shape + (NUM_SCALAR_CHANNELS,), dtype=np.float32)
         if scalar_compact is not None:
             for i, idx in enumerate(scalar_indices):
                 scalar_full[..., idx] = scalar_compact[..., i]
 
-        # Concatenate to unified format: [T, H, W, 18]
+        # Concatenate to unified format: [T, ..., 18]
         data = np.concatenate([vector, scalar_full], axis=-1).astype(np.float32)
 
         # Create channel mask
@@ -251,7 +247,6 @@ class PretrainDataset(Dataset):
         split: str = 'train',
         train_ratio: float = 0.9,
         seed: int = 42,
-        clips_ratio: float = 0.2,
         temporal_length: int = DEFAULT_TEMPORAL_LENGTH,
     ):
         self.split = split
@@ -267,7 +262,6 @@ class PretrainDataset(Dataset):
                 split=split,
                 train_ratio=train_ratio,
                 seed=seed,
-                clips_ratio=clips_ratio,
                 temporal_length=temporal_length,
             )
 
@@ -292,9 +286,9 @@ class PretrainDataset(Dataset):
         for name, ds in self.datasets.items():
             ds_clips = ds.generate_clips(self.epoch)
 
-            # Apply clips_per_epoch limit if configured
+            # Apply clips_per_epoch limit if configured (training only)
             clips_per_epoch = ds.config.clips_per_epoch
-            if clips_per_epoch is not None and len(ds_clips) > clips_per_epoch:
+            if clips_per_epoch is not None and self.split == 'train' and len(ds_clips) > clips_per_epoch:
                 # Randomly sample clips_per_epoch clips
                 selected_indices = rng.choice(len(ds_clips), clips_per_epoch, replace=False)
                 ds_clips = [ds_clips[i] for i in selected_indices]
@@ -352,14 +346,12 @@ class PretrainSampler(Sampler):
         seed: int = 42,
         num_replicas: Optional[int] = None,
         rank: Optional[int] = None,
-        min_batch_unit: int = 4,  # Batches must be multiple of this
     ):
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
         self.epoch = 0
-        self.min_batch_unit = min_batch_unit
 
         # Distributed settings
         import os
@@ -374,7 +366,7 @@ class PretrainSampler(Sampler):
         self._compute_batches()
 
     def _compute_batches(self):
-        """Compute batches with flexible strategy for small equiv samples."""
+        """Compute batches with same-sample constraint (never mix different samples in a batch)."""
         rng = np.random.RandomState(self.seed + self.epoch)
 
         # Get all equivalent sample keys and shuffle
@@ -383,7 +375,6 @@ class PretrainSampler(Sampler):
             rng.shuffle(equiv_keys)
 
         batches = []
-        small_clips_pool = []  # Pool for merging small equiv samples
 
         for equiv_key in equiv_keys:
             clip_indices = list(self.dataset.clips_by_sample[equiv_key])
@@ -395,48 +386,16 @@ class PretrainSampler(Sampler):
             if self.shuffle:
                 rng.shuffle(clip_indices)
 
-            if len(clip_indices) >= self.batch_size:
-                # Large enough: use same-equiv-sample batching with padding
-                for i in range(0, len(clip_indices), self.batch_size):
-                    batch = clip_indices[i:i + self.batch_size]
+            # Split into batches, pad incomplete ones from same sample
+            for i in range(0, len(clip_indices), self.batch_size):
+                batch = clip_indices[i:i + self.batch_size]
 
-                    # Pad incomplete batch from same equiv sample
-                    if len(batch) < self.batch_size:
-                        need = self.batch_size - len(batch)
-                        pool = clip_indices[:i] if i > 0 else batch
-                        if len(pool) >= need:
-                            pad = rng.choice(pool, need, replace=False).tolist()
-                        else:
-                            pad = rng.choice(pool, need, replace=True).tolist()
-                        batch = batch + pad
+                if len(batch) < self.batch_size:
+                    need = self.batch_size - len(batch)
+                    pad = rng.choice(clip_indices, need, replace=True).tolist()
+                    batch = batch + pad
 
-                    batches.append(batch)
-            else:
-                # Too few clips: add to pool for merging
-                small_clips_pool.extend(clip_indices)
-
-        # Process small clips pool: merge into batches
-        if small_clips_pool:
-            if self.shuffle:
-                rng.shuffle(small_clips_pool)
-
-            for i in range(0, len(small_clips_pool), self.batch_size):
-                batch = small_clips_pool[i:i + self.batch_size]
-
-                # Only keep if batch size is multiple of min_batch_unit
-                if len(batch) >= self.min_batch_unit:
-                    # Trim to multiple of min_batch_unit if needed
-                    usable_size = (len(batch) // self.min_batch_unit) * self.min_batch_unit
-                    batch = batch[:usable_size]
-
-                    # Pad to full batch_size if close enough
-                    if len(batch) < self.batch_size and len(batch) >= self.batch_size // 2:
-                        need = self.batch_size - len(batch)
-                        pad = rng.choice(batch, need, replace=True).tolist()
-                        batch = batch + pad
-
-                    if len(batch) > 0:
-                        batches.append(batch)
+                batches.append(batch)
 
         # Distribute across ranks with padding to ensure ALL ranks get EQUAL batches
         # This is critical for DDP - unequal batch counts cause NCCL collective timeouts
@@ -502,10 +461,12 @@ def create_pretrain_dataloaders(
     seed: int = 42,
     dataset_overrides: Optional[Dict[str, Dict]] = None,
     temporal_length: int = DEFAULT_TEMPORAL_LENGTH,
-    clips_ratio: float = 0.25,
 ):
     """
     Create train and validation dataloaders for pretraining.
+
+    Only datasets listed in dataset_overrides will be included.
+    Datasets not listed are skipped entirely.
 
     Args:
         data_dir: Directory containing pretrained/*.hdf5 files
@@ -513,10 +474,10 @@ def create_pretrain_dataloaders(
         num_workers: Number of data loading workers
         pin_memory: Pin memory for faster GPU transfer
         seed: Random seed
-        dataset_overrides: Optional dict to override dataset configs from YAML
-            Example: {'2d_cfd': {'clips_per_epoch': 5000}, 'ns_incom': {'clips_per_epoch': 3000}}
+        dataset_overrides: Dict of datasets to include and their overrides.
+            Only datasets listed here will be trained.
+            Example: {'2d_cfd': {'clips_per_epoch': 5000}, '3d_cfd': {'clips_per_epoch': 360}}
         temporal_length: Number of timesteps per clip (t_input + num_steps)
-        clips_ratio: Temporal sampling ratio for training (e.g., 0.25 = 25%)
 
     Returns:
         train_loader, val_loader, train_sampler, val_sampler
@@ -527,6 +488,12 @@ def create_pretrain_dataloaders(
     # Define dataset configurations
     # vector_dim: 0=no vector, 2=2D velocity (Vx,Vy), 3=3D velocity (Vx,Vy,Vz)
     configs = [
+        DatasetConfig(
+            name='1d_cfd',
+            path=str(data_dir / 'pretrained' / '1D_CFD_unified.hdf5'),
+            val_time_interval=16,
+            vector_dim=1,  # 1D velocity (Vx only)
+        ),
         DatasetConfig(
             name='diffusion_reaction',
             path=str(data_dir / 'pretrained' / '2D_diff-react_NA_NA.hdf5'),
@@ -551,45 +518,51 @@ def create_pretrain_dataloaders(
             val_time_interval=8,
             vector_dim=2,  # 2D velocity (vx, vy)
         ),
+        DatasetConfig(
+            name='3d_cfd',
+            path='/home/msai/song0304/code/PDE/data/pretrained/3D_CFD_unified.hdf5',
+            val_time_interval=2,
+            vector_dim=3,  # 3D velocity (Vx, Vy, Vz)
+        ),
     ]
 
-    # Apply overrides from YAML config
+    # Only include datasets listed in overrides
+    active_configs = []
     for config in configs:
-        if config.name in dataset_overrides:
-            overrides = dataset_overrides[config.name]
-            for key, value in overrides.items():
-                if hasattr(config, key):
-                    setattr(config, key, value)
-                    logger.info(f"  {config.name}: override {key}={value}")
+        if config.name not in dataset_overrides:
+            continue  # Skip datasets not listed in overrides
 
-    # Filter to existing datasets
-    existing_configs = []
-    for config in configs:
+        # Apply overrides
+        overrides = dataset_overrides[config.name]
+        for key, value in overrides.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+                logger.info(f"  {config.name}: override {key}={value}")
+
+        # Check file exists
         if Path(config.path).exists():
-            existing_configs.append(config)
+            active_configs.append(config)
             logger.info(f"Found dataset: {config.name}")
         else:
             logger.warning(f"Dataset not found: {config.path}")
 
-    if not existing_configs:
-        raise ValueError(f"No datasets found in {data_dir}")
+    if not active_configs:
+        raise ValueError(f"No datasets found. Check overrides and file paths.")
 
     # Create datasets
     train_dataset = PretrainDataset(
-        dataset_configs=existing_configs,
+        dataset_configs=active_configs,
         split='train',
         train_ratio=0.9,
         seed=seed,
-        clips_ratio=clips_ratio,
         temporal_length=temporal_length,
     )
 
     val_dataset = PretrainDataset(
-        dataset_configs=existing_configs,
+        dataset_configs=active_configs,
         split='val',
         train_ratio=0.9,
         seed=seed,
-        clips_ratio=clips_ratio,  # Not used for validation (uses fixed intervals)
         temporal_length=temporal_length,
     )
 

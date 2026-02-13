@@ -24,10 +24,15 @@ import yaml
 
 from pretrain.attention_v2 import (
     NATransformerLayer,
+    NATransformerLayerND,
     RMSNorm,
 )
-from pretrain.encoder_v2 import PatchifyEncoder, create_encoder_v2
-from pretrain.decoder_v2 import PatchifyDecoder, create_decoder_v2
+from pretrain.encoder_v2 import (
+    PatchifyEncoder, PatchifyEncoder1D, PatchifyEncoder3D, create_encoder_v2,
+)
+from pretrain.decoder_v2 import (
+    PatchifyDecoder, PatchifyDecoder1D, PatchifyDecoder3D, create_decoder_v2,
+)
 
 
 class NATransformer(nn.Module):
@@ -145,6 +150,120 @@ class NATransformer(nn.Module):
         return x
 
 
+class NATransformer1D(nn.Module):
+    """
+    Neighborhood Attention Transformer for 1D spatial data.
+
+    Uses NA2D with kernel (k_t, k_x). Reshapes [B, T*n_x, D] -> [B, T, n_x, D].
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int = 768,
+        num_layers: int = 24,
+        num_heads: int = 12,
+        base_kernel: int = 7,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+
+        kernel_size = (base_kernel, base_kernel)  # (k_t, k_x)
+        self.layers = nn.ModuleList([
+            NATransformerLayerND(
+                hidden_dim=hidden_dim,
+                num_heads=num_heads,
+                kernel_size=kernel_size,
+                na_dim=2,
+                is_causal=True,
+                dropout=dropout,
+            )
+            for _ in range(num_layers)
+        ])
+
+        self.final_norm = RMSNorm(hidden_dim)
+
+    def forward(self, x: torch.Tensor, shape_info: Dict) -> torch.Tensor:
+        """
+        Args:
+            x: [B, T*n_x, D] token sequence
+            shape_info: dict with T, n_x
+        Returns:
+            out: [B, T*n_x, D]
+        """
+        B = x.shape[0]
+        T = shape_info['T']
+        n_x = shape_info['n_x']
+
+        x = x.reshape(B, T, n_x, self.hidden_dim)
+
+        for layer in self.layers:
+            x = layer(x)
+
+        x = self.final_norm(x)
+        x = x.reshape(B, T * n_x, self.hidden_dim)
+
+        return x
+
+
+class NATransformer3D(nn.Module):
+    """
+    Neighborhood Attention Transformer for 3D spatial data.
+
+    Uses NA4D with kernel (k_t, k_d, k_h, k_w). Reshapes to [B, T, n_d, n_h, n_w, D].
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int = 768,
+        num_layers: int = 24,
+        num_heads: int = 12,
+        base_kernel: int = 7,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+
+        kernel_size = (base_kernel, base_kernel, base_kernel, base_kernel)
+        self.layers = nn.ModuleList([
+            NATransformerLayerND(
+                hidden_dim=hidden_dim,
+                num_heads=num_heads,
+                kernel_size=kernel_size,
+                na_dim=4,
+                is_causal=True,
+                dropout=dropout,
+            )
+            for _ in range(num_layers)
+        ])
+
+        self.final_norm = RMSNorm(hidden_dim)
+
+    def forward(self, x: torch.Tensor, shape_info: Dict) -> torch.Tensor:
+        """
+        Args:
+            x: [B, T*n_d*n_h*n_w, D] token sequence
+            shape_info: dict with T, n_d, n_h, n_w
+        Returns:
+            out: [B, T*n_d*n_h*n_w, D]
+        """
+        B = x.shape[0]
+        T = shape_info['T']
+        n_d = shape_info['n_d']
+        n_h = shape_info['n_h']
+        n_w = shape_info['n_w']
+
+        x = x.reshape(B, T, n_d, n_h, n_w, self.hidden_dim)
+
+        for layer in self.layers:
+            x = layer(x)
+
+        x = self.final_norm(x)
+        x = x.reshape(B, T * n_d * n_h * n_w, self.hidden_dim)
+
+        return x
+
+
 class PDEModelV2(nn.Module):
     """
     V2 PDE Foundation Model.
@@ -252,15 +371,10 @@ class PDEModelV2(nn.Module):
         """
         B, T, H, W, C = x.shape
 
-        # Compute normalization stats
-        if return_normalized:
-            # Per-sample, per-channel mean and std
-            mean = x.mean(dim=(1, 2, 3), keepdim=True)  # [B, 1, 1, 1, C]
-            std = x.std(dim=(1, 2, 3), keepdim=True) + 1e-6  # [B, 1, 1, 1, C]
-            x_norm = (x - mean) / std
-        else:
-            x_norm = x
-            mean, std = None, None
+        # Always normalize: model weights are trained on normalized data
+        mean = x.mean(dim=(1, 2, 3), keepdim=True)  # [B, 1, 1, 1, C]
+        std = x.std(dim=(1, 2, 3), keepdim=True) + 1e-6  # [B, 1, 1, 1, C]
+        x_norm = (x - mean) / std
 
         # Encode
         tokens, shape_info = self.encoder(x_norm)  # [B, T*n_h*n_w, D]
@@ -274,10 +388,7 @@ class PDEModelV2(nn.Module):
         if return_normalized:
             return output, mean, std
         else:
-            # Denormalize
-            if mean is not None and std is not None:
-                output = output * std + mean
-            return output
+            return output * std + mean
 
     def get_num_params(self, non_embedding: bool = True) -> int:
         """Return the number of parameters."""

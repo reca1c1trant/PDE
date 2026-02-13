@@ -18,7 +18,7 @@ Usage:
     python eval_pretrain_v2.py --config configs/pretrain_v2.yaml --checkpoint checkpoints_v2/best.pt
 
     # Multi-GPU
-    torchrun --nproc_per_node=8 eval_pretrain_v2.py --config configs/pretrain_v2.yaml --checkpoint checkpoints_v2/best.pt
+    torchrun --nproc_per_node=8 eval/eval_pretrain_v2.py --config configs/pretrain_v3_ss.yaml --checkpoint checkpoints_v3_ss/best_tf.pt
 """
 
 import os
@@ -340,11 +340,11 @@ def evaluate_dataset(
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
 
-        # V2: input t[0:t_input], target t[1:t_input+1]
+        # Input t[0:t_input], target t[1:t_input+1]
         input_data = data[:, :t_input]      # [B, t_input, H, W, 18]
         target_data = data[:, 1:t_input+1]  # [B, t_input, H, W, 18]
 
-        output = model(input_data)  # [B, t_input, H, W, 18]
+        output = model(input_data)  # [B, t_input, H, W, 18] (denormalized)
 
         # Get last timestep prediction
         pred_last = output[:, -1]        # [B, H, W, 18]
@@ -556,8 +556,7 @@ def main():
 
     # Get evaluation parameters from config
     t_input = config['dataset'].get('t_input', 8)
-    multi_step_n = config['training'].get('multi_step_loss', {}).get('num_steps', 3)
-    temporal_length = t_input + multi_step_n
+    temporal_length = t_input + 1  # Only need 1 extra step for teacher-forcing eval
     seed = config['dataset'].get('seed', 42)
     data_dir = Path(config['dataset']['path'])
 

@@ -1,12 +1,13 @@
-# V3 Pretraining Configuration - Teacher Forcing Only
-# Use train_ar.py for AR fine-tuning after this
+# V3 Pretraining Configuration - 3D CFD Only
+# Separate from 1D/2D training due to memory constraints
 
-model_name: pde_v3_tf_s
+model_name: pde_v3_tf_s_3d
 
 model:
   in_channels: 18          # 3 vector + 15 scalar
   hidden_dim: 768
   patch_size: 16
+  patch_size_3d: 8
   num_layers: 12
   num_heads: 12
   dropout: 0.0
@@ -31,30 +32,30 @@ model:
   vector_channels: 3
   scalar_channels: 15
 
-  enable_1d: true
-  enable_3d: false
-  gradient_checkpointing: false
+  enable_1d: false
+  enable_3d: true
+  gradient_checkpointing: true
 
 training:
-  max_epochs: 50
-  learning_rate: 1.0e-4
+  max_epochs: 200
+  learning_rate: 5.0e-5
   weight_decay: 0.01
   betas: [0.9, 0.95]
-  warmup_steps: 400
+  warmup_steps: 100
   min_lr: 1.0e-6
   grad_clip: 1.0
 
   # Eval interval (0 = every epoch)
-  eval_interval: 200
+  eval_interval: 20
 
   # Early stopping
-  early_stopping_patience: 30
+  early_stopping_patience: 50
 
   mixed_precision: "no"
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 4
 
 dataloader:
-  batch_size: 20
+  batch_size: 2
   num_workers: 4
   pin_memory: true
 
@@ -65,20 +66,15 @@ dataset:
   # temporal_length = t_input + 1 = 9 (TF only needs one more step)
 
   overrides:
-    1d_cfd:
-      clips_per_epoch: 4000
-    diffusion_reaction:
-      clips_per_epoch: 2000
-    2d_cfd:
-      clips_per_epoch: 2000
-    swe:
-      clips_per_epoch: 2000
+    3d_cfd:
+      clips_per_epoch: 360
+
 logging:
-  project: pde-foundation-v3_s
+  project: pde-foundation-v3_s_3d
   entity: null
-  save_dir: ./checkpoints_v3_s
+  save_dir: ./checkpoints_v3_s_3d
   log_interval: 10
 
 checkpoint:
   resume_from: null
-  init_from: checkpoints_v3_s/best_tf.pt 
+  init_from: checkpoints_v3_s/best_tf.pt

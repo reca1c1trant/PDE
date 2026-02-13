@@ -50,7 +50,7 @@ from pretrain.dataset_pretrain import (
     pretrain_collate_fn, create_pretrain_dataloaders,
     NUM_VECTOR_CHANNELS, NUM_SCALAR_CHANNELS, TOTAL_CHANNELS
 )
-from pretrain.model_v2 import PDEModelV2
+from pretrain.model_v3 import PDEModelV3
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +60,20 @@ def compute_normalized_rmse_loss(
     target: torch.Tensor,
     channel_mask: torch.Tensor
 ) -> torch.Tensor:
-    """Compute RMSE loss in normalized space with channel masking."""
-    mask = channel_mask[:, None, None, None, :].float()
+    """Compute RMSE loss in normalized space with channel masking. Supports 1D/2D/3D."""
+    # Expand mask: [B, C] → [B, 1, ..., 1, C] to match pred shape
+    mask = channel_mask
+    for _ in range(pred.ndim - 2):
+        mask = mask.unsqueeze(1)
+    mask = mask.float()
     squared_error = (pred - target) ** 2
     masked_error = squared_error * mask
     total_error = masked_error.sum()
-    num_valid = mask.sum() * pred.shape[1] * pred.shape[2] * pred.shape[3]
+    # spatial_volume = product of all dims except batch and channel
+    spatial_volume = 1
+    for i in range(1, pred.ndim - 1):
+        spatial_volume *= pred.shape[i]
+    num_valid = mask.sum() * spatial_volume
     mse = total_error / (num_valid + 1e-8)
     rmse = torch.sqrt(mse + 1e-8)
     return rmse
@@ -166,7 +174,7 @@ def validate(model, val_loader, accelerator, t_input: int = 8) -> tuple[float, d
     total_rmse = torch.zeros(1, device=accelerator.device)
     num_batches = torch.zeros(1, device=accelerator.device)
 
-    all_dataset_names = ['diffusion_reaction', '2d_cfd', 'swe']
+    all_dataset_names = ['1d_cfd', 'diffusion_reaction', '2d_cfd', 'swe', 'ns_incom', '3d_cfd']
     dataset_rmse = {name: torch.zeros(1, device=accelerator.device) for name in all_dataset_names}
     dataset_count = {name: torch.zeros(1, device=accelerator.device) for name in all_dataset_names}
 
@@ -253,6 +261,7 @@ def main():
     loss_weights = config['dataset'].get('loss_weights', {})
 
     resume_path = args.resume or config.get('checkpoint', {}).get('resume_from')
+    init_from = config.get('checkpoint', {}).get('init_from')  # weights only, no optimizer/step
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
@@ -272,7 +281,6 @@ def main():
     batch_size = config['dataloader']['batch_size']
     num_workers = config['dataloader']['num_workers']
     seed = config['dataset']['seed']
-    clips_ratio = config['dataset'].get('clips_ratio', 0.25)
     dataset_overrides = config.get('dataset', {}).get('overrides', {})
 
     temporal_length = t_input + 1  # TF only needs t_input + 1
@@ -285,7 +293,6 @@ def main():
         seed=seed,
         dataset_overrides=dataset_overrides,
         temporal_length=temporal_length,
-        clips_ratio=clips_ratio,
     )
 
     steps_per_epoch = len(train_sampler)
@@ -306,7 +313,26 @@ def main():
         logger.info(f"{'='*60}")
 
     # Create model
-    model = PDEModelV2(config)
+    model = PDEModelV3(config)
+
+    # Load pretrained weights (model only, no optimizer/step)
+    if init_from and not resume_path:
+        if accelerator.is_main_process:
+            logger.info(f"Initializing weights from: {init_from}")
+        ckpt = torch.load(init_from, map_location='cpu', weights_only=False)
+        state_dict = ckpt.get('model_state_dict', ckpt.get('state_dict', ckpt))
+        # Strip DDP/compile prefixes
+        cleaned = {}
+        for k, v in state_dict.items():
+            k = k.removeprefix('module.').removeprefix('_orig_mod.')
+            cleaned[k] = v
+        missing, unexpected = model.load_state_dict(cleaned, strict=False)
+        if accelerator.is_main_process:
+            logger.info(f"  Loaded: {len(cleaned) - len(unexpected)} keys")
+            if missing:
+                logger.info(f"  Missing (randomly init): {len(missing)} keys")
+            if unexpected:
+                logger.info(f"  Unexpected (ignored): {len(unexpected)} keys")
 
     if accelerator.is_main_process:
         logger.info(f"Model parameters: {model.get_num_params():,}")

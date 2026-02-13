@@ -1,14 +1,14 @@
 # V3 Pretraining Configuration - Teacher Forcing Only
 # Use train_ar.py for AR fine-tuning after this
 
-model_name: pde_v3_tf
+model_name: pde_v3_tf_ss
 
 model:
   in_channels: 18          # 3 vector + 15 scalar
   hidden_dim: 768
   patch_size: 16
-  num_layers: 16
-  num_heads: 16
+  num_layers: 8
+  num_heads: 8
   dropout: 0.0
 
   encoder:
@@ -31,7 +31,7 @@ model:
   vector_channels: 3
   scalar_channels: 15
 
-  enable_1d: true
+  enable_1d: false
   enable_3d: false
 
 training:
@@ -39,12 +39,12 @@ training:
   learning_rate: 1.0e-4
   weight_decay: 0.01
   betas: [0.9, 0.95]
-  warmup_steps: 1000
+  warmup_steps: 600
   min_lr: 1.0e-6
   grad_clip: 1.0
 
   # Eval interval (0 = every epoch)
-  eval_interval: 200
+  eval_interval: 300
 
   # Early stopping
   early_stopping_patience: 30
@@ -53,7 +53,7 @@ training:
   gradient_accumulation_steps: 1
 
 dataloader:
-  batch_size: 20
+  batch_size: 24
   num_workers: 4
   pin_memory: true
 
@@ -63,34 +63,22 @@ dataset:
   t_input: 8
   # temporal_length = t_input + 1 = 9 (TF only needs one more step)
 
-  # Per-dataset loss weights (optional, default=1.0)
-  # Use to balance contributions from datasets with different RMSE scales
-  loss_weights:
-    1d_cfd: 1.0
-    diffusion_reaction: 1.0
-    2d_cfd: 1.0
-    swe: 1.0
-    ns_incom: 1.0
-    3d_cfd: 1.0
-
   overrides:
-    1d_cfd:
-      clips_per_epoch: null
+    # 1d_cfd:
+      # clips_per_epoch: null
     diffusion_reaction:
-      clips_per_epoch: null
+      clips_per_epoch: 4000
     2d_cfd:
-      clips_per_epoch: null
+      clips_per_epoch: 4000
     swe:
-      clips_per_epoch: null
-    ns_incom:
-      clips_per_epoch: null
-    3d_cfd:
-      clips_per_epoch: null
+      clips_per_epoch: 4000
+    # 3d_cfd:
+      # clips_per_epoch: null
 
 logging:
-  project: pde-foundation-v3
+  project: pde-foundation-v3_ss
   entity: null
-  save_dir: ./checkpoints_v3
+  save_dir: ./checkpoints_v3_ss
   log_interval: 10
 
 checkpoint:
