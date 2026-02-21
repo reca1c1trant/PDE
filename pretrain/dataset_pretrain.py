@@ -46,7 +46,7 @@ class DatasetConfig:
     """Configuration for a single dataset."""
     name: str
     path: str
-    val_time_interval: int = 2  # Time interval for validation clips
+    val_clips: Optional[int] = None  # Per-sample val clip count (None = use all available)
     vector_dim: int = 0  # Actual vector dimensions (0=no vector, 2=2D, 3=3D)
     clips_per_epoch: Optional[int] = None  # If set, override clips_ratio with fixed number per epoch
 
@@ -91,7 +91,7 @@ class SingleDataset:
         self.train_ratio = train_ratio
         self.seed = seed
         self.temporal_length = temporal_length
-        self.val_time_interval = config.val_time_interval
+        self.val_clips = config.val_clips
         self.path = Path(config.path)
 
         # Load metadata
@@ -169,16 +169,19 @@ class SingleDataset:
         return list(range(self.max_start + 1))
 
     def _get_val_time_clips(self) -> List[int]:
-        """Get time clip starting points for validation (fixed interval)."""
+        """Get time clip starting points for validation (evenly spaced)."""
         if self.max_start <= 0:
             return [0] if self.n_timesteps >= self.temporal_length else []
 
-        if self.n_timesteps <= 30:
-            # Short sequence (e.g., 2D_CFD): use all
-            return list(range(self.max_start + 1))
-        else:
-            # Use per-dataset validation interval
-            return list(range(0, self.max_start + 1, self.val_time_interval))
+        total_possible = self.max_start + 1
+
+        if self.val_clips is None or self.val_clips >= total_possible:
+            return list(range(total_possible))
+
+        # Evenly spaced val_clips points across [0, max_start]
+        return np.unique(
+            np.round(np.linspace(0, self.max_start, self.val_clips)).astype(int)
+        ).tolist()
 
     def load_clip(self, sample_idx: int, start_t: int) -> Dict[str, np.ndarray]:
         """
@@ -491,38 +494,36 @@ def create_pretrain_dataloaders(
         DatasetConfig(
             name='1d_cfd',
             path=str(data_dir / 'pretrained' / '1D_CFD_unified.hdf5'),
-            val_time_interval=16,
+            val_clips=6,
             vector_dim=1,  # 1D velocity (Vx only)
         ),
         DatasetConfig(
             name='diffusion_reaction',
             path=str(data_dir / 'pretrained' / '2D_diff-react_NA_NA.hdf5'),
-            val_time_interval=2,
+            val_clips=47,
             vector_dim=0,  # No vector, only scalar (concentration_u, concentration_v)
         ),
         DatasetConfig(
             name='2d_cfd',
             path=str(data_dir / 'pretrained' / '2D_CFD_128_merged.hdf5'),
-            val_time_interval=2,
-            vector_dim=2,  # 2D velocity (Vx, Vy)
+            vector_dim=2,  # 2D velocity (Vx, Vy); T≤30, val uses all clips
         ),
         DatasetConfig(
             name='swe',
             path=str(data_dir / 'pretrained' / '2D_rdb_NA_NA.h5'),
-            val_time_interval=2,
+            val_clips=47,
             vector_dim=0,  # No vector, only scalar (height)
         ),
         DatasetConfig(
             name='ns_incom',
             path='/scratch-share/SONG0304/pretrained/ns_incom_inhom_2d_512.hdf5',
-            val_time_interval=8,
+            val_clips=124,
             vector_dim=2,  # 2D velocity (vx, vy)
         ),
         DatasetConfig(
             name='3d_cfd',
             path='/home/msai/song0304/code/PDE/data/pretrained/3D_CFD_unified.hdf5',
-            val_time_interval=2,
-            vector_dim=3,  # 3D velocity (Vx, Vy, Vz)
+            vector_dim=3,  # 3D velocity (Vx, Vy, Vz); T≤30, val uses all clips
         ),
     ]
 

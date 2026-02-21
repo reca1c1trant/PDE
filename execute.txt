@@ -1,1 +1,1 @@
-huggingface-cli login
+torchrun --nproc_per_node=8 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_s_3D.yaml

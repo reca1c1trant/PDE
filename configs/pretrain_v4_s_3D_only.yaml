@@ -1,0 +1,99 @@
+# V4 Pretraining Configuration - Joint 1D/2D/3D with FSDP
+# Uses FSDP to shard model across GPUs, reducing per-GPU memory
+# batch_size=1 to fit 3D data (128^3) in GPU memory
+
+model_name: pde_v4_tf_s_3d
+
+model:
+  in_channels: 18          # 3 vector + 15 scalar
+  hidden_dim: 768
+  patch_size: 16
+  patch_size_3d: 16           # 128/16=8 patches per dim -> 9*8^3=4608 tokens (vs 36864 with P=8)
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+
+  vector_channels: 3
+  scalar_channels: 15
+
+  enable_1d: false
+  enable_3d: true
+  gradient_checkpointing: true
+
+training:
+  use_fsdp: true
+  max_epochs: 100
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.95]
+  warmup_steps: 100
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  # Eval interval (0 = every epoch)
+  eval_interval: 60
+
+  # Early stopping
+  early_stopping_patience: 50
+
+  mixed_precision: "no"
+  use_compile: false            # torch.compile incompatible with FSDP1 FULL_SHARD
+  # batch_size=1 * 8 GPUs * 8 accum = effective 64
+  gradient_accumulation_steps: 8
+
+dataloader:
+  batch_size: 1            # Reduced from 2 to fit 3D in memory
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: /scratch-share/SONG0304
+  seed: 42
+  t_input: 8
+
+  # Weighted val metric for best-model saving (unspecified = 1.0)
+  val_weights:
+    3d_cfd: 10.0
+
+  overrides:
+    3d_cfd:
+      clips_per_epoch: null
+    # 1d_cfd:
+    #   clips_per_epoch: 100
+    #   val_clips: 10
+    # diffusion_reaction:
+    #   clips_per_epoch: 100
+    #   val_clips: 47
+    # 2d_cfd:
+    #   clips_per_epoch: 100
+    #   val_clips: 10
+    # swe:
+    #   clips_per_epoch: 100
+    #   val_clips: 47
+
+logging:
+  project: pde-foundation-v4_s_3donly
+  entity: null
+  save_dir: ./checkpoints_v4_s_3d_lr1e-4only
+  log_interval: 10
+
+checkpoint:
+  resume_from: null
+  init_from: checkpoints_v4_s_3d_lr1e-4only/best_tf.pt

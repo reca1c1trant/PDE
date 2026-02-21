@@ -420,12 +420,11 @@ class ResBlock3DTranspose(nn.Module):
 
 class CNNDecoder3D(nn.Module):
     """
-    CNN Decoder for 3D: 1x1x1 -> 8x8x8 with ResBlocks.
+    CNN Decoder for 3D: 1^3 -> P^3 with ConvTranspose3d + ResBlocks.
 
-    Architecture:
-        1x1x1 -> ConvT -> 2x2x2 -> ResBlock
-              -> ConvT -> 4x4x4 -> ResBlock
-              -> ConvT -> 8x8x8
+    Dynamically builds log2(P) stages:
+        P=8:  1->2->4->8  (3 stages)
+        P=16: 1->2->4->8->16  (4 stages)
     """
 
     def __init__(
@@ -433,27 +432,40 @@ class CNNDecoder3D(nn.Module):
         in_channels: int = 256,
         hidden_channels: int = 128,
         out_channels: int = 1,
+        patch_size: int = 8,
     ):
         super().__init__()
-        self.decoder = nn.Sequential(
-            # 1x1x1 -> 2x2x2
-            nn.ConvTranspose3d(in_channels, in_channels, kernel_size=2),
-            nn.GELU(),
-            ResBlock3DTranspose(in_channels),
-            # 2x2x2 -> 4x4x4
-            nn.ConvTranspose3d(in_channels, hidden_channels, kernel_size=4, stride=2, padding=1),
-            nn.GELU(),
-            ResBlock3DTranspose(hidden_channels),
-            # 4x4x4 -> 8x8x8
-            nn.ConvTranspose3d(hidden_channels, out_channels, kernel_size=4, stride=2, padding=1),
-        )
+        import math
+        num_stages = int(math.log2(patch_size))  # P=8: 3, P=16: 4
+
+        layers = []
+        ch = in_channels
+        for i in range(num_stages):
+            is_last = (i == num_stages - 1)
+            is_penultimate = (i == num_stages - 2)
+            ch_out = out_channels if is_last else (hidden_channels if is_penultimate else in_channels)
+
+            if i == 0:
+                # 1->2: kernel_size=2, no stride
+                layers.append(nn.ConvTranspose3d(ch, ch_out, kernel_size=2))
+            else:
+                # 2x upsample: stride=2
+                layers.append(nn.ConvTranspose3d(ch, ch_out, kernel_size=4, stride=2, padding=1))
+
+            if not is_last:
+                layers.append(nn.GELU())
+                layers.append(ResBlock3DTranspose(ch_out))
+
+            ch = ch_out
+
+        self.decoder = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: [N, in_channels, 1, 1, 1]
         Returns:
-            out: [N, out_channels, 8, 8, 8]
+            out: [N, out_channels, P, P, P]
         """
         return self.decoder(x)
 
@@ -478,22 +490,25 @@ class PatchifyDecoder3D(nn.Module):
         patch_size: int = 8,
         stem_channels: int = 256,
         decoder_hidden: int = 128,
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
         self.out_channels = out_channels
         self.hidden_dim = hidden_dim
         self.patch_size = patch_size
         self.stem_channels = stem_channels
+        self.gradient_checkpointing = gradient_checkpointing
 
         # Project from transformer hidden dim
         self.norm = RMSNorm(hidden_dim)
         self.proj = nn.Linear(hidden_dim, stem_channels)
 
-        # CNN Decoder: 1x1x1 -> 8x8x8
+        # CNN Decoder: 1x1x1 -> PxPxP
         self.cnn_decoder = CNNDecoder3D(
             in_channels=stem_channels,
             hidden_channels=decoder_hidden,
             out_channels=out_channels,
+            patch_size=patch_size,
         )
 
     def forward(self, x: torch.Tensor, shape_info: Dict) -> torch.Tensor:
@@ -522,8 +537,11 @@ class PatchifyDecoder3D(nn.Module):
         # Step 2: Reshape to patches
         x = x.reshape(B * T * n_d * n_h * n_w, self.stem_channels, 1, 1, 1)
 
-        # Step 3: CNN decoder
-        x = self.cnn_decoder(x)  # [B*T*n_d*n_h*n_w, out_channels, P, P, P]
+        # Step 3: CNN decoder (checkpoint to save activation memory for 3D)
+        if self.training and self.gradient_checkpointing:
+            x = torch.utils.checkpoint.checkpoint(self.cnn_decoder, x, use_reentrant=False)
+        else:
+            x = self.cnn_decoder(x)  # [B*T*n_d*n_h*n_w, out_channels, P, P, P]
 
         # Step 4: Reassemble patches
         # [N, C, P, P, P] -> [B, T, n_d, n_h, n_w, C, P, P, P]

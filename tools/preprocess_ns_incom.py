@@ -16,7 +16,7 @@ New unified format (single merged file):
 Note: Spatial resolution kept at 512x512. Downsampling handled in dataset loader.
 
 Usage:
-    python preprocess_ns_incom.py --input_dir /path/to/NS_incom
+    python preprocess_ns_incom.py --input_dir /scratch-share/SONG0304/pretrained
 
     Output saved to pretrained/ folder, original files deleted after conversion.
 """

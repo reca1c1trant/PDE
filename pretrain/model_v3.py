@@ -304,6 +304,7 @@ class PDEModelV3(nn.Module):
             stem_out=encoder_cfg.get('stem_out', 256),
             intra_patch_layers=intra_cfg.get('num_layers', 2),
             intra_patch_heads=intra_cfg.get('num_heads', 8),
+            gradient_checkpointing=model_cfg.get('gradient_checkpointing', False),
         )
 
     def _build_decoder_2d(self, config: Dict) -> PatchifyDecoder:
@@ -337,6 +338,7 @@ class PDEModelV3(nn.Module):
             patch_size=model_cfg.get('patch_size_3d', 8),
             stem_channels=decoder_cfg.get('stem_channels', 256),
             decoder_hidden=decoder_cfg.get('hidden_channels', 128),
+            gradient_checkpointing=model_cfg.get('gradient_checkpointing', False),
         )
 
     def _build_transformer(self, config: Dict, enable_1d: bool, enable_3d: bool) -> SharedNATransformer:

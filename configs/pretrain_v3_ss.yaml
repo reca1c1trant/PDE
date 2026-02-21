@@ -68,10 +68,12 @@ dataset:
       # clips_per_epoch: null
     diffusion_reaction:
       clips_per_epoch: 4000
+      val_clips: 47
     2d_cfd:
       clips_per_epoch: 4000
     swe:
       clips_per_epoch: 4000
+      val_clips: 47
     # 3d_cfd:
       # clips_per_epoch: null
 

@@ -1,15 +1,23 @@
 """
-V3 Pretraining: Teacher Forcing Only.
+V4 Pretraining: FSDP support for joint 1D/2D/3D training.
 
-Single-step loss training without AR. Use train_ar.py for AR fine-tuning.
+Extends V3 with:
+    - FSDP via accelerate (configurable, fallback to DDP)
+    - batch_size=1 support for 3D memory constraints
+    - Checkpoint save compatible with both FSDP and DDP
 
 Usage:
-    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nproc_per_node=8 train_pretrain_v3.py --config configs/pretrain_v3.yaml
+    # FSDP mode (use_fsdp: true in config)
+    torchrun --nproc_per_node=8 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_s_3D.yaml
+
+    # DDP fallback (use_fsdp: false in config)
+    torchrun --nproc_per_node=8 pretrain/train_pretrain_v4.py --config configs/pretrain_v3_s.yaml
 """
 
 import os
 import sys
 import warnings
+import functools
 
 def _is_main_process():
     return os.environ.get('LOCAL_RANK', '0') == '0'
@@ -50,7 +58,7 @@ from pretrain.dataset_pretrain import (
     pretrain_collate_fn, create_pretrain_dataloaders,
     NUM_VECTOR_CHANNELS, NUM_SCALAR_CHANNELS, TOTAL_CHANNELS
 )
-from pretrain.model_v3 import PDEModelV3
+from pretrain.model_v3 import PDEModelV3, SharedNATransformerLayer
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +69,6 @@ def compute_normalized_rmse_loss(
     channel_mask: torch.Tensor
 ) -> torch.Tensor:
     """Compute RMSE loss in normalized space with channel masking. Supports 1D/2D/3D."""
-    # Expand mask: [B, C] → [B, 1, ..., 1, C] to match pred shape
     mask = channel_mask
     for _ in range(pred.ndim - 2):
         mask = mask.unsqueeze(1)
@@ -69,7 +76,6 @@ def compute_normalized_rmse_loss(
     squared_error = (pred - target) ** 2
     masked_error = squared_error * mask
     total_error = masked_error.sum()
-    # spatial_volume = product of all dims except batch and channel
     spatial_volume = 1
     for i in range(1, pred.ndim - 1):
         spatial_volume *= pred.shape[i]
@@ -80,9 +86,9 @@ def compute_normalized_rmse_loss(
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="PDE Foundation Model V3 - Teacher Forcing")
+    parser = argparse.ArgumentParser(description="PDE Foundation Model V4 - FSDP/DDP")
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
-    parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume from')
+    parser.add_argument('--resume', type=str, default=None, help='Path to resume directory (accelerate state)')
     return parser.parse_args()
 
 
@@ -109,55 +115,138 @@ def get_lr_scheduler(optimizer, config: dict, total_steps: int):
     return LambdaLR(optimizer, lr_lambda)
 
 
-def load_checkpoint(model, optimizer, scheduler, checkpoint_path: str, accelerator):
-    """Load checkpoint with full state."""
-    if not checkpoint_path or not Path(checkpoint_path).exists():
+def create_accelerator(config: dict) -> tuple[Accelerator, bool]:
+    """Create Accelerator with FSDP or DDP based on config."""
+    use_fsdp = config['training'].get('use_fsdp', False)
+    grad_accum = config['training'].get('gradient_accumulation_steps', 2)
+    mixed_precision = config['training'].get('mixed_precision', 'no')
+
+    if use_fsdp:
+        from accelerate import FullyShardedDataParallelPlugin
+        from torch.distributed.fsdp import ShardingStrategy, BackwardPrefetch
+        from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+        auto_wrap_policy = functools.partial(
+            transformer_auto_wrap_policy,
+            transformer_layer_cls={SharedNATransformerLayer},
+        )
+
+        fsdp_plugin = FullyShardedDataParallelPlugin(
+            sharding_strategy=ShardingStrategy.FULL_SHARD,
+            auto_wrap_policy=auto_wrap_policy,
+            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+            use_orig_params=True,
+            limit_all_gathers=True,
+        )
+
+        accelerator = Accelerator(
+            mixed_precision=mixed_precision,
+            gradient_accumulation_steps=grad_accum,
+            log_with="wandb",
+            fsdp_plugin=fsdp_plugin,
+        )
         if accelerator.is_main_process:
-            logger.info("No checkpoint to load, starting from scratch")
-        return 0, float('inf')
-
-    if accelerator.is_main_process:
-        logger.info(f"Loading checkpoint: {checkpoint_path}")
-
-    ckpt = torch.load(checkpoint_path, map_location='cpu')
-
-    if 'model_state_dict' in ckpt:
-        state_dict = ckpt['model_state_dict']
-    elif 'state_dict' in ckpt:
-        state_dict = ckpt['state_dict']
+            logger.info("Using FSDP (FullyShardedDataParallel)")
     else:
-        state_dict = ckpt
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        accelerator = Accelerator(
+            mixed_precision=mixed_precision,
+            gradient_accumulation_steps=grad_accum,
+            log_with="wandb",
+            kwargs_handlers=[ddp_kwargs],
+        )
+        if accelerator.is_main_process:
+            logger.info("Using DDP (DistributedDataParallel)")
 
-    unwrapped_model = accelerator.unwrap_model(model)
-    missing, unexpected = unwrapped_model.load_state_dict(state_dict, strict=False)
+    return accelerator, use_fsdp
+
+
+def load_init_weights(model: PDEModelV3, init_path: str, accelerator) -> None:
+    """Load pretrained weights into model BEFORE accelerator.prepare (FSDP-safe)."""
+    if accelerator.is_main_process:
+        logger.info(f"Initializing weights from: {init_path}")
+
+    ckpt = torch.load(init_path, map_location='cpu', weights_only=False)
+    state_dict = ckpt.get('model_state_dict', ckpt.get('state_dict', ckpt))
+
+    # Strip DDP/compile prefixes
+    cleaned = {}
+    for k, v in state_dict.items():
+        k = k.removeprefix('module.').removeprefix('_orig_mod.')
+        cleaned[k] = v
+
+    missing, unexpected = model.load_state_dict(cleaned, strict=False)
 
     if accelerator.is_main_process:
+        logger.info(f"  Loaded: {len(cleaned) - len(unexpected)} keys")
         if missing:
-            logger.warning(f"Missing keys: {missing[:5]}..." if len(missing) > 5 else f"Missing keys: {missing}")
+            logger.info(f"  Missing (randomly init): {len(missing)} keys")
+            for k in missing[:10]:
+                logger.info(f"    - {k}")
         if unexpected:
-            logger.warning(f"Unexpected keys: {unexpected[:5]}..." if len(unexpected) > 5 else f"Unexpected keys: {unexpected}")
+            logger.info(f"  Unexpected (ignored): {len(unexpected)} keys")
 
-    # Load optimizer and scheduler if available
-    global_step = ckpt.get('global_step', 0)
-    best_val_rmse = ckpt.get('best_val_rmse', float('inf'))
 
-    if 'optimizer_state_dict' in ckpt and optimizer is not None:
-        try:
-            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            if accelerator.is_main_process:
-                logger.info("Loaded optimizer state")
-        except Exception as e:
-            if accelerator.is_main_process:
-                logger.warning(f"Failed to load optimizer state: {e}")
+def save_portable_checkpoint(
+    model, global_step: int, val_rmse: float, best_val_rmse: float,
+    config: dict, save_dir: Path, accelerator, filename: str
+):
+    """
+    Save a portable model checkpoint (.pt file).
 
-    if 'scheduler_state_dict' in ckpt and scheduler is not None and ckpt['scheduler_state_dict']:
-        try:
-            scheduler.load_state_dict(ckpt['scheduler_state_dict'])
-            if accelerator.is_main_process:
-                logger.info("Loaded scheduler state")
-        except Exception as e:
-            if accelerator.is_main_process:
-                logger.warning(f"Failed to load scheduler state: {e}")
+    Uses accelerator.get_state_dict which handles both FSDP and DDP.
+    NOTE: This is a collective operation — all ranks must call it.
+    """
+    accelerator.wait_for_everyone()
+
+    # Collective op: gathers full state dict from all FSDP shards
+    state_dict = accelerator.get_state_dict(model, unwrap=True)
+
+    if accelerator.is_main_process:
+        checkpoint = {
+            'global_step': global_step,
+            'model_state_dict': state_dict,
+            'val_rmse': val_rmse,
+            'best_val_rmse': best_val_rmse,
+            'config': config,
+        }
+        torch.save(checkpoint, save_dir / filename)
+
+    accelerator.wait_for_everyone()
+
+
+def save_resume_state(
+    accelerator, save_dir: Path, scheduler,
+    global_step: int, best_val_rmse: float
+):
+    """Save full training state for resume (FSDP-compatible via accelerate)."""
+    resume_dir = save_dir / "resume"
+    accelerator.save_state(str(resume_dir))
+
+    if accelerator.is_main_process:
+        torch.save({
+            'global_step': global_step,
+            'best_val_rmse': best_val_rmse,
+            'scheduler_state_dict': scheduler.state_dict(),
+        }, resume_dir / "metadata.pt")
+
+    accelerator.wait_for_everyone()
+
+
+def load_resume_state(
+    accelerator, resume_dir: str, scheduler
+) -> tuple[int, float]:
+    """Load full training state for resume."""
+    accelerator.load_state(resume_dir)
+
+    metadata_path = Path(resume_dir) / "metadata.pt"
+    metadata = torch.load(metadata_path, map_location='cpu', weights_only=False)
+
+    if scheduler is not None and 'scheduler_state_dict' in metadata:
+        scheduler.load_state_dict(metadata['scheduler_state_dict'])
+
+    global_step = metadata.get('global_step', 0)
+    best_val_rmse = metadata.get('best_val_rmse', float('inf'))
 
     if accelerator.is_main_process:
         logger.info(f"Resumed from step {global_step}, best_val_rmse={best_val_rmse:.6f}")
@@ -222,69 +311,40 @@ def validate(model, val_loader, accelerator, t_input: int = 8) -> tuple[float, d
     return avg_rmse, per_dataset
 
 
-def save_checkpoint(
-    model, optimizer, scheduler, global_step: int,
-    val_rmse: float, best_val_rmse: float,
-    config: dict, save_dir: Path, accelerator, filename: str
-):
-    """Save checkpoint."""
-    accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        unwrapped_model = accelerator.unwrap_model(model)
-        checkpoint = {
-            'global_step': global_step,
-            'model_state_dict': unwrapped_model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
-            'val_rmse': val_rmse,
-            'best_val_rmse': best_val_rmse,
-            'config': config,
-        }
-        torch.save(checkpoint, save_dir / filename)
-    accelerator.wait_for_everyone()
-
-
 def main():
     args = parse_args()
     config = load_config(args.config)
     set_seed(config['dataset']['seed'])
 
-    model_name = config.get('model_name', 'pde_v3_tf')
+    model_name = config.get('model_name', 'pde_v4_tf')
     hidden_dim = config['model']['hidden_dim']
     num_layers = config['model']['num_layers']
     warmup_steps = config['training'].get('warmup_steps', 1000)
     max_epochs = config['training']['max_epochs']
-    eval_interval = config['training'].get('eval_interval', 0)  # 0 = every epoch
+    eval_interval = config['training'].get('eval_interval', 0)
     t_input = config['dataset'].get('t_input', 8)
 
-    # Per-dataset loss weights
     loss_weights = config['dataset'].get('loss_weights', {})
     val_weights = config['dataset'].get('val_weights', {})
 
-    resume_path = args.resume or config.get('checkpoint', {}).get('resume_from')
-    init_from = config.get('checkpoint', {}).get('init_from')  # weights only, no optimizer/step
+    init_from = config.get('checkpoint', {}).get('init_from')
+    resume_from = args.resume or config.get('checkpoint', {}).get('resume_from')
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-
-    accelerator = Accelerator(
-        mixed_precision=config['training'].get('mixed_precision', 'no'),
-        gradient_accumulation_steps=config['training'].get('gradient_accumulation_steps', 2),
-        log_with="wandb",
-        kwargs_handlers=[ddp_kwargs]
-    )
+    # Create accelerator (FSDP or DDP)
+    accelerator, use_fsdp = create_accelerator(config)
 
     log_interval = config['logging']['log_interval']
     early_stopping_patience = config['training'].get('early_stopping_patience', 30)
     grad_clip = config['training'].get('grad_clip', 1.0)
 
-    # Create dataloaders (only need t_input + 1 timesteps for TF)
+    # Create dataloaders
     data_dir = config['dataset']['path']
     batch_size = config['dataloader']['batch_size']
     num_workers = config['dataloader']['num_workers']
     seed = config['dataset']['seed']
     dataset_overrides = config.get('dataset', {}).get('overrides', {})
 
-    temporal_length = t_input + 1  # TF only needs t_input + 1
+    temporal_length = t_input + 1
 
     train_loader, val_loader, train_sampler, val_sampler = create_pretrain_dataloaders(
         data_dir=data_dir,
@@ -301,42 +361,36 @@ def main():
 
     if accelerator.is_main_process:
         logger.info(f"{'='*60}")
-        logger.info(f"PDE Foundation Model V3 - Teacher Forcing")
+        logger.info(f"PDE Foundation Model V4 - {'FSDP' if use_fsdp else 'DDP'}")
         logger.info(f"{'='*60}")
         logger.info(f"Config: {args.config}")
         logger.info(f"Model: {model_name} (hidden={hidden_dim}, layers={num_layers})")
         logger.info(f"Max Epochs: {max_epochs}")
         logger.info(f"Steps per Epoch: {steps_per_epoch}")
         logger.info(f"Total Steps: {total_steps}")
+        logger.info(f"Batch size: {batch_size} (per GPU)")
+        logger.info(f"Grad accum: {config['training'].get('gradient_accumulation_steps', 2)}")
         logger.info(f"Eval Interval: {eval_interval if eval_interval > 0 else 'every epoch'}")
         logger.info(f"T_input: {t_input}, Temporal Length: {temporal_length}")
-        logger.info(f"Resume from: {resume_path or 'scratch'}")
         logger.info(f"{'='*60}")
 
     # Create model
     model = PDEModelV3(config)
 
-    # Load pretrained weights (model only, no optimizer/step)
-    if init_from and not resume_path:
-        if accelerator.is_main_process:
-            logger.info(f"Initializing weights from: {init_from}")
-        ckpt = torch.load(init_from, map_location='cpu', weights_only=False)
-        state_dict = ckpt.get('model_state_dict', ckpt.get('state_dict', ckpt))
-        # Strip DDP/compile prefixes
-        cleaned = {}
-        for k, v in state_dict.items():
-            k = k.removeprefix('module.').removeprefix('_orig_mod.')
-            cleaned[k] = v
-        missing, unexpected = model.load_state_dict(cleaned, strict=False)
-        if accelerator.is_main_process:
-            logger.info(f"  Loaded: {len(cleaned) - len(unexpected)} keys")
-            if missing:
-                logger.info(f"  Missing (randomly init): {len(missing)} keys")
-            if unexpected:
-                logger.info(f"  Unexpected (ignored): {len(unexpected)} keys")
+    # Load pretrained weights BEFORE accelerator.prepare (FSDP-safe)
+    if init_from and not resume_from:
+        load_init_weights(model, init_from, accelerator)
 
     if accelerator.is_main_process:
         logger.info(f"Model parameters: {model.get_num_params():,}")
+
+    # torch.compile for flex_attention fusion in transformer (BEFORE accelerator.prepare)
+    # Only compile transformer layers (not CNN encoder/decoder to avoid conv backward stride issues)
+    if config['training'].get('use_compile', False):
+        for i, layer in enumerate(model.transformer.layers):
+            model.transformer.layers[i] = torch.compile(layer)
+        if accelerator.is_main_process:
+            logger.info("Applied torch.compile to transformer layers (first few steps will be slow)")
 
     # Create optimizer
     optimizer = torch.optim.AdamW(
@@ -348,21 +402,29 @@ def main():
 
     scheduler = get_lr_scheduler(optimizer, config, total_steps)
 
+    # Prepare model and optimizer (FSDP/DDP wrapping happens here)
     model, optimizer = accelerator.prepare(model, optimizer)
 
-    global_step, best_val_rmse = load_checkpoint(
-        model, optimizer, scheduler, resume_path, accelerator
-    )
+    # Resume from checkpoint (after FSDP wrapping)
+    global_step = 0
+    best_val_rmse = float('inf')
+    if resume_from:
+        global_step, best_val_rmse = load_resume_state(
+            accelerator, resume_from, scheduler
+        )
+        # Advance scheduler to match global_step
+        # (scheduler state is loaded from metadata)
 
     if accelerator.is_main_process:
-        run_name = f"v3-tf-{model_name}-h{hidden_dim}-L{num_layers}"
+        run_name = f"v4-{'fsdp' if use_fsdp else 'ddp'}-{model_name}-h{hidden_dim}-L{num_layers}"
         accelerator.init_trackers(
             project_name=config['logging']['project'],
             config=config,
             init_kwargs={"wandb": {
                 "entity": config['logging'].get('entity'),
                 "name": run_name,
-                "tags": ["v3", "TF", f"h{hidden_dim}", f"L{num_layers}"],
+                "tags": ["v4", "FSDP" if use_fsdp else "DDP", "TF",
+                         f"h{hidden_dim}", f"L{num_layers}"],
             }}
         )
 
@@ -388,7 +450,7 @@ def main():
         console=console,
         disable=not accelerator.is_main_process,
     ) as progress:
-        train_task = progress.add_task("V3 TF Training", total=total_steps, completed=global_step)
+        train_task = progress.add_task("V4 Training", total=total_steps, completed=global_step)
 
         for epoch in range(start_epoch, max_epochs):
             if early_stop:
@@ -403,7 +465,6 @@ def main():
                 in_warmup = global_step < warmup_steps
 
                 with accelerator.accumulate(model):
-                    # Teacher forcing: single step loss
                     input_data = data[:, :t_input]
                     target_data = data[:, 1:t_input + 1]
 
@@ -414,7 +475,6 @@ def main():
                         output_norm.float(), target_norm.float(), channel_mask
                     )
 
-                    # Apply per-dataset loss weight
                     ds_name = batch['dataset_names'][0]
                     weight = loss_weights.get(ds_name, 1.0)
                     loss = loss * weight
@@ -443,9 +503,10 @@ def main():
                         'train/loss': loss_reduced.item(),
                         'train/lr': scheduler.get_last_lr()[0],
                         'train/epoch': epoch + 1,
+                        'train/dataset': ds_name,
                     }, step=global_step)
 
-                # Validation logic
+                # Validation
                 should_validate = False
                 if eval_interval > 0:
                     if global_step % eval_interval == 0:
@@ -466,8 +527,8 @@ def main():
                         val_metric = val_rmse
 
                     log_dict = {'val/rmse': val_rmse, 'val/rmse_weighted': val_metric}
-                    for ds_name, ds_rmse in per_dataset.items():
-                        log_dict[f'val/rmse_{ds_name}'] = ds_rmse
+                    for ds_n, ds_rmse in per_dataset.items():
+                        log_dict[f'val/rmse_{ds_n}'] = ds_rmse
                     accelerator.log(log_dict, step=global_step)
 
                     if accelerator.is_main_process:
@@ -481,13 +542,21 @@ def main():
                         if val_metric < best_val_rmse:
                             best_val_rmse = val_metric
                             patience_counter = 0
-                            save_checkpoint(
-                                model, optimizer, scheduler, global_step,
-                                val_rmse, best_val_rmse,
+
+                            # Save portable checkpoint (collective for FSDP)
+                            save_portable_checkpoint(
+                                model, global_step, val_rmse, best_val_rmse,
                                 config, save_dir, accelerator, 'best_tf.pt'
                             )
+
+                            # Save resume state
+                            save_resume_state(
+                                accelerator, save_dir, scheduler,
+                                global_step, best_val_rmse
+                            )
+
                             if accelerator.is_main_process:
-                                console.print(f"[yellow]Saved best TF model[/yellow] (val_metric: {val_metric:.6f})")
+                                console.print(f"[yellow]Saved best model[/yellow] (val_rmse: {val_rmse:.6f})")
                         else:
                             patience_counter += 1
                             if accelerator.is_main_process:
@@ -507,7 +576,8 @@ def main():
     accelerator.end_training()
 
     if accelerator.is_main_process:
-        table = Table(title="V3 TF Training Complete", show_header=False, border_style="green")
+        table = Table(title="V4 Training Complete", show_header=False, border_style="green")
+        table.add_row("Mode", "FSDP" if use_fsdp else "DDP")
         table.add_row("Total Epochs", str(epoch + 1))
         table.add_row("Total Steps", str(global_step))
         table.add_row("Best Val RMSE", f"{best_val_rmse:.6f}")

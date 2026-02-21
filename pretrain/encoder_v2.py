@@ -528,11 +528,11 @@ class ResBlock3D(nn.Module):
 
 class CNNStem3D(nn.Module):
     """
-    CNN Stem for 3D: 8x8x8 -> 4x4x4 -> 2x2x2 with ResBlocks.
+    CNN Stem for 3D: P^3 -> 2^3 with stride-2 Conv3d + ResBlocks.
 
-    Architecture:
-        8x8x8 -> Conv3d s2 -> 4x4x4 -> ResBlock3D
-               -> Conv3d s2 -> 2x2x2 -> ResBlock3D
+    Dynamically builds log2(P)-1 stages:
+        P=8:  8->4->2  (2 stages)
+        P=16: 16->8->4->2  (3 stages)
     """
 
     def __init__(
@@ -540,25 +540,31 @@ class CNNStem3D(nn.Module):
         in_channels: int,
         hidden_channels: int = 128,
         out_channels: int = 256,
+        patch_size: int = 8,
     ):
         super().__init__()
         self.out_channels = out_channels
 
-        self.stem = nn.Sequential(
-            # 8x8x8 -> 4x4x4
-            nn.Conv3d(in_channels, hidden_channels, kernel_size=3, stride=2, padding=1),
-            nn.GELU(),
-            ResBlock3D(hidden_channels),
-            # 4x4x4 -> 2x2x2
-            nn.Conv3d(hidden_channels, out_channels, kernel_size=3, stride=2, padding=1),
-            nn.GELU(),
-            ResBlock3D(out_channels),
-        )
+        import math
+        num_stages = int(math.log2(patch_size)) - 1  # P=8: 2, P=16: 3
+
+        layers = []
+        ch = in_channels
+        for i in range(num_stages):
+            ch_out = out_channels if i == num_stages - 1 else hidden_channels
+            layers.extend([
+                nn.Conv3d(ch, ch_out, kernel_size=3, stride=2, padding=1),
+                nn.GELU(),
+                ResBlock3D(ch_out),
+            ])
+            ch = ch_out
+
+        self.stem = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: [N, C, 8, 8, 8] where N = B*T*n_d*n_h*n_w
+            x: [N, C, P, P, P] where N = B*T*n_d*n_h*n_w
         Returns:
             out: [N, out_channels, 2, 2, 2]
         """
@@ -637,14 +643,16 @@ class PatchifyEncoder3D(nn.Module):
         intra_patch_layers: int = 2,
         intra_patch_window: int = 3,
         intra_patch_heads: int = 8,
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
         self.in_channels = in_channels
         self.hidden_dim = hidden_dim
         self.patch_size = patch_size
+        self.gradient_checkpointing = gradient_checkpointing
 
-        # CNN Stem: 8^3 -> 4^3 -> 2^3
-        self.cnn_stem = CNNStem3D(in_channels, stem_hidden, stem_out)
+        # CNN Stem: P^3 -> 2^3
+        self.cnn_stem = CNNStem3D(in_channels, stem_hidden, stem_out, patch_size=patch_size)
 
         # Intra-patch temporal attention
         self.intra_patch_attn = IntraPatchTemporalAttention3D(
@@ -692,8 +700,11 @@ class PatchifyEncoder3D(nn.Module):
         x = x.reshape(B * T * n_d * n_h * n_w, P, P, P, C)
         x = x.permute(0, 4, 1, 2, 3)  # [N, C, P, P, P]
 
-        # Step 2: CNN Stem
-        x = self.cnn_stem(x)  # [N, stem_out, 2, 2, 2]
+        # Step 2: CNN Stem (checkpoint to save ~8GB activation memory for 3D)
+        if self.training and self.gradient_checkpointing:
+            x = torch.utils.checkpoint.checkpoint(self.cnn_stem, x, use_reentrant=False)
+        else:
+            x = self.cnn_stem(x)  # [N, stem_out, 2, 2, 2]
 
         # Reshape for intra-patch attention
         _, stem_out, sd, sh, sw = x.shape  # sd=sh=sw=2

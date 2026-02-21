@@ -76,14 +76,18 @@ dataset:
   overrides:
     1d_cfd:
       clips_per_epoch: null
+      val_clips: 6
     diffusion_reaction:
       clips_per_epoch: null
+      val_clips: 47
     2d_cfd:
       clips_per_epoch: null
     swe:
       clips_per_epoch: null
+      val_clips: 47
     ns_incom:
       clips_per_epoch: null
+      val_clips: 124
     3d_cfd:
       clips_per_epoch: null
 

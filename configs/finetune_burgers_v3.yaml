@@ -1,0 +1,106 @@
+# Burgers2D LoRA Finetuning Configuration (V3 Model)
+# Uses PDEModelV3 with Shared FFN Transformer + Neighborhood Attention
+
+model_name: burgers_lora_v3
+
+model:
+  # Must match pretrained V3s model architecture
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+
+  vector_channels: 3
+  scalar_channels: 15
+
+  # V3-specific: Burgers is 2D, no need for 1D/3D components
+  enable_1d: false
+  enable_3d: false
+
+  # Pretrained V3 checkpoint path
+  pretrained_path: ./checkpoints_v3_s/best_tf.pt
+
+  # Freeze options (default: both unfrozen for better adaptation)
+  freeze_encoder: false
+  freeze_decoder: false
+
+  # LoRA configuration
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+      - qkv       # NA Attention QKV projection
+      - proj      # NA Attention output projection
+      - gate_proj # FFN SwiGLU
+      - up_proj   # FFN SwiGLU
+      - down_proj # FFN SwiGLU
+
+training:
+  max_epochs: 30
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_steps: 0
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  # Loss weights
+  lambda_bc: 1.0   # Boundary loss weight
+  lambda_pde: 0.01 # PDE loss weight
+
+  # Eval interval (steps)
+  eval_interval: 90
+
+  # Early stopping
+  early_stopping_patience: 30
+
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
+dataloader:
+  batch_size: 20
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: ./data/finetune/burgers2d_nu0.005_0.02_n100.h5
+  seed: 42
+  t_input: 8
+  train_ratio: 0.9
+  clips_per_sample: 200      # Train: random clips per sample per epoch
+  val_time_interval: 20       # Val: interval sampling (0, 8, 16, ...)
+  vector_dim: 2              # 2D velocity (Vz=0)
+
+logging:
+  project: pde-burgers-lora
+  entity: null
+  save_dir: ./checkpoints_burgers_lora_v3
+  log_interval: 10
+
+checkpoint:
+  resume_from: null
+
+physics:
+  dt: 0.001001001  # 1/999 (1000 timesteps over [0, 1])
+  dx: 0.007874016  # 1/127 (128 grid points, boundary-inclusive)
+  dy: 0.007874016  # 1/127
