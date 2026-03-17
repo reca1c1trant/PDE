@@ -1,10 +1,10 @@
 # Turbulent Radiative Layer 2D LoRA Finetuning Configuration
 # Compressible Euler: mass + momentum conservation (no energy)
-# x periodic, y open (Neumann), multiple tcool values
-# Channels: Vx(0), Vy(1), density(7), pressure(15)
-# Loss: BC (supervised anchor) + PDE (mass + x-mom + y-mom)
+# x periodic, y open (Neumann), 6 tcool values (0.03~0.56), 48 samples
+# Channels: Vx(0), Vy(1), density(7)=scalar[4], pressure(15)=scalar[12]
+# Loss: BC (supervised anchor) + PDE (mass + x-mom + y-mom, eq_scales normalized)
 
-model_name: turbulent_radiative_lora_v3
+model_name: turbulent_radiative_2d_lora_v3
 
 model:
   in_channels: 18
@@ -43,7 +43,6 @@ model:
   enable_1d: false
   enable_3d: false
 
-  # Pretrained V4 2D-only checkpoint (decoder v3: skip + cross-patch)
   pretrained_path: ./checkpoints_v4_2donly_dec_v3/best_tf.pt
   gradient_checkpointing: true
 
@@ -70,37 +69,37 @@ training:
   min_lr: 1.0e-6
   grad_clip: 1.0
 
-  lambda_bc: 100.0
+  lambda_bc: 10000.0
   lambda_pde: 1
 
-  # Save criterion: save_rmse_weight * val_rmse + save_pde_weight * val_pde
-  save_rmse_weight: 100
+  # Save criterion: save_vrmse_weight * val_vrmse + save_pde_weight * val_pde
+  save_vrmse_weight: 100
   save_pde_weight: 1
 
-  eval_interval: 100
+  eval_interval: 50
   early_stopping_patience: 30
 
   mixed_precision: "no"
   gradient_accumulation_steps: 1
 
 dataloader:
-  batch_size: 8
+  batch_size: 6
   num_workers: 4
   pin_memory: true
 
 dataset:
-  path: ./data/finetune/turbulent_radiative_layer.h5
+  path: /scratch-share/SONG0304/finetune/turbulent_radiative_2d.hdf5
   seed: 42
   t_input: 8
   train_ratio: 0.9
-  clips_per_sample: 80
-  val_time_interval: 10
+  clips_per_sample: null
+  val_time_interval: 20
   vector_dim: 2
 
 logging:
-  project: pde-turbulent-radiative-lora
+  project: pde-turbulent-radiative-2d-lora
   entity: null
-  save_dir: ./checkpoints_turbulent_radiative_lora_v3
+  save_dir: ./checkpoints_turbulent_radiative_2d_lora_v3
   log_interval: 10
 
 checkpoint:
@@ -113,3 +112,15 @@ physics:
   Ly: 3.0
   dt: 1.597033
   skip_bl: 10
+
+  # Per-equation normalization scales (GT RMS from test_gt_pde_turbulent_radiative_2d.py)
+  # NOTE: GT residuals large due to Godunov/FD scheme mismatch at mixing interface
+  eq_scales:
+    mass: 15.3113
+    x_momentum: 1.0841
+    y_momentum: 1.1283
+
+  eq_weights:
+    mass: 1.0
+    x_momentum: 1.0
+    y_momentum: 1.0

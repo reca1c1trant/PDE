@@ -205,6 +205,27 @@ torchrun --nproc_per_node=4 finetune/train_active_matter_lora_v3.py --config con
 
 
 ###############################################################################
+#                      FINETUNE - Turbulent Radiative 2D
+###############################################################################
+
+
+
+# Step 2: Preprocess (48 samples, 101 timesteps, 128x384)
+HDF5_USE_FILE_LOCKING=FALSE python tools/preprocess_turbulent_radiative_2d.py \
+    --input_dir /scratch-share/SONG0304/finetune/turbulent_radiative_2d/data/train \
+    --output /scratch-share/SONG0304/finetune/turbulent_radiative_2d.hdf5
+
+# Step 3: GT PDE verification
+CUDA_VISIBLE_DEVICES=0 python tools/test_gt_pde_turbulent_radiative_2d.py
+
+# Step 4: LoRA training (BC + PDE: mass + momentum, dec_v3, 2-node 8 GPU)
+# Terminal 1 (10.128.10.35, node 0):
+torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29501 finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
+# Terminal 2 (另一个 node, node 1):
+cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29501 finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
+
+
+###############################################################################
 #                      FINETUNE - Wave-Gauss
 ###############################################################################
 

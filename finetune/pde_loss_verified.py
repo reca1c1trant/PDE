@@ -1236,3 +1236,243 @@ class ShearFlowPDELossNPINN(nn.Module):
 
         total_loss = sum(losses.values())
         return total_loss, losses
+
+
+# =============================================================================
+# Wave-Gauss Acoustic Wave Equation PDE Loss
+# =============================================================================
+
+class WaveGaussPDELoss(nn.Module):
+    """
+    Acoustic Wave Equation PDE Loss: u_tt = c(x)^2 * nabla^2 u
+
+    改写为 u_tt/c^2 - nabla^2 u = 0，消除 c^2 量级放大。
+
+    边界条件:
+        - 非周期 (absorbing BC) → 2阶中心差分, 只在内部点计算
+        - skip_boundary: 进一步跳过靠近边界的像素
+
+    数值方法:
+        - 时间: 2阶中心差分 u_tt = (u[t+1] - 2*u[t] + u[t-1]) / dt^2
+        - 空间: 2阶中心差分 Laplacian (非周期)
+            d2u/dx2 = (u[i+1] - 2u[i] + u[i-1]) / dx^2
+            d2u/dy2 = (u[j+1] - 2u[j] + u[j-1]) / dy^2
+        - 只在内部点 [1:-1, 1:-1] 有效, 再跳 skip_boundary 行/列
+
+    GT RMS (eq_scales): ~90.6 (from test_gt_pde_wave_gauss.py)
+    """
+
+    DEFAULT_EQ_SCALES = {
+        'wave': 1.0,
+    }
+
+    def __init__(
+        self,
+        nx: int = 128,
+        ny: int = 128,
+        Lx: float = 1.0,
+        Ly: float = 1.0,
+        dt: float = 1.0 / 14,
+        skip_boundary: int = 2,
+        eq_scales: Optional[Dict[str, float]] = None,
+        eq_weights: Optional[Dict[str, float]] = None,
+    ):
+        super().__init__()
+        self.nx = nx
+        self.ny = ny
+        self.dx = Lx / nx
+        self.dy = Ly / ny
+        self.dt = dt
+        self.skip_boundary = skip_boundary
+
+        self.eq_scales = {**self.DEFAULT_EQ_SCALES, **(eq_scales or {})}
+        self.eq_weights = {'wave': 1.0, **(eq_weights or {})}
+
+    def forward(
+        self,
+        u: torch.Tensor,
+        c: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """
+        计算 acoustic wave PDE 残差 loss
+
+        Args:
+            u: displacement [B, T, H, W]
+            c: wave speed [B, H, W] or [B, 1, H, W] (time-independent)
+
+        Returns:
+            total_loss, losses_dict
+        """
+        dx, dy, dt = self.dx, self.dy, self.dt
+        sb = self.skip_boundary
+
+        if c.dim() == 3:
+            c = c.unsqueeze(1)
+
+        # ---- Time derivative: u_tt (2nd-order central) ----
+        u_tt = (u[:, 2:] - 2 * u[:, 1:-1] + u[:, :-2]) / (dt ** 2)
+        u_mid = u[:, 1:-1]
+
+        # ---- Spatial Laplacian (2nd-order central, non-periodic) ----
+        # Only valid at interior points [1:-1, 1:-1]
+        d2u_dx2 = (u_mid[..., 2:, 1:-1] - 2 * u_mid[..., 1:-1, 1:-1] + u_mid[..., :-2, 1:-1]) / (dx ** 2)
+        d2u_dy2 = (u_mid[..., 1:-1, 2:] - 2 * u_mid[..., 1:-1, 1:-1] + u_mid[..., 1:-1, :-2]) / (dy ** 2)
+        lap_u = d2u_dx2 + d2u_dy2
+
+        u_tt_interior = u_tt[..., 1:-1, 1:-1]
+        c_interior = c[..., 1:-1, 1:-1]
+
+        # ---- Residual: R = u_tt/c^2 - lap_u ----
+        R_wave = u_tt_interior / (c_interior ** 2) - lap_u
+
+        if sb > 0:
+            R_wave = R_wave[..., sb:-sb, sb:-sb]
+
+        # ---- Per-equation normalized loss ----
+        s_wave = self.eq_scales['wave']
+        w_wave = self.eq_weights['wave']
+
+        loss_wave = w_wave * torch.mean(R_wave ** 2) / (s_wave ** 2)
+
+        return loss_wave, {'wave': loss_wave, 'total': loss_wave}
+
+
+# =============================================================================
+# NS-PwC / NS-SVS PDE Loss (Incompressible NS + Passive Tracer, 2nd-order central)
+# =============================================================================
+
+class NSPwCPDELoss(nn.Module):
+    """
+    NS-PwC / NS-SVS PDE Loss — Incompressible NS + Passive Tracer.
+
+    Uses vorticity formulation to avoid pressure:
+        1. Divergence: ∂u/∂x + ∂v/∂y = 0
+        2. Vorticity transport: ∂ω/∂t + u·∂ω/∂x + v·∂ω/∂y = ν·Δω
+           where ω = ∂v/∂x - ∂u/∂y
+        3. Tracer transport: ∂s/∂t + u·∂s/∂x + v·∂s/∂y = κ·Δs
+
+    All periodic BCs, 2nd-order central FD (best GT residual on 128x128 grid).
+    Time: 2nd-order central (f[t+1] - f[t-1]) / (2dt).
+    Per-equation normalization via eq_scales / eq_weights.
+
+    Note: 2nd-order central beats 4th-order and n-PINN on this dataset
+    (128x128 resolution, spectral solver data).
+    """
+
+    DEFAULT_EQ_SCALES = {
+        'divergence': 1.0,
+        'vorticity': 1.0,
+        'tracer': 1.0,
+    }
+
+    def __init__(
+        self,
+        nx: int = 128,
+        ny: int = 128,
+        Lx: float = 1.0,
+        Ly: float = 1.0,
+        dt: float = 0.05,
+        nu: float = 4e-4,
+        kappa: float = 4e-4,
+        eq_scales: Optional[Dict[str, float]] = None,
+        eq_weights: Optional[Dict[str, float]] = None,
+    ):
+        super().__init__()
+        self.nx = nx
+        self.ny = ny
+        self.dx = Lx / nx
+        self.dy = Ly / ny
+        self.dt = dt
+        self.nu = nu
+        self.kappa = kappa
+
+        self.eq_scales = dict(self.DEFAULT_EQ_SCALES)
+        if eq_scales is not None:
+            self.eq_scales.update(eq_scales)
+
+        self.eq_weights = {'divergence': 1.0, 'vorticity': 1.0, 'tracer': 1.0}
+        if eq_weights is not None:
+            self.eq_weights.update(eq_weights)
+
+    def _dx(self, f: torch.Tensor) -> torch.Tensor:
+        """2nd-order central x-derivative (periodic)."""
+        return (torch.roll(f, -1, dims=-1) - torch.roll(f, 1, dims=-1)) / (2 * self.dx)
+
+    def _dy(self, f: torch.Tensor) -> torch.Tensor:
+        """2nd-order central y-derivative (periodic)."""
+        return (torch.roll(f, -1, dims=-2) - torch.roll(f, 1, dims=-2)) / (2 * self.dy)
+
+    def _laplacian(self, f: torch.Tensor) -> torch.Tensor:
+        """2nd-order central Laplacian (periodic)."""
+        lx = (torch.roll(f, -1, dims=-1) - 2*f + torch.roll(f, 1, dims=-1)) / self.dx**2
+        ly = (torch.roll(f, -1, dims=-2) - 2*f + torch.roll(f, 1, dims=-2)) / self.dy**2
+        return lx + ly
+
+    def forward(
+        self,
+        u: torch.Tensor,
+        v: torch.Tensor,
+        s: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """
+        Compute PDE residual losses.
+
+        Args:
+            u: x-velocity [B, T, H, W] (T includes prepended t0 frame)
+            v: y-velocity [B, T, H, W]
+            s: tracer     [B, T, H, W]
+
+        Returns:
+            total_loss, {eq_name: loss_value}
+        """
+        losses: Dict[str, torch.Tensor] = {}
+
+        # Interior timesteps
+        u_int = u[:, 1:-1]
+        v_int = v[:, 1:-1]
+        s_int = s[:, 1:-1]
+
+        # ---- Eq 1: Divergence ----
+        div = self._dx(u_int) + self._dy(v_int)
+        scale_div = self.eq_scales['divergence']
+        w_div = self.eq_weights['divergence']
+        losses['divergence'] = w_div * torch.mean(div ** 2) / (scale_div ** 2)
+
+        # ---- Eq 2: Vorticity transport ----
+        w_vort = self.eq_weights['vorticity']
+        if w_vort > 0:
+            # ω = ∂v/∂x - ∂u/∂y at interior timesteps
+            omega_int = self._dx(v_int) - self._dy(u_int)
+
+            # ∂ω/∂t via 2nd-order central on the full ω field
+            omega_next = self._dx(v[:, 2:]) - self._dy(u[:, 2:])
+            omega_prev = self._dx(v[:, :-2]) - self._dy(u[:, :-2])
+            domega_dt = (omega_next - omega_prev) / (2 * self.dt)
+
+            # Advection: u·∂ω/∂x + v·∂ω/∂y
+            adv_omega = u_int * self._dx(omega_int) + v_int * self._dy(omega_int)
+
+            # Diffusion: ν·Δω
+            lap_omega = self._laplacian(omega_int)
+
+            R_vort = domega_dt + adv_omega - self.nu * lap_omega
+            scale_vort = self.eq_scales['vorticity']
+            losses['vorticity'] = w_vort * torch.mean(R_vort ** 2) / (scale_vort ** 2)
+        else:
+            losses['vorticity'] = torch.tensor(0.0, device=u.device)
+
+        # ---- Eq 3: Tracer transport ----
+        w_tracer = self.eq_weights['tracer']
+        if w_tracer > 0:
+            ds_dt = (s[:, 2:] - s[:, :-2]) / (2 * self.dt)
+            adv_s = u_int * self._dx(s_int) + v_int * self._dy(s_int)
+            lap_s = self._laplacian(s_int)
+
+            R_tracer = ds_dt + adv_s - self.kappa * lap_s
+            scale_tracer = self.eq_scales['tracer']
+            losses['tracer'] = w_tracer * torch.mean(R_tracer ** 2) / (scale_tracer ** 2)
+        else:
+            losses['tracer'] = torch.tensor(0.0, device=u.device)
+
+        total_loss = sum(losses.values())
+        return total_loss, losses
