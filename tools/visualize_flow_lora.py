@@ -327,15 +327,9 @@ def main():
         rmse = compute_rmse_loss(output, target)
         vrmse = compute_vrmse_loss(output, target)
 
-        # Combined vrmse/nrmse across all valid channels (channel 0 = u)
-        valid_ch_vis = [0]
-        output_valid_vis = output[..., valid_ch_vis]
-        target_valid_vis = target[..., valid_ch_vis]
-        mse_all_vis = torch.mean((output_valid_vis - target_valid_vis) ** 2)
-        var_all_vis = torch.mean((target_valid_vis - target_valid_vis.mean()) ** 2)
-        vrmse_all_vis = torch.sqrt(mse_all_vis / (var_all_vis + 1e-8)).item()
-        mse_zero_all_vis = torch.mean(target_valid_vis ** 2)
-        nrmse_all_vis = torch.sqrt(mse_all_vis / (mse_zero_all_vis + 1e-8)).item()
+        # Combined vrmse/nrmse as mean of per-channel values (single channel)
+        vrmse_all_vis = vrmse
+        nrmse_all_vis = _nrmse_torch(target[..., 0], output[..., 0]).item()
 
         # Get last timestep for visualization
         gt_last = target[0, -1, :, :, 0].float().cpu().numpy()

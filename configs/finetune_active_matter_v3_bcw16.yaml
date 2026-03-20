@@ -1,10 +1,9 @@
-# Rayleigh-Bénard 2D LoRA Finetuning Configuration
-# Incompressible Boussinesq: continuity + buoyancy transport
-# x periodic, y Dirichlet (wall), Ra=1e10, Pr=1
-# Channels: Vx(0), Vy(1), buoyancy(3), pressure(15)
-# Loss: BC (supervised anchor) + PDE (continuity + buoyancy)
+# Active Matter LoRA Finetuning (Decoder V3, bc_width=16)
+# Patch-width boundary loss (16-pixel border strips)
+# Channels: Vx(0), Vy(1), concentration(3)
+# Loss: BC (supervised anchor, bc_width=16) + PDE (continuity + concentration)
 
-model_name: rayleigh_benard_lora_v3
+model_name: active_matter_lora_v3_bcw16
 
 model:
   in_channels: 18
@@ -43,7 +42,6 @@ model:
   enable_1d: false
   enable_3d: false
 
-  # Pretrained V4 2D-only checkpoint (decoder v3: skip + cross-patch)
   pretrained_path: ./checkpoints_v4_2donly_dec_v3/best_tf.pt
   gradient_checkpointing: true
 
@@ -66,19 +64,19 @@ training:
   learning_rate: 1.0e-4
   weight_decay: 0.01
   betas: [0.9, 0.999]
-  warmup_steps: 50
+  warmup_steps: 100
   min_lr: 1.0e-6
   grad_clip: 1.0
 
   lambda_bc: 10000.0
-  lambda_pde: 1
-  lambda_boundary: 1000.0    # Patch boundary smoothness loss (self-supervised)
+  lambda_pde: 1.0
+  lambda_boundary: 0.0
+  bc_width: 16
 
-  # Save criterion: save_vrmse_weight * val_vrmse + save_pde_weight * val_pde
   save_vrmse_weight: 100
   save_pde_weight: 1
 
-  eval_interval: 100
+  eval_interval: 120
   early_stopping_patience: 30
 
   mixed_precision: "no"
@@ -90,41 +88,37 @@ dataloader:
   pin_memory: true
 
 dataset:
-  path: ./data/finetune/rayleigh_benard_pr1.h5
+  path: /home/msai/song0304/code/PDE/data/finetune/active_matter_all.hdf5
   seed: 42
   t_input: 8
   train_ratio: 0.9
   clips_per_sample: null
-  val_time_interval: 20
+  val_time_interval: 16
   vector_dim: 2
 
 logging:
-  project: pde-rayleigh-benard-lora
+  project: pde-active-matter-lora
   entity: null
-  save_dir: ./checkpoints_rayleigh_benard_lora_v3
+  save_dir: ./checkpoints_active_matter_lora_v3_bcw16
   log_interval: 10
 
 checkpoint:
   resume_from: null
 
 physics:
-  nx: 512
-  ny: 128
-  Lx: 4.0
-  Ly: 1.0
+  nx: 256
+  ny: 256
+  Lx: 10.0
+  Ly: 10.0
   dt: 0.25
-  kappa: 1.0e-5        # κ = (Ra*Pr)^{-1/2} = 1e-5 for Ra=1e10, Pr=1
-  skip_bl: 15           # skip boundary layer rows (bottom y≈0 turbulent)
+  d_T: 0.05
 
-  # Per-equation normalization scales (GT RMS from test_gt_pde_rb_eqscales.py)
   eq_scales:
-    continuity: 3.598
-    buoyancy: 1.190
+    continuity: 7.6243e-01
+    concentration: 3.3094e-03
+    Dxx: 1.0
 
-  # Per-equation weights (default 1.0 for all)
   eq_weights:
     continuity: 1.0
-    buoyancy: 1.0
-
-  # Per-timestep normalization scales (optional, overrides eq_scales when present)
-  eq_scales_per_t_path: ./data/gt_scales/rayleigh_benard_per_t.pt
+    concentration: 1.0
+    Dxx: 0.0

@@ -69,7 +69,7 @@ training:
   learning_rate: 1.0e-4
   weight_decay: 0.01
   betas: [0.9, 0.999]
-  warmup_steps: 200
+  warmup_steps: 100
   min_lr: 1.0e-6
   grad_clip: 1.0
 
@@ -81,14 +81,14 @@ training:
   save_vrmse_weight: 100
   save_pde_weight: 1
 
-  eval_interval: 400
+  eval_interval: 50
   early_stopping_patience: 30
 
   mixed_precision: "no"
   gradient_accumulation_steps: 1
 
 dataloader:
-  batch_size: 16
+  batch_size: 20
   num_workers: 4
   pin_memory: true
 
@@ -104,7 +104,7 @@ dataset:
 logging:
   project: pde-gray-scott-lora
   entity: null
-  save_dir: ./checkpoints_gray_scott_lora_v4
+  save_dir: ./checkpoints_gray_scott_lora_v4_bc1
   log_interval: 10
 
 checkpoint:
@@ -126,3 +126,7 @@ physics:
   # eq_scales:
   #   A_equation: 1.0e-3    # placeholder
   #   B_equation: 1.0e-3    # placeholder
+
+  # Per-timestep normalization scales (time-aware, from compute_gt_scales_per_t.py)
+  # Uncomment to enable per-timestep normalization instead of fixed eq_scales
+  # eq_scales_per_t_path: ./data/gt_scales/gray_scott_per_t.pt

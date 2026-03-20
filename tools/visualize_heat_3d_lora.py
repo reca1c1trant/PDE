@@ -191,14 +191,10 @@ def scan_all_distributed(accelerator, model, val_loader, config, t_input):
         mse = torch.mean((output[..., valid_ch] - target_data[..., valid_ch]) ** 2)
         rmse = torch.sqrt(mse + 1e-8)
 
-        # Combined vrmse/nrmse across all valid channels
-        output_valid = output[..., valid_ch]
-        target_valid = target_data[..., valid_ch]
-        mse_all = torch.mean((output_valid - target_valid) ** 2)
-        var_all = torch.mean((target_valid - target_valid.mean()) ** 2)
-        vrmse_all = torch.sqrt(mse_all / (var_all + 1e-8))
-        mse_zero_all = torch.mean(target_valid ** 2)
-        nrmse_all = torch.sqrt(mse_all / (mse_zero_all + 1e-8))
+        # Combined vrmse/nrmse as mean of per-channel values (single channel)
+        nrmse_temp = _nrmse_torch(tgt_temp, out_temp)
+        vrmse_all = vrmse_temp
+        nrmse_all = nrmse_temp
 
         total_pde += pde_loss.detach()
         total_rmse_temp += rmse_temp.detach()
@@ -363,15 +359,10 @@ def run_visualization(model, dataset, config, device, t_input, num_samples, seed
         rmse_temp = torch.sqrt(torch.mean((out_temp - tgt_temp) ** 2) + 1e-8).item()
         vrmse_temp = _vrmse_torch(tgt_temp, out_temp).item()
 
-        # Combined vrmse/nrmse across all valid channels (only temp for heat 3D)
-        valid_ch_vis = [CH_TEMP]
-        output_valid_vis = output[..., valid_ch_vis]
-        target_valid_vis = target[..., valid_ch_vis]
-        mse_all_vis = torch.mean((output_valid_vis - target_valid_vis) ** 2)
-        var_all_vis = torch.mean((target_valid_vis - target_valid_vis.mean()) ** 2)
-        vrmse_all_vis = torch.sqrt(mse_all_vis / (var_all_vis + 1e-8)).item()
-        mse_zero_all_vis = torch.mean(target_valid_vis ** 2)
-        nrmse_all_vis = torch.sqrt(mse_all_vis / (mse_zero_all_vis + 1e-8)).item()
+        # Combined vrmse/nrmse as mean of per-channel values (single channel)
+        nrmse_temp_vis = _nrmse_torch(tgt_temp, out_temp).item()
+        vrmse_all_vis = vrmse_temp
+        nrmse_all_vis = nrmse_temp_vis
 
         # Last timestep for plotting: [D, H, W]
         gt_temp = target[0, -1, :, :, :, CH_TEMP].float().cpu().numpy()

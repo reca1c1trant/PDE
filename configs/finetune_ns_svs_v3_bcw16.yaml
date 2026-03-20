@@ -1,8 +1,9 @@
-# Rayleigh-Bénard 2D LoRA Finetuning — Postsmooth Decoder
-# Same as finetune_rayleigh_benard_v3.yaml but using postsmooth checkpoint
-# For A/B comparison: decoder v3 (skip+cross-patch) vs postsmooth (5×5 conv)
+# NS-SVS (POSEIDON) LoRA Finetuning (bc_width=16)
+# Incompressible NS + Tracer, periodic BC, AZEBAN spectral solver
+# Loss: BC (16-pixel border supervised) + PDE (divergence + vorticity + tracer)
+# Channels: Vx(0), Vy(1), tracer(14) = scalar[11]
 
-model_name: rayleigh_benard_lora_v3
+model_name: ns_svs_lora_v3_bcw16
 
 model:
   in_channels: 18
@@ -26,9 +27,14 @@ model:
     base_kernel: 5
 
   decoder:
+    version: 'v3'
     stem_channels: 256
-    hidden_channels: 128
-    post_smooth_kernel: 5
+    hidden_channels: 256
+    use_skip: true
+    cross_patch:
+      enabled: true
+      kernel_size: 3
+      num_layers: 2
 
   vector_channels: 3
   scalar_channels: 15
@@ -36,7 +42,7 @@ model:
   enable_1d: false
   enable_3d: false
 
-  pretrained_path: ./checkpoints_v4_2donly_postsmooth/best_tf.pt
+  pretrained_path: ./checkpoints_ns_pwc_fullft/best_tf.pt
   gradient_checkpointing: true
 
   freeze_encoder: false
@@ -58,63 +64,61 @@ training:
   learning_rate: 1.0e-4
   weight_decay: 0.01
   betas: [0.9, 0.999]
-  warmup_steps: 50
+  warmup_steps: 200
   min_lr: 1.0e-6
   grad_clip: 1.0
 
   lambda_bc: 10000.0
-  lambda_pde: 1
+  lambda_pde: 1.0
+  bc_width: 16           # Boundary strip width = patch_size (full boundary patches)
 
-  # Save criterion: save_vrmse_weight * val_vrmse + save_pde_weight * val_pde
   save_vrmse_weight: 100
   save_pde_weight: 1
 
-  eval_interval: 100
+  eval_interval: 200
   early_stopping_patience: 30
 
   mixed_precision: "no"
   gradient_accumulation_steps: 1
 
 dataloader:
-  batch_size: 6
+  batch_size: 20
   num_workers: 4
   pin_memory: true
 
 dataset:
-  path: ./data/finetune/rayleigh_benard_pr1.h5
+  path: /scratch-share/SONG0304/finetune/ns_svs_1k.hdf5
   seed: 42
   t_input: 8
   train_ratio: 0.9
-  clips_per_sample: null
-  val_time_interval: 20
+  clips_per_sample: 10
+  val_time_interval: 1
   vector_dim: 2
 
 logging:
-  project: pde-rayleigh-benard-lora
+  project: pde-ns-svs-lora
   entity: null
-  save_dir: ./checkpoints_rayleigh_benard_lora_v3_postsmooth
+  save_dir: ./checkpoints_ns_svs_lora_v3_bcw16
   log_interval: 10
 
 checkpoint:
   resume_from: null
 
 physics:
-  nx: 512
+  nx: 128
   ny: 128
-  Lx: 4.0
+  Lx: 1.0
   Ly: 1.0
-  dt: 0.25
-  kappa: 1.0e-5
-  skip_bl: 15
+  dt: 0.05
+  nu: 4.0e-4
+  kappa: 4.0e-4
 
-  # Per-equation normalization scales (GT RMS from test_gt_pde_rb_eqscales.py)
   eq_scales:
-    continuity: 3.598
-    buoyancy: 1.190
+    divergence: 7.57e-3
+    vorticity: 12.69
+    tracer: 1.54
 
   eq_weights:
-    continuity: 1.0
-    buoyancy: 1.0
-
-  # Per-timestep normalization scales (optional, overrides eq_scales when present)
-  eq_scales_per_t_path: ./data/gt_scales/rayleigh_benard_per_t.pt
+    divergence: 1.0
+    vorticity: 1.0
+    tracer: 10.0

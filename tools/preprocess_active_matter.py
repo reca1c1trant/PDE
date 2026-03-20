@@ -64,12 +64,12 @@ def main():
             "vector", shape=(total_samples, n_time, nx, ny, 3),
             dtype=np.float32, chunks=(1, n_time, nx, ny, 3),
         )
-        # scalar: concentration, Dxx, Dxy, Dyy
+        # scalar: concentration only (no D tensor)
         sca_ds = out.create_dataset(
-            "scalar", shape=(total_samples, n_time, nx, ny, 4),
-            dtype=np.float32, chunks=(1, n_time, nx, ny, 4),
+            "scalar", shape=(total_samples, n_time, nx, ny, 1),
+            dtype=np.float32, chunks=(1, n_time, nx, ny, 1),
         )
-        out.create_dataset("scalar_indices", data=np.array([0, 1, 2, 3], dtype=np.int64))
+        out.create_dataset("scalar_indices", data=np.array([0], dtype=np.int64))
 
         # Store per-sample parameters: zeta*alpha (in nu field for PDE loss)
         nu_ds = out.create_dataset("nu", shape=(total_samples,), dtype=np.float32)
@@ -84,35 +84,29 @@ def main():
 
                 vel = f["t1_fields/velocity"][:].astype(np.float32)  # (N, T, H, W, 2)
                 conc = f["t0_fields/concentration"][:].astype(np.float32)  # (N, T, H, W)
-                D = f["t2_fields/D"][:].astype(np.float32)  # (N, T, H, W, 2, 2)
 
                 # vector: (N, T, H, W, 3)
                 vec_data = np.zeros((n_s, n_time, nx, ny, 3), dtype=np.float32)
                 vec_data[..., 0] = vel[..., 0]  # vx
                 vec_data[..., 1] = vel[..., 1]  # vy
 
-                # scalar: (N, T, H, W, 4)
-                sca_data = np.zeros((n_s, n_time, nx, ny, 4), dtype=np.float32)
-                sca_data[..., 0] = conc             # concentration
-                sca_data[..., 1] = D[..., 0, 0]     # Dxx
-                sca_data[..., 2] = D[..., 0, 1]     # Dxy (= Dyx by symmetry)
-                sca_data[..., 3] = D[..., 1, 1]     # Dyy
+                # scalar: (N, T, H, W, 1) - concentration only
+                sca_data = conc[..., np.newaxis]  # (N, T, H, W, 1)
 
                 vec_ds[offset:offset + n_s] = vec_data
                 sca_ds[offset:offset + n_s] = sca_data
-                nu_ds[offset:offset + n_s] = zeta_val * alpha_val  # store zeta*alpha as nu
+                nu_ds[offset:offset + n_s] = zeta_val * alpha_val
 
                 print(f"    alpha={alpha_val}, zeta={zeta_val}")
                 print(f"    vx: [{vel[...,0].min():.4f}, {vel[...,0].max():.4f}]")
                 print(f"    conc: [{conc.min():.4f}, {conc.max():.4f}]")
-                print(f"    Dxx: [{D[...,0,0].min():.4f}, {D[...,0,0].max():.4f}]")
 
                 offset += n_s
 
     print(f"\nSaved: {args.output}")
     print(f"  vector: ({total_samples}, {n_time}, {nx}, {ny}, 3)")
-    print(f"  scalar: ({total_samples}, {n_time}, {nx}, {ny}, 4)")
-    print(f"  scalar_indices: [0, 1, 2, 3]")
+    print(f"  scalar: ({total_samples}, {n_time}, {nx}, {ny}, 1)")
+    print(f"  scalar_indices: [0]")
     print(f"  nu: ({total_samples},) [zeta*alpha values]")
 
 

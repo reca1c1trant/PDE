@@ -61,6 +61,12 @@ CUDA_VISIBLE_DEVICES=3,4,5,7 torchrun --nproc_per_node=4 finetune/train_gray_sco
 # Step 4: Decoder V3 + patch-width boundary (bc_width=16)
 CUDA_VISIBLE_DEVICES=1,3,4,7 torchrun --nproc_per_node=4 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3_dec_v3.yaml
 
+# Step 5: A/B comparison — bc_width=1 (default) vs bc_width=16 (dec_v3)
+# bc_width=1 (default boundary, 1-pixel edge)
+CUDA_VISIBLE_DEVICES=1,3,4,7 torchrun --nproc_per_node=4 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3.yaml
+# bc_width=16 (resume from existing checkpoint)
+CUDA_VISIBLE_DEVICES=1,3,4,7 torchrun --nproc_per_node=4 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3_dec_v3.yaml --resume checkpoints_gray_scott_lora_v4_dec_v3/best_lora.pt
+
 # UNet baseline (BC + PDE only, no RMSE, train from scratch)
 torchrun --nproc_per_node=4 finetune/train_gray_scott_unet.py --config configs/finetune_gray_scott_unet.yaml
 
@@ -100,6 +106,15 @@ torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 
 # Terminal 2 (10.128.10.35):
 cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29502 finetune/train_rayleigh_benard_lora_v3.py --config configs/finetune_rayleigh_benard_v3.yaml
 
+torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29502 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3.yaml
+torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29502 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3.yaml
+
+# --- dec_v3 + bcw16 (port 29502) ---
+# Terminal 1 (10.128.10.35, master):
+torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29510 finetune/train_rayleigh_benard_lora_v3.py --config configs/finetune_rayleigh_benard_v3_bcw16.yaml
+# Terminal 2:
+cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29510 finetune/train_rayleigh_benard_lora_v3.py --config configs/finetune_rayleigh_benard_v3_bcw16.yaml
+
 # --- dec_v3 round2 continue (port 29503) ---
 # Terminal 1 (10.128.10.33, master):
 CUDA_VISIBLE_DEVICES=1,2,3 torchrun --nnodes=2 --nproc_per_node=3 --node_rank=0 --master_addr=10.128.10.33 --master_port=29503 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly_dec_v3.yaml --resume checkpoints_v4_2donly_dec_v3_round2/resume
@@ -107,12 +122,6 @@ CUDA_VISIBLE_DEVICES=1,2,3 torchrun --nnodes=2 --nproc_per_node=3 --node_rank=0 
 cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.33 --master_port=29503 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly_dec_v3.yaml --resume checkpoints_v4_2donly_dec_v3_round2/resume
 
 
-###############################################################################
-#                      FINETUNE - Turbulent Radiative
-###############################################################################
-
-# LoRA finetuning (BC + PDE: mass + momentum, v2 decoder)
-torchrun --nproc_per_node=4 finetune/train_turbulent_radiative_lora_v3.py --config configs/finetune_turbulent_radiative_v3.yaml
 
 
 ###############################################################################
@@ -178,6 +187,9 @@ torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 
 # Terminal 2 (另一个 node, node 1):
 cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29501 finetune/train_ns_svs_lora_v3.py --config configs/finetune_ns_svs_v3.yaml
 
+torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29510  finetune/train_ns_svs_lora_v3.py --config configs/finetune_ns_svs_v3_bcw16.yaml
+
+cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35  --master_port=29510 finetune/train_ns_svs_lora_v3.py --config configs/finetune_ns_svs_v3_bcw16.yaml
 
 ###############################################################################
 #                      FINETUNE - Active Matter
@@ -223,6 +235,13 @@ CUDA_VISIBLE_DEVICES=0 python tools/test_gt_pde_turbulent_radiative_2d.py
 torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29501 finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
 # Terminal 2 (另一个 node, node 1):
 cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29501 finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
+
+CUDA_VISIBLE_DEVICES=0torchrun --nproc_per_node=4  finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
+
+torchrun --nproc_per_node=4  finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3_bcw16.yaml
+
+torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29506   finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
+cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29506  finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
 
 
 ###############################################################################
@@ -282,9 +301,17 @@ torchrun --nproc_per_node=4 eval/eval_pretrain_v4.py \
 # === Gray-Scott ===
 
 # Multi-GPU full evaluation
-torchrun --nproc_per_node=8 tools/visualize_gray_scott_lora.py \
+CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_gray_scott_lora.py \
     --config configs/finetune_gray_scott_v3.yaml \
-    --checkpoint checkpoints_gray_scott_lora_v3/best_lora.pt --scan_all
+    --checkpoint checkpoints_gray_scott_lora_v4_bc1/best_lora.pt --scan_all
+
+CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_gray_scott_lora.py \
+    --config configs/finetune_gray_scott_v3_dec_v3.yaml \
+    --checkpoint checkpoints_gray_scott_lora_v4_dec_v3/best_lora.pt --scan_all    
+
+CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_gray_scott_lora.py \
+    --config configs/finetune_gray_scott_v3_postsmooth.yaml \
+    --checkpoint checkpoints_gray_scott_lora_v4_postsmooth/best_lora.pt --scan_all        
 
 # Single-GPU visualization
 python tools/visualize_gray_scott_lora.py \
@@ -346,13 +373,18 @@ python tools/visualize_3d_data.py \
 # === Rayleigh-Benard ===
 
 # Multi-GPU full evaluation
-torchrun --nproc_per_node=4 tools/visualize_rayleigh_benard_lora.py \
+CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_rayleigh_benard_lora.py \
     --config configs/finetune_rayleigh_benard_v3.yaml \
     --checkpoint checkpoints_rayleigh_benard_lora_v3/best_lora.pt --scan_all
 
-torchrun --nproc_per_node=4 tools/visualize_rayleigh_benard_lora.py \
+
+CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_rayleigh_benard_lora.py \
     --config configs/finetune_rayleigh_benard_v3_postsmooth.yaml \
-    --checkpoint checkpoints_rayleigh_benard_lora_v3_postsmooth/best_lora.pt --scan_all    
+    --checkpoint checkpoints_rayleigh_benard_lora_v3_postsmooth/best_lora.pt --scan_all   
+
+torchrun --nproc_per_node=4 tools/visualize_rayleigh_benard_lora.py \
+    --config configs/finetune_rayleigh_benard_v3_bcw16.yaml \
+    --checkpoint checkpoints_rayleigh_benard_lora_v3_bcw16/best_lora.pt --scan_all
 
 # Single-GPU visualization
 python tools/visualize_rayleigh_benard_lora.py \
@@ -362,9 +394,9 @@ python tools/visualize_rayleigh_benard_lora.py \
 # === Turbulent Radiative ===
 
 # Multi-GPU full evaluation
-torchrun --nproc_per_node=8 tools/visualize_turbulent_radiative_lora.py \
-    --config configs/finetune_turbulent_radiative_v3.yaml \
-    --checkpoint checkpoints_turbulent_radiative_lora_v3/best_lora.pt --scan_all
+CUDA_VISIBLE_DEVICES=2,3,5,6  torchrun --nproc_per_node=4 tools/visualize_turbulent_radiative_lora.py \
+    --config configs/finetune_turbulent_radiative_2d_v3_bcw16.yaml \
+    --checkpoint checkpoints_turbulent_radiative_2d_lora_v3_bcw16/best_lora.pt --scan_all
 
 # Single-GPU visualization
 python tools/visualize_turbulent_radiative_lora.py \
@@ -386,11 +418,14 @@ python tools/visualize_ns_pwc_lora.py \
 # === NS-SVS ===
 
 # Multi-GPU full evaluation
-CUDA_VISIBLE_DEVICES=0,1,2,3  torchrun --nproc_per_node=4 tools/visualize_ns_svs_lora.py --config configs/finetune_ns_svs_v3.yaml --checkpoint checkpoints_ns_svs_lora_v3/best_lora.pt --scan_all
+CUDA_VISIBLE_DEVICES=1,3,4,7  torchrun --nproc_per_node=4 tools/visualize_ns_svs_lora.py --config configs/finetune_ns_svs_v3_bcw16.yaml --checkpoint checkpoints_ns_svs_lora_v3_bcw16/best_lora.pt --scan_all
 
 # Single-GPU visualization
 python tools/visualize_ns_svs_lora.py --config configs/finetune_ns_svs_v3.yaml --checkpoint checkpoints_ns_svs_lora_v3/best_lora.pt --output_dir ./vis_results/ns_svs_vis
 
+CUDA_VISIBLE_DEVICES=1,3,4,7 torchrun --nproc_per_node=4 tools/eval_zero_shot.py \
+--checkpoint checkpoints_ns_pwc_fullft/best_tf.pt \
+--config configs/finetune_ns_svs_v3.yaml
 
 # === Wave-Gauss ===
 
@@ -424,4 +459,46 @@ python tools/generate_demo_video.py \
     --clip_idx 1
 
 
+###############################################################################
+#                      FINETUNE - Active Matter
+###############################################################################
 
+
+# Step 2: Preprocess (19 samples, 81T, 256x256, vx+vy+concentration only)
+HDF5_USE_FILE_LOCKING=FALSE python tools/preprocess_active_matter.py \
+    --input_dir /scratch-share/SONG0304/finetune/active_matter/data/train \
+    --output /scratch-share/SONG0304/finetune/active_matter_zeta1.hdf5
+
+# Step 3: GT PDE verification
+CUDA_VISIBLE_DEVICES=0 python tools/test_gt_pde_active_matter.py
+
+
+# Step 5: LoRA training (BC + PDE: continuity + concentration, dec_v3, 2-node 8 GPU)
+# Terminal 1 (10.128.10.35, node 0):
+torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29505 finetune/train_active_matter_lora_v3.py --config configs/finetune_active_matter_v3.yaml
+# Terminal 2 (另一个 node, node 1):
+cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29505 finetune/train_active_matter_lora_v3.py --config configs/finetune_active_matter_v3.yaml
+
+# Step 6: Evaluation (bc_width=1, dec_v3)
+torchrun --nproc_per_node=4 tools/visualize_active_matter_lora.py \
+    --config configs/finetune_active_matter_v3.yaml \
+    --checkpoint checkpoints_active_matter_lora_v3/best_lora.pt --scan_all
+
+# Step 7: Evaluation (bc_width=16, dec_v3)
+torchrun --nproc_per_node=4 tools/visualize_active_matter_lora.py \
+    --config configs/finetune_active_matter_v3_bcw16.yaml \
+    --checkpoint checkpoints_active_matter_lora_v3_bcw16/best_lora.pt --scan_all
+
+
+CUDA_VISIBLE_DEVICES=1 python tools/diagnose_bc_width_effect.py \
+    --config_bc1 configs/finetune_gray_scott_v3.yaml \
+    --ckpt_bc1 checkpoints_gray_scott_lora_v4_bc1/best_lora.pt \
+    --config_bc16 configs/finetune_gray_scott_v3_dec_v3.yaml \
+    --ckpt_bc16 checkpoints_gray_scott_lora_v4_dec_v3/best_lora.pt
+
+
+CUDA_VISIBLE_DEVICES=3 python tools/diagnose_bc_width_effect.py \
+    --config_bc1 configs/finetune_rayleigh_benard_v3.yaml \
+    --ckpt_bc1 checkpoints_rayleigh_benard_lora_v3/best_lora.pt \
+    --config_bc16 configs/finetune_rayleigh_benard_v3_bcw16.yaml \
+    --ckpt_bc16 checkpoints_rayleigh_benard_lora_v3_bcw16/best_lora.pt    

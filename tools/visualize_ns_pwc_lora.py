@@ -219,14 +219,9 @@ def scan_all_distributed(accelerator, model, val_loader, config, t_input):
         mse = torch.mean((output[..., valid_ch] - target_data[..., valid_ch]) ** 2)
         rmse = torch.sqrt(mse + 1e-8)
 
-        # Combined vrmse/nrmse across all valid channels
-        output_valid = output[..., valid_ch]
-        target_valid = target_data[..., valid_ch]
-        mse_all = torch.mean((output_valid - target_valid) ** 2)
-        var_all = torch.mean((target_valid - target_valid.mean()) ** 2)
-        vrmse_all = torch.sqrt(mse_all / (var_all + 1e-8))
-        mse_zero_all = torch.mean(target_valid ** 2)
-        nrmse_all = torch.sqrt(mse_all / (mse_zero_all + 1e-8))
+        # Combined vrmse/nrmse: mean of per-channel values
+        vrmse_all = (vrmse_vx + vrmse_vy + vrmse_tracer) / 3
+        nrmse_all = (nrmse_vx + nrmse_vy + nrmse_tracer) / 3
 
         local_pde[i] = pde_loss.detach()
         local_rmse_vx[i] = rmse_vx.detach()
@@ -376,15 +371,9 @@ def run_visualization(model, dataset, config, device, t_input, num_samples, seed
         nrmse_vy = _nrmse_torch(target[..., CH_VY], output[..., CH_VY]).item()
         nrmse_tracer = _nrmse_torch(target[..., CH_TRACER], output[..., CH_TRACER]).item()
 
-        # Combined vrmse/nrmse across all active channels
-        valid_ch_vis = [CH_VX, CH_VY, CH_TRACER]
-        output_valid_vis = output[..., valid_ch_vis]
-        target_valid_vis = target[..., valid_ch_vis]
-        mse_all_vis = torch.mean((output_valid_vis - target_valid_vis) ** 2)
-        var_all_vis = torch.mean((target_valid_vis - target_valid_vis.mean()) ** 2)
-        vrmse_all_val = torch.sqrt(mse_all_vis / (var_all_vis + 1e-8)).item()
-        mse_zero_all_vis = torch.mean(target_valid_vis ** 2)
-        nrmse_all_val = torch.sqrt(mse_all_vis / (mse_zero_all_vis + 1e-8)).item()
+        # Combined vrmse/nrmse: mean of per-channel values
+        vrmse_all_val = (vrmse_vx + vrmse_vy + vrmse_tracer) / 3
+        nrmse_all_val = (nrmse_vx + nrmse_vy + nrmse_tracer) / 3
 
         last = -1
         res_data = {

@@ -32,7 +32,7 @@ def rms(x: np.ndarray) -> float:
 
 
 def main() -> None:
-    data_path = '/scratch-share/SONG0304/finetune/active_matter_zeta1.hdf5'
+    data_path = '/home/msai/song0304/code/PDE/data/finetune/active_matter_all.hdf5'
     nx = ny = 256
     Lx = Ly = 10.0
     dt = 0.25
@@ -69,21 +69,20 @@ def main() -> None:
         for s_idx in range(n_samples):
             # Extract fields as float64
             vec = np.array(vector[s_idx], dtype=np.float64)  # [T, H, W, 3]
-            scl = np.array(scalar[s_idx], dtype=np.float64)  # [T, H, W, 4]
+            scl = np.array(scalar[s_idx], dtype=np.float64)  # [T, H, W, 1]
 
             vx = vec[:, :, :, 0]   # [T, H, W]
             vy = vec[:, :, :, 1]   # [T, H, W]
             conc = scl[:, :, :, 0]  # [T, H, W] — concentration
-            dxx = scl[:, :, :, 1]   # [T, H, W] — D_xx
 
             # Reshape to [1, T, H, W] for PDE loss
             u_t = torch.from_numpy(vx).unsqueeze(0).to(device)    # [1, T, H, W]
             v_t = torch.from_numpy(vy).unsqueeze(0).to(device)    # [1, T, H, W]
             c_t = torch.from_numpy(conc).unsqueeze(0).to(device)  # [1, T, H, W]
-            Dxx_t = torch.from_numpy(dxx).unsqueeze(0).to(device) # [1, T, H, W]
+            Dxx_t = torch.zeros_like(c_t)                          # dummy (weight=0)
 
             with torch.no_grad():
-                total_loss, losses_dict = pde_loss(u_t, v_t, c_t, Dxx_t, reduction='mean')
+                total_loss, losses_dict = pde_loss(u_t, v_t, c_t, Dxx_t)
 
             total_val = total_loss.item()
             all_total.append(total_val)

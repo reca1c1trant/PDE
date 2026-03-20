@@ -1,10 +1,10 @@
-# Rayleigh-Bénard 2D LoRA Finetuning Configuration
-# Incompressible Boussinesq: continuity + buoyancy transport
-# x periodic, y Dirichlet (wall), Ra=1e10, Pr=1
-# Channels: Vx(0), Vy(1), buoyancy(3), pressure(15)
-# Loss: BC (supervised anchor) + PDE (continuity + buoyancy)
+# Turbulent Radiative Layer 2D LoRA Finetuning (bc_width=16)
+# Compressible Euler: mass + momentum conservation (no energy)
+# x periodic, y open (Neumann), 6 tcool values (0.03~0.56), 48 samples
+# Channels: Vx(0), Vy(1), density(7)=scalar[4], pressure(15)=scalar[12]
+# Loss: BC (16-pixel border supervised) + PDE (mass + x-mom + y-mom, eq_scales normalized)
 
-model_name: rayleigh_benard_lora_v3
+model_name: turbulent_radiative_2d_lora_v3_bcw16
 
 model:
   in_channels: 18
@@ -43,7 +43,6 @@ model:
   enable_1d: false
   enable_3d: false
 
-  # Pretrained V4 2D-only checkpoint (decoder v3: skip + cross-patch)
   pretrained_path: ./checkpoints_v4_2donly_dec_v3/best_tf.pt
   gradient_checkpointing: true
 
@@ -66,31 +65,31 @@ training:
   learning_rate: 1.0e-4
   weight_decay: 0.01
   betas: [0.9, 0.999]
-  warmup_steps: 50
+  warmup_steps: 100
   min_lr: 1.0e-6
   grad_clip: 1.0
 
   lambda_bc: 10000.0
   lambda_pde: 1
-  lambda_boundary: 1000.0    # Patch boundary smoothness loss (self-supervised)
+  bc_width: 16           # Boundary strip width = patch_size (full boundary patches)
 
   # Save criterion: save_vrmse_weight * val_vrmse + save_pde_weight * val_pde
   save_vrmse_weight: 100
   save_pde_weight: 1
 
-  eval_interval: 100
+  eval_interval: 75
   early_stopping_patience: 30
 
   mixed_precision: "no"
   gradient_accumulation_steps: 1
 
 dataloader:
-  batch_size: 4
+  batch_size: 6
   num_workers: 4
   pin_memory: true
 
 dataset:
-  path: ./data/finetune/rayleigh_benard_pr1.h5
+  path: /scratch-share/SONG0304/finetune/turbulent_radiative_2d.hdf5
   seed: 42
   t_input: 8
   train_ratio: 0.9
@@ -99,32 +98,29 @@ dataset:
   vector_dim: 2
 
 logging:
-  project: pde-rayleigh-benard-lora
+  project: pde-turbulent-radiative-2d-lora
   entity: null
-  save_dir: ./checkpoints_rayleigh_benard_lora_v3
+  save_dir: ./checkpoints_turbulent_radiative_2d_lora_v3_bcw16
   log_interval: 10
 
 checkpoint:
   resume_from: null
 
 physics:
-  nx: 512
-  ny: 128
-  Lx: 4.0
-  Ly: 1.0
-  dt: 0.25
-  kappa: 1.0e-5        # κ = (Ra*Pr)^{-1/2} = 1e-5 for Ra=1e10, Pr=1
-  skip_bl: 15           # skip boundary layer rows (bottom y≈0 turbulent)
+  nx: 128
+  ny: 384
+  Lx: 1.0
+  Ly: 3.0
+  dt: 1.597033
+  skip_bl: 10
 
-  # Per-equation normalization scales (GT RMS from test_gt_pde_rb_eqscales.py)
+  # Per-equation normalization scales (GT RMS from test_gt_pde_turbulent_radiative_2d.py)
   eq_scales:
-    continuity: 3.598
-    buoyancy: 1.190
+    mass: 15.3113
+    x_momentum: 1.0841
+    y_momentum: 1.1283
 
-  # Per-equation weights (default 1.0 for all)
   eq_weights:
-    continuity: 1.0
-    buoyancy: 1.0
-
-  # Per-timestep normalization scales (optional, overrides eq_scales when present)
-  eq_scales_per_t_path: ./data/gt_scales/rayleigh_benard_per_t.pt
+    mass: 1.0
+    x_momentum: 1.0
+    y_momentum: 1.0

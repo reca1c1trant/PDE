@@ -222,14 +222,9 @@ def scan_all_distributed(accelerator, model, val_loader, config, t_input):
         mse = torch.mean((output[..., valid_ch] - target_data[..., valid_ch]) ** 2)
         rmse = torch.sqrt(mse + 1e-8)
 
-        # Combined vrmse/nrmse across all valid channels
-        output_valid = output[..., valid_ch]
-        target_valid = target_data[..., valid_ch]
-        mse_all = torch.mean((output_valid - target_valid) ** 2)
-        var_all = torch.mean((target_valid - target_valid.mean()) ** 2)
-        vrmse_all = torch.sqrt(mse_all / (var_all + 1e-8))
-        mse_zero_all = torch.mean(target_valid ** 2)
-        nrmse_all = torch.sqrt(mse_all / (mse_zero_all + 1e-8))
+        # Combined vrmse/nrmse as mean of per-channel values
+        vrmse_all = (vrmse_u + vrmse_c) / 2
+        nrmse_all = (nrmse_u + nrmse_c) / 2
 
         local_pde[i] = pde_loss.detach()
         local_rmse_u[i] = rmse_u.detach()
@@ -361,15 +356,9 @@ def run_visualization(model, dataset, config, device, t_input, num_samples, seed
         nrmse_u = _nrmse_torch(target[..., CH_U], output[..., CH_U]).item()
         nrmse_c = _nrmse_torch(target[..., CH_C], output[..., CH_C]).item()
 
-        # Combined vrmse/nrmse across all valid channels
-        valid_ch_vis = [CH_U, CH_C]
-        output_valid_vis = output[..., valid_ch_vis]
-        target_valid_vis = target[..., valid_ch_vis]
-        mse_all_vis = torch.mean((output_valid_vis - target_valid_vis) ** 2)
-        var_all_vis = torch.mean((target_valid_vis - target_valid_vis.mean()) ** 2)
-        vrmse_all_vis = torch.sqrt(mse_all_vis / (var_all_vis + 1e-8)).item()
-        mse_zero_all_vis = torch.mean(target_valid_vis ** 2)
-        nrmse_all_vis = torch.sqrt(mse_all_vis / (mse_zero_all_vis + 1e-8)).item()
+        # Combined vrmse/nrmse as mean of per-channel values
+        vrmse_all_vis = (vrmse_u + vrmse_c) / 2
+        nrmse_all_vis = (nrmse_u + nrmse_c) / 2
 
         last = -1
         res_data = {

@@ -95,17 +95,34 @@ def compute_vrmse(
     target: torch.Tensor,
     channel_mask: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compute VRMSE and RMSE for valid channels (denormalized space)."""
+    """
+    Compute VRMSE and RMSE for valid channels (denormalized space).
+
+    VRMSE = mean of per-channel sqrt(MSE_ch / Var_ch).
+    This avoids scale mixing when channels have different magnitudes.
+
+    Returns:
+        vrmse, rmse
+    """
     valid_ch = (torch.where(channel_mask[0] > 0)[0] if channel_mask.dim() > 1
                 else torch.where(channel_mask > 0)[0])
     output_valid = output[..., valid_ch]
     target_valid = target[..., valid_ch]
 
+    # Overall RMSE (unchanged)
     mse = torch.mean((output_valid - target_valid) ** 2)
     rmse = torch.sqrt(mse + 1e-8)
 
-    gt_var = torch.mean((target_valid - target_valid.mean()) ** 2)
-    vrmse = torch.sqrt(mse / (gt_var + 1e-8))
+    # Per-channel VRMSE, then average
+    n_ch = len(valid_ch)
+    vrmse_sum = torch.tensor(0.0, device=output.device)
+    for c in range(n_ch):
+        pred_c = output[..., valid_ch[c]]
+        gt_c = target[..., valid_ch[c]]
+        mse_c = torch.mean((pred_c - gt_c) ** 2)
+        var_c = torch.mean((gt_c - gt_c.mean()) ** 2)
+        vrmse_sum = vrmse_sum + torch.sqrt(mse_c / (var_c + 1e-8))
+    vrmse = vrmse_sum / n_ch
 
     return vrmse, rmse
 

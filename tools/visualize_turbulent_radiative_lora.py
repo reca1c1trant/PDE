@@ -223,14 +223,9 @@ def scan_all_distributed(accelerator, model, val_loader, config, t_input):
         mse = torch.mean((output[..., valid_ch] - target_data[..., valid_ch]) ** 2)
         rmse = torch.sqrt(mse + 1e-8)
 
-        # Combined vrmse/nrmse across all valid channels
-        output_valid = output[..., valid_ch]
-        target_valid = target_data[..., valid_ch]
-        mse_all = torch.mean((output_valid - target_valid) ** 2)
-        var_all = torch.mean((target_valid - target_valid.mean()) ** 2)
-        vrmse_all = torch.sqrt(mse_all / (var_all + 1e-8))
-        mse_zero_all = torch.mean(target_valid ** 2)
-        nrmse_all = torch.sqrt(mse_all / (mse_zero_all + 1e-8))
+        # Combined vrmse/nrmse: mean of per-channel values
+        vrmse_all = (vrmse_vx + vrmse_vy + vrmse_density + vrmse_press) / 4
+        nrmse_all = (nrmse_vx + nrmse_vy + nrmse_density + nrmse_press) / 4
 
         local_pde[i] = pde_loss.detach()
         local_rmse_vx[i] = rmse_vx.detach()
@@ -398,20 +393,9 @@ def run_visualization(model, dataset, config, device, t_input, num_samples, seed
         nrmse_density = _nrmse_torch(target[..., CH_DENSITY], output[..., CH_DENSITY]).item()
         nrmse_press = _nrmse_torch(target[..., CH_PRESS], output[..., CH_PRESS]).item()
 
-        # Combined vrmse/nrmse across all valid channels
-        channel_mask_vis = batch['channel_mask'].to(device=device)
-        valid_ch_vis = (
-            torch.where(channel_mask_vis[0] > 0)[0]
-            if channel_mask_vis.dim() > 1
-            else torch.where(channel_mask_vis > 0)[0]
-        )
-        output_valid_vis = output[..., valid_ch_vis]
-        target_valid_vis = target[..., valid_ch_vis]
-        mse_all_vis = torch.mean((output_valid_vis - target_valid_vis) ** 2)
-        var_all_vis = torch.mean((target_valid_vis - target_valid_vis.mean()) ** 2)
-        vrmse_all = torch.sqrt(mse_all_vis / (var_all_vis + 1e-8)).item()
-        mse_zero_all_vis = torch.mean(target_valid_vis ** 2)
-        nrmse_all = torch.sqrt(mse_all_vis / (mse_zero_all_vis + 1e-8)).item()
+        # Combined vrmse/nrmse: mean of per-channel values
+        vrmse_all = (vrmse_vx + vrmse_vy + vrmse_density + vrmse_press) / 4
+        nrmse_all = (nrmse_vx + nrmse_vy + nrmse_density + nrmse_press) / 4
 
         last = -1
         res_data = {

@@ -45,7 +45,7 @@ model:
   enable_3d: false
 
   # Pretrained V4 2D-only checkpoint (decoder v3: skip + cross-patch)
-  pretrained_path: ./checkpoints_v4_2donly_dec_v3/best_tf.pt
+  pretrained_path: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
   gradient_checkpointing: true
 
   # Freeze options
@@ -126,3 +126,6 @@ physics:
   #   u_momentum: 1.0      # placeholder
   #   v_momentum: 1.0      # placeholder
   #   tracer: 1.0           # placeholder
+
+  # Per-timestep normalization scales (optional, overrides eq_scales when present)
+  eq_scales_per_t_path: ./data/gt_scales/shear_flow_per_t.pt

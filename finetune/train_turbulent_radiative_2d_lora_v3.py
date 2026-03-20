@@ -45,7 +45,8 @@ import yaml
 import torch
 from pathlib import Path
 from torch.utils.data import DataLoader
-from accelerate import Accelerator, DistributedDataParallelKwargs
+from accelerate import Accelerator, DistributedDataParallelKwargs, InitProcessGroupKwargs
+import datetime
 from accelerate.utils import set_seed
 from rich.console import Console
 from rich.progress import (
@@ -140,32 +141,36 @@ def compute_boundary_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
     channel_mask: torch.Tensor,
+    bc_width: int = 1,
 ) -> torch.Tensor:
     """
-    Compute boundary RMSE on 4 edges.
-    Supervised anchor -- works for both periodic and open edges.
+    Compute boundary RMSE on border strips of width `bc_width`.
+
+    bc_width=1: single-pixel edges (original behavior).
+    bc_width=16: full boundary patches (patch_size-wide strips).
     """
     if channel_mask.dim() == 1:
         valid_ch = torch.where(channel_mask > 0)[0]
     else:
         valid_ch = torch.where(channel_mask[0] > 0)[0]
 
-    left_pred = pred[:, :, :, 0, :][:, :, :, valid_ch]
-    left_target = target[:, :, :, 0, :][:, :, :, valid_ch]
-    right_pred = pred[:, :, :, -1, :][:, :, :, valid_ch]
-    right_target = target[:, :, :, -1, :][:, :, :, valid_ch]
-    bottom_pred = pred[:, :, 0, :, :][:, :, :, valid_ch]
-    bottom_target = target[:, :, 0, :, :][:, :, :, valid_ch]
-    top_pred = pred[:, :, -1, :, :][:, :, :, valid_ch]
-    top_target = target[:, :, -1, :, :][:, :, :, valid_ch]
+    w = bc_width
+    top_pred = pred[:, :, :w, :, :][:, :, :, :, valid_ch]
+    top_target = target[:, :, :w, :, :][:, :, :, :, valid_ch]
+    bottom_pred = pred[:, :, -w:, :, :][:, :, :, :, valid_ch]
+    bottom_target = target[:, :, -w:, :, :][:, :, :, :, valid_ch]
+    left_pred = pred[:, :, w:-w, :w, :][:, :, :, :, valid_ch]
+    left_target = target[:, :, w:-w, :w, :][:, :, :, :, valid_ch]
+    right_pred = pred[:, :, w:-w, -w:, :][:, :, :, :, valid_ch]
+    right_target = target[:, :, w:-w, -w:, :][:, :, :, :, valid_ch]
 
     bc_pred = torch.cat([
+        top_pred.reshape(-1), bottom_pred.reshape(-1),
         left_pred.reshape(-1), right_pred.reshape(-1),
-        bottom_pred.reshape(-1), top_pred.reshape(-1),
     ])
     bc_target = torch.cat([
+        top_target.reshape(-1), bottom_target.reshape(-1),
         left_target.reshape(-1), right_target.reshape(-1),
-        bottom_target.reshape(-1), top_target.reshape(-1),
     ])
 
     mse = torch.mean((bc_pred - bc_target) ** 2)
@@ -211,7 +216,8 @@ def compute_vrmse(
     """
     Compute VRMSE and RMSE for valid channels.
 
-    VRMSE = sqrt(MSE / Var(GT)), variance-normalized RMSE.
+    VRMSE = mean of per-channel sqrt(MSE_ch / Var_ch).
+    This avoids scale mixing when channels have different magnitudes.
 
     Returns:
         vrmse, rmse
@@ -221,12 +227,20 @@ def compute_vrmse(
     output_valid = output[..., valid_ch]
     target_valid = target[..., valid_ch]
 
+    # Overall RMSE (unchanged)
     mse = torch.mean((output_valid - target_valid) ** 2)
     rmse = torch.sqrt(mse + 1e-8)
 
-    # Var(GT) = mean((gt - mean(gt))^2)
-    gt_var = torch.mean((target_valid - target_valid.mean()) ** 2)
-    vrmse = torch.sqrt(mse / (gt_var + 1e-8))
+    # Per-channel VRMSE, then average
+    n_ch = len(valid_ch)
+    vrmse_sum = torch.tensor(0.0, device=output.device)
+    for c in range(n_ch):
+        pred_c = output[..., valid_ch[c]]
+        gt_c = target[..., valid_ch[c]]
+        mse_c = torch.mean((pred_c - gt_c) ** 2)
+        var_c = torch.mean((gt_c - gt_c.mean()) ** 2)
+        vrmse_sum = vrmse_sum + torch.sqrt(mse_c / (var_c + 1e-8))
+    vrmse = vrmse_sum / n_ch
 
     return vrmse, rmse
 
@@ -236,6 +250,7 @@ def validate(
     model, val_loader, accelerator,
     pde_loss_fn: TurbulentRadiativePDELoss,
     t_input: int = 8,
+    bc_width: int = 1,
 ):
     """Validate and return (bc_loss, pde_loss, rmse, vrmse)."""
     accelerator.wait_for_everyone()
@@ -257,7 +272,7 @@ def validate(
         output_norm, mean, std = model(input_data, return_normalized=True)
         output = output_norm * std + mean
 
-        bc_loss = compute_boundary_loss(output, target_data, channel_mask)
+        bc_loss = compute_boundary_loss(output, target_data, channel_mask, bc_width=bc_width)
         pde_loss, _ = compute_pde_loss(output, input_data, pde_loss_fn)
 
         vrmse, rmse = compute_vrmse(output, target_data, channel_mask)
@@ -305,15 +320,17 @@ def main():
     early_stopping_patience = config['training'].get('early_stopping_patience', 15)
     save_vrmse_weight = config['training'].get('save_vrmse_weight', 100.0)
     save_pde_weight = config['training'].get('save_pde_weight', 1.0)
+    bc_width = config['training'].get('bc_width', 1)
     t_input = config['dataset'].get('t_input', 8)
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    timeout_kwargs = InitProcessGroupKwargs(timeout=datetime.timedelta(minutes=30))
 
     accelerator = Accelerator(
         mixed_precision=config['training'].get('mixed_precision', 'no'),
         gradient_accumulation_steps=config['training'].get('gradient_accumulation_steps', 1),
         log_with="wandb",
-        kwargs_handlers=[ddp_kwargs]
+        kwargs_handlers=[ddp_kwargs, timeout_kwargs]
     )
 
     if accelerator.is_main_process:
@@ -321,7 +338,7 @@ def main():
         logger.info(f"Turbulent Radiative Layer 2D LoRA Finetuning")
         logger.info(f"{'='*60}")
         logger.info(f"Config: {args.config}")
-        logger.info(f"Loss: BC + PDE (normalized mass + x-mom + y-mom)")
+        logger.info(f"Loss: BC (w={bc_width}) + PDE (normalized mass + x-mom + y-mom)")
         logger.info(f"Lambda BC: {lambda_bc}, Lambda PDE: {lambda_pde}")
         logger.info(f"Save: {save_vrmse_weight}*vrmse + {save_pde_weight}*pde")
         logger.info(f"{'='*60}")
@@ -477,7 +494,7 @@ def main():
                     output_norm, mean, std = model(input_data, return_normalized=True)
                     output = output_norm * std + mean
 
-                    bc_loss = compute_boundary_loss(output, target_data, channel_mask)
+                    bc_loss = compute_boundary_loss(output, target_data, channel_mask, bc_width=bc_width)
                     pde_loss, losses = compute_pde_loss(output, input_data, pde_loss_fn)
 
                     loss = lambda_bc * bc_loss + lambda_pde * pde_loss
@@ -519,6 +536,7 @@ def main():
                 if global_step % eval_interval == 0:
                     val_bc, val_pde, val_rmse, val_vrmse = validate(
                         model, val_loader, accelerator, pde_loss_fn, t_input,
+                        bc_width=bc_width,
                     )
 
                     accelerator.log({

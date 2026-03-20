@@ -3,15 +3,13 @@ LoRA Finetuning for Active Matter 2D.
 
 Loss: BC loss + PDE loss (NO RMSE - that would be cheating!)
 - BC loss: RMSE on boundary pixels (supervised anchor)
-- PDE loss: Continuity (div u=0) + Concentration transport + Dxx advection-diffusion
+- PDE loss: Continuity (div u=0) + Concentration transport
   Per-equation normalized by GT RMS scale -> all equations ~O(1)
+  (D tensor excluded: no good FD discretization for orientation equation)
 
 Channel mapping (18-channel):
 - Channel 0 = Vx, Channel 1 = Vy (vector_dim=2)
 - Channel 3 = scalar[0] = concentration
-- Channel 4 = scalar[1] = D_xx
-- Channel 5 = scalar[2] = D_xy
-- Channel 6 = scalar[3] = D_yy
 
 BCs: All periodic (256x256, domain [0,10]x[0,10])
 
@@ -74,9 +72,6 @@ logger = logging.getLogger(__name__)
 CH_VX = 0       # vector: Vx
 CH_VY = 1       # vector: Vy
 CH_CONC = 3     # scalar[0] = concentration
-CH_DXX = 4      # scalar[1] = D_xx
-CH_DXY = 5      # scalar[2] = D_xy
-CH_DYY = 6      # scalar[3] = D_yy
 
 
 def parse_args():
@@ -139,32 +134,36 @@ def compute_boundary_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
     channel_mask: torch.Tensor,
+    bc_width: int = 1,
 ) -> torch.Tensor:
     """
-    Compute boundary RMSE on 4 edges.
-    Supervised anchor -- works for both periodic and Dirichlet edges.
+    Compute boundary RMSE on border strips of width `bc_width`.
+
+    bc_width=1: single-pixel edges (original behavior).
+    bc_width=16: full boundary patches (patch_size-wide strips).
     """
     if channel_mask.dim() == 1:
         valid_ch = torch.where(channel_mask > 0)[0]
     else:
         valid_ch = torch.where(channel_mask[0] > 0)[0]
 
-    left_pred = pred[:, :, :, 0, :][:, :, :, valid_ch]
-    left_target = target[:, :, :, 0, :][:, :, :, valid_ch]
-    right_pred = pred[:, :, :, -1, :][:, :, :, valid_ch]
-    right_target = target[:, :, :, -1, :][:, :, :, valid_ch]
-    bottom_pred = pred[:, :, 0, :, :][:, :, :, valid_ch]
-    bottom_target = target[:, :, 0, :, :][:, :, :, valid_ch]
-    top_pred = pred[:, :, -1, :, :][:, :, :, valid_ch]
-    top_target = target[:, :, -1, :, :][:, :, :, valid_ch]
+    w = bc_width
+    top_pred = pred[:, :, :w, :, :][:, :, :, :, valid_ch]
+    top_target = target[:, :, :w, :, :][:, :, :, :, valid_ch]
+    bottom_pred = pred[:, :, -w:, :, :][:, :, :, :, valid_ch]
+    bottom_target = target[:, :, -w:, :, :][:, :, :, :, valid_ch]
+    left_pred = pred[:, :, w:-w, :w, :][:, :, :, :, valid_ch]
+    left_target = target[:, :, w:-w, :w, :][:, :, :, :, valid_ch]
+    right_pred = pred[:, :, w:-w, -w:, :][:, :, :, :, valid_ch]
+    right_target = target[:, :, w:-w, -w:, :][:, :, :, :, valid_ch]
 
     bc_pred = torch.cat([
+        top_pred.reshape(-1), bottom_pred.reshape(-1),
         left_pred.reshape(-1), right_pred.reshape(-1),
-        bottom_pred.reshape(-1), top_pred.reshape(-1),
     ])
     bc_target = torch.cat([
+        top_target.reshape(-1), bottom_target.reshape(-1),
         left_target.reshape(-1), right_target.reshape(-1),
-        bottom_target.reshape(-1), top_target.reshape(-1),
     ])
 
     mse = torch.mean((bc_pred - bc_target) ** 2)
@@ -179,26 +178,27 @@ def compute_pde_loss(
     """
     Compute Active Matter PDE residual loss (per-equation normalized).
 
-    Extracts u, v, concentration, Dxx from denormalized model output,
+    Extracts u, v, concentration from denormalized model output,
     prepends t0 frame for time derivatives.
     No spatial transpose needed (all periodic, square domain).
+    Dxx dummy (zeros) passed to PDE loss (weight=0 in config).
     """
     with torch.autocast(device_type='cuda', enabled=False):
         # Prepend t0 frame
         t0_u = input_data[:, 0:1, :, :, CH_VX].float()
         t0_v = input_data[:, 0:1, :, :, CH_VY].float()
         t0_c = input_data[:, 0:1, :, :, CH_CONC].float()
-        t0_Dxx = input_data[:, 0:1, :, :, CH_DXX].float()
 
         out_u = output[:, :, :, :, CH_VX].float()
         out_v = output[:, :, :, :, CH_VY].float()
         out_c = output[:, :, :, :, CH_CONC].float()
-        out_Dxx = output[:, :, :, :, CH_DXX].float()
 
         u = torch.cat([t0_u, out_u], dim=1)
         v = torch.cat([t0_v, out_v], dim=1)
         c = torch.cat([t0_c, out_c], dim=1)
-        Dxx = torch.cat([t0_Dxx, out_Dxx], dim=1)
+
+        # Dxx dummy (weight=0 in config, not computed)
+        Dxx = torch.zeros_like(c)
 
         total_loss, losses = pde_loss_fn(u, v, c, Dxx)
 
@@ -213,7 +213,8 @@ def compute_vrmse(
     """
     Compute VRMSE and RMSE for valid channels.
 
-    VRMSE = sqrt(MSE / Var(GT)), variance-normalized RMSE.
+    VRMSE = mean of per-channel sqrt(MSE_ch / Var_ch).
+    This avoids scale mixing when channels have different magnitudes.
 
     Returns:
         vrmse, rmse
@@ -223,12 +224,20 @@ def compute_vrmse(
     output_valid = output[..., valid_ch]
     target_valid = target[..., valid_ch]
 
+    # Overall RMSE (unchanged)
     mse = torch.mean((output_valid - target_valid) ** 2)
     rmse = torch.sqrt(mse + 1e-8)
 
-    # Var(GT) = mean((gt - mean(gt))^2)
-    gt_var = torch.mean((target_valid - target_valid.mean()) ** 2)
-    vrmse = torch.sqrt(mse / (gt_var + 1e-8))
+    # Per-channel VRMSE, then average
+    n_ch = len(valid_ch)
+    vrmse_sum = torch.tensor(0.0, device=output.device)
+    for c in range(n_ch):
+        pred_c = output[..., valid_ch[c]]
+        gt_c = target[..., valid_ch[c]]
+        mse_c = torch.mean((pred_c - gt_c) ** 2)
+        var_c = torch.mean((gt_c - gt_c.mean()) ** 2)
+        vrmse_sum = vrmse_sum + torch.sqrt(mse_c / (var_c + 1e-8))
+    vrmse = vrmse_sum / n_ch
 
     return vrmse, rmse
 
@@ -238,6 +247,7 @@ def validate(
     model, val_loader, accelerator,
     pde_loss_fn: ActiveMatterNPINNPDELoss,
     t_input: int = 8,
+    bc_width: int = 1,
 ):
     """Validate and return (bc_loss, pde_loss, rmse, vrmse)."""
     accelerator.wait_for_everyone()
@@ -259,7 +269,7 @@ def validate(
         output_norm, mean, std = model(input_data, return_normalized=True)
         output = output_norm * std + mean
 
-        bc_loss = compute_boundary_loss(output, target_data, channel_mask)
+        bc_loss = compute_boundary_loss(output, target_data, channel_mask, bc_width=bc_width)
         pde_loss, _ = compute_pde_loss(output, input_data, pde_loss_fn)
 
         vrmse, rmse = compute_vrmse(output, target_data, channel_mask)
@@ -302,6 +312,7 @@ def main():
     lambda_pde = config['training'].get('lambda_pde', 1.0)
     lambda_boundary = config['training'].get('lambda_boundary', 0.0)
     patch_size = config['model'].get('patch_size', 16)
+    bc_width = config['training'].get('bc_width', 1)
     grad_clip = config['training'].get('grad_clip', 1.0)
     eval_interval = config['training'].get('eval_interval', 100)
     early_stopping_patience = config['training'].get('early_stopping_patience', 15)
@@ -380,6 +391,16 @@ def main():
     eq_scales = physics.get('eq_scales', None)
     eq_weights = physics.get('eq_weights', None)
 
+    # Load per-timestep scales if specified
+    eq_scales_per_t_path = physics.get('eq_scales_per_t_path', None)
+    eq_scales_per_t = None
+    if eq_scales_per_t_path and Path(eq_scales_per_t_path).exists():
+        eq_scales_per_t = torch.load(eq_scales_per_t_path, map_location='cpu', weights_only=False)
+        if accelerator.is_main_process:
+            logger.info(f"Loaded per-timestep eq_scales from {eq_scales_per_t_path}")
+            for k, v in eq_scales_per_t.items():
+                logger.info(f"  {k}: shape={v.shape}, min={v.min():.4e}, max={v.max():.4e}")
+
     pde_loss_fn = ActiveMatterNPINNPDELoss(
         nx=physics.get('nx', 256),
         ny=physics.get('ny', 256),
@@ -389,11 +410,13 @@ def main():
         d_T=physics.get('d_T', 0.05),
         eq_scales=eq_scales,
         eq_weights=eq_weights,
+        eq_scales_per_t=eq_scales_per_t,
     )
 
     if accelerator.is_main_process:
         logger.info(f"PDE eq_scales: {pde_loss_fn.eq_scales}")
         logger.info(f"PDE eq_weights: {pde_loss_fn.eq_weights}")
+        logger.info(f"PDE per-timestep scales: {pde_loss_fn.use_per_t_scales}")
 
     global_step = 0
     best_val_loss = float('inf')
@@ -468,7 +491,7 @@ def main():
                     output_norm, mean, std = model(input_data, return_normalized=True)
                     output = output_norm * std + mean
 
-                    bc_loss = compute_boundary_loss(output, target_data, channel_mask)
+                    bc_loss = compute_boundary_loss(output, target_data, channel_mask, bc_width=bc_width)
                     pde_loss, losses = compute_pde_loss(output, input_data, pde_loss_fn)
 
                     loss = lambda_bc * bc_loss + lambda_pde * pde_loss
@@ -509,7 +532,8 @@ def main():
 
                 if global_step % eval_interval == 0:
                     val_bc, val_pde, val_rmse, val_vrmse = validate(
-                        model, val_loader, accelerator, pde_loss_fn, t_input
+                        model, val_loader, accelerator, pde_loss_fn, t_input,
+                        bc_width=bc_width,
                     )
 
                     accelerator.log({

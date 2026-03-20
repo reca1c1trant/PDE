@@ -1,8 +1,9 @@
-# Rayleigh-Bénard 2D LoRA Finetuning — Postsmooth Decoder
-# Same as finetune_rayleigh_benard_v3.yaml but using postsmooth checkpoint
-# For A/B comparison: decoder v3 (skip+cross-patch) vs postsmooth (5×5 conv)
+# Active Matter LoRA Finetuning (Postsmooth Decoder)
+# V2 decoder + 5×5 post-smooth, no D tensor
+# Loss: BC (supervised anchor) + PDE (continuity + concentration)
+# Channels: Vx(0), Vy(1), concentration(3)
 
-model_name: rayleigh_benard_lora_v3
+model_name: active_matter_lora_v3_postsmooth
 
 model:
   in_channels: 18
@@ -63,58 +64,58 @@ training:
   grad_clip: 1.0
 
   lambda_bc: 10000.0
-  lambda_pde: 1
+  lambda_pde: 1.0
+  lambda_boundary: 0.0
 
   # Save criterion: save_vrmse_weight * val_vrmse + save_pde_weight * val_pde
   save_vrmse_weight: 100
   save_pde_weight: 1
 
-  eval_interval: 100
+  eval_interval: 50
   early_stopping_patience: 30
 
   mixed_precision: "no"
   gradient_accumulation_steps: 1
 
 dataloader:
-  batch_size: 6
+  batch_size: 4
   num_workers: 4
   pin_memory: true
 
 dataset:
-  path: ./data/finetune/rayleigh_benard_pr1.h5
+  path: /home/msai/song0304/code/PDE/data/finetune/active_matter_all.hdf5
   seed: 42
   t_input: 8
   train_ratio: 0.9
   clips_per_sample: null
-  val_time_interval: 20
+  val_time_interval: 16
   vector_dim: 2
 
 logging:
-  project: pde-rayleigh-benard-lora
+  project: pde-active-matter-lora
   entity: null
-  save_dir: ./checkpoints_rayleigh_benard_lora_v3_postsmooth
+  save_dir: ./checkpoints_active_matter_lora_v3_postsmooth
   log_interval: 10
 
 checkpoint:
   resume_from: null
 
 physics:
-  nx: 512
-  ny: 128
-  Lx: 4.0
-  Ly: 1.0
+  nx: 256
+  ny: 256
+  Lx: 10.0
+  Ly: 10.0
   dt: 0.25
-  kappa: 1.0e-5
-  skip_bl: 15
+  d_T: 0.05
 
-  # Per-equation normalization scales (GT RMS from test_gt_pde_rb_eqscales.py)
+  # Per-equation normalization scales (GT RMS from test_gt_pde_active_matter.py, 64 samples)
   eq_scales:
-    continuity: 3.598
-    buoyancy: 1.190
+    continuity: 7.6243e-01
+    concentration: 3.3094e-03
+    Dxx: 1.0
 
+  # Per-equation weights (D tensor excluded from data)
   eq_weights:
     continuity: 1.0
-    buoyancy: 1.0
-
-  # Per-timestep normalization scales (optional, overrides eq_scales when present)
-  eq_scales_per_t_path: ./data/gt_scales/rayleigh_benard_per_t.pt
+    concentration: 1.0
+    Dxx: 0.0

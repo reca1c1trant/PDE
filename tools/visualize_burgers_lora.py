@@ -215,14 +215,11 @@ def scan_all_distributed(accelerator, model, val_loader, config, t_input):
         mse = torch.mean((output[..., valid_ch] - target_data[..., valid_ch]) ** 2)
         rmse = torch.sqrt(mse + 1e-8)
 
-        # Combined vrmse/nrmse across all valid channels
-        output_valid = output[..., valid_ch]
-        target_valid = target_data[..., valid_ch]
-        mse_all = torch.mean((output_valid - target_valid) ** 2)
-        var_all = torch.mean((target_valid - target_valid.mean()) ** 2)
-        vrmse_all = torch.sqrt(mse_all / (var_all + 1e-8))
-        mse_zero_all = torch.mean(target_valid ** 2)
-        nrmse_all = torch.sqrt(mse_all / (mse_zero_all + 1e-8))
+        # Combined vrmse/nrmse as mean of per-channel values
+        nrmse_u = _nrmse_torch(tgt_u, out_u)
+        nrmse_v = _nrmse_torch(tgt_v, out_v)
+        vrmse_all = (vrmse_u + vrmse_v) / 2
+        nrmse_all = (nrmse_u + nrmse_v) / 2
 
         total_pde += pde_loss.detach()
         total_rmse_u += rmse_u.detach()
@@ -354,15 +351,11 @@ def run_visualization(model, dataset, config, device, t_input, num_samples, seed
         vrmse_u = _vrmse_torch(tgt_u, out_u).item()
         vrmse_v = _vrmse_torch(tgt_v, out_v).item()
 
-        # Combined vrmse/nrmse across all valid channels
-        valid_ch_vis = [0, 1]
-        output_valid_vis = output[..., valid_ch_vis]
-        target_valid_vis = target[..., valid_ch_vis]
-        mse_all_vis = torch.mean((output_valid_vis - target_valid_vis) ** 2)
-        var_all_vis = torch.mean((target_valid_vis - target_valid_vis.mean()) ** 2)
-        vrmse_all_vis = torch.sqrt(mse_all_vis / (var_all_vis + 1e-8)).item()
-        mse_zero_all_vis = torch.mean(target_valid_vis ** 2)
-        nrmse_all_vis = torch.sqrt(mse_all_vis / (mse_zero_all_vis + 1e-8)).item()
+        # Combined vrmse/nrmse as mean of per-channel values
+        nrmse_u_vis = _nrmse_torch(tgt_u, out_u).item()
+        nrmse_v_vis = _nrmse_torch(tgt_v, out_v).item()
+        vrmse_all_vis = (vrmse_u + vrmse_v) / 2
+        nrmse_all_vis = (nrmse_u_vis + nrmse_v_vis) / 2
 
         # Last timestep for plotting
         gt_u = target[0, -1, :, :, 0].float().cpu().numpy()

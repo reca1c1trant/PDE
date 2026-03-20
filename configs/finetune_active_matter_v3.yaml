@@ -85,12 +85,12 @@ training:
   gradient_accumulation_steps: 1
 
 dataloader:
-  batch_size: 2
+  batch_size: 4
   num_workers: 4
   pin_memory: true
 
 dataset:
-  path: /scratch-share/SONG0304/finetune/active_matter_zeta1.hdf5
+  path: /home/msai/song0304/code/PDE/data/finetune/active_matter_all.hdf5
   seed: 42
   t_input: 8
   train_ratio: 0.9
@@ -115,16 +115,18 @@ physics:
   dt: 0.25
   d_T: 0.05
 
-  # Per-equation normalization scales (GT RMS from test_gt_pde_active_matter.py)
+  # Per-equation normalization scales (GT RMS from test_gt_pde_active_matter.py, 64 samples)
   eq_scales:
-    continuity: 3.5679e-04
-    concentration: 4.4868e-04
-    Dxx: 3.0906e-01
+    continuity: 7.6243e-01
+    concentration: 3.3094e-03
+    Dxx: 1.0
 
-  # Per-equation weights
-  # Dxx weight=0: simplified advection-diffusion model doesn't capture
-  # upper-convected derivative + source terms, GT residual too large (0.31)
+  # Per-equation weights (D tensor excluded from data)
   eq_weights:
     continuity: 1.0
     concentration: 1.0
     Dxx: 0.0
+
+  # Per-timestep normalization scales (time-aware, from compute_gt_scales_per_t.py)
+  # Uncomment to enable per-timestep normalization instead of fixed eq_scales
+  # eq_scales_per_t_path: ./data/gt_scales/active_matter_per_t.pt

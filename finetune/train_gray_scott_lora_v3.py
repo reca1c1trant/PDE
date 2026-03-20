@@ -193,7 +193,8 @@ def compute_vrmse(
     """
     Compute VRMSE and RMSE for valid channels.
 
-    VRMSE = sqrt(MSE / Var(GT)), variance-normalized RMSE.
+    VRMSE = mean of per-channel sqrt(MSE_ch / Var_ch).
+    This avoids scale mixing when channels have different magnitudes.
 
     Returns:
         vrmse, rmse
@@ -203,11 +204,20 @@ def compute_vrmse(
     output_valid = output[..., valid_ch]
     target_valid = target[..., valid_ch]
 
+    # Overall RMSE (unchanged)
     mse = torch.mean((output_valid - target_valid) ** 2)
     rmse = torch.sqrt(mse + 1e-8)
 
-    gt_var = torch.mean((target_valid - target_valid.mean()) ** 2)
-    vrmse = torch.sqrt(mse / (gt_var + 1e-8))
+    # Per-channel VRMSE, then average
+    n_ch = len(valid_ch)
+    vrmse_sum = torch.tensor(0.0, device=output.device)
+    for c in range(n_ch):
+        pred_c = output[..., valid_ch[c]]
+        gt_c = target[..., valid_ch[c]]
+        mse_c = torch.mean((pred_c - gt_c) ** 2)
+        var_c = torch.mean((gt_c - gt_c.mean()) ** 2)
+        vrmse_sum = vrmse_sum + torch.sqrt(mse_c / (var_c + 1e-8))
+    vrmse = vrmse_sum / n_ch
 
     return vrmse, rmse
 
@@ -358,6 +368,16 @@ def main():
     eq_scales = physics.get('eq_scales', None)
     eq_weights = physics.get('eq_weights', None)
 
+    # Load per-timestep scales if specified
+    eq_scales_per_t_path = physics.get('eq_scales_per_t_path', None)
+    eq_scales_per_t = None
+    if eq_scales_per_t_path and Path(eq_scales_per_t_path).exists():
+        eq_scales_per_t = torch.load(eq_scales_per_t_path, map_location='cpu', weights_only=False)
+        if accelerator.is_main_process:
+            logger.info(f"Loaded per-timestep eq_scales from {eq_scales_per_t_path}")
+            for k, v in eq_scales_per_t.items():
+                logger.info(f"  {k}: shape={v.shape}, min={v.min():.4e}, max={v.max():.4e}")
+
     pde_loss_fn = GrayScottPDELoss(
         nx=physics.get('nx', 128),
         ny=physics.get('ny', 128),
@@ -370,11 +390,13 @@ def main():
         D_B=physics.get('D_B', 1.39e-5),
         eq_scales=eq_scales,
         eq_weights=eq_weights,
+        eq_scales_per_t=eq_scales_per_t,
     )
 
     if accelerator.is_main_process:
         logger.info(f"PDE eq_scales: {pde_loss_fn.eq_scales}")
         logger.info(f"PDE eq_weights: {pde_loss_fn.eq_weights}")
+        logger.info(f"PDE per-timestep scales: {pde_loss_fn.use_per_t_scales}")
 
     global_step = 0
     best_val_loss = float('inf')

@@ -246,6 +246,7 @@ class FinetuneDataset(Dataset):
             'channel_mask': torch.from_numpy(channel_mask),
             'nu': torch.tensor(nu, dtype=torch.float32),
             'vector_dim': torch.tensor(self.vector_dim, dtype=torch.long),
+            'start_t': torch.tensor(start_t, dtype=torch.long),
         }
 
         # Load boundary data if available (for PDE loss)
@@ -304,6 +305,7 @@ class FinetuneDataset(Dataset):
             'channel_mask': torch.from_numpy(channel_mask),
             'nu': torch.tensor(nu, dtype=torch.float32),
             'vector_dim': torch.tensor(self.vector_dim, dtype=torch.long),
+            'start_t': torch.tensor(start_t, dtype=torch.long),
         }
 
         # Load boundaries if available (for PDE loss)

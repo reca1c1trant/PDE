@@ -42,9 +42,11 @@ os.environ.setdefault('TRITON_CACHE_DIR', triton_cache)
 import argparse
 import yaml
 import torch
+from typing import Optional
 from pathlib import Path
 from torch.utils.data import DataLoader
-from accelerate import Accelerator, DistributedDataParallelKwargs
+from accelerate import Accelerator, DistributedDataParallelKwargs, InitProcessGroupKwargs
+import datetime
 from accelerate.utils import set_seed
 from rich.console import Console
 from rich.progress import (
@@ -137,32 +139,36 @@ def compute_boundary_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
     channel_mask: torch.Tensor,
+    bc_width: int = 1,
 ) -> torch.Tensor:
     """
-    Compute boundary RMSE on 4 edges.
-    Supervised anchor — works for both periodic and Dirichlet edges.
+    Compute boundary RMSE on border strips of width `bc_width`.
+
+    bc_width=1: single-pixel edges (original behavior).
+    bc_width=16: full boundary patches (patch_size-wide strips).
     """
     if channel_mask.dim() == 1:
         valid_ch = torch.where(channel_mask > 0)[0]
     else:
         valid_ch = torch.where(channel_mask[0] > 0)[0]
 
-    left_pred = pred[:, :, :, 0, :][:, :, :, valid_ch]
-    left_target = target[:, :, :, 0, :][:, :, :, valid_ch]
-    right_pred = pred[:, :, :, -1, :][:, :, :, valid_ch]
-    right_target = target[:, :, :, -1, :][:, :, :, valid_ch]
-    bottom_pred = pred[:, :, 0, :, :][:, :, :, valid_ch]
-    bottom_target = target[:, :, 0, :, :][:, :, :, valid_ch]
-    top_pred = pred[:, :, -1, :, :][:, :, :, valid_ch]
-    top_target = target[:, :, -1, :, :][:, :, :, valid_ch]
+    w = bc_width
+    top_pred = pred[:, :, :w, :, :][:, :, :, :, valid_ch]
+    top_target = target[:, :, :w, :, :][:, :, :, :, valid_ch]
+    bottom_pred = pred[:, :, -w:, :, :][:, :, :, :, valid_ch]
+    bottom_target = target[:, :, -w:, :, :][:, :, :, :, valid_ch]
+    left_pred = pred[:, :, w:-w, :w, :][:, :, :, :, valid_ch]
+    left_target = target[:, :, w:-w, :w, :][:, :, :, :, valid_ch]
+    right_pred = pred[:, :, w:-w, -w:, :][:, :, :, :, valid_ch]
+    right_target = target[:, :, w:-w, -w:, :][:, :, :, :, valid_ch]
 
     bc_pred = torch.cat([
+        top_pred.reshape(-1), bottom_pred.reshape(-1),
         left_pred.reshape(-1), right_pred.reshape(-1),
-        bottom_pred.reshape(-1), top_pred.reshape(-1),
     ])
     bc_target = torch.cat([
+        top_target.reshape(-1), bottom_target.reshape(-1),
         left_target.reshape(-1), right_target.reshape(-1),
-        bottom_target.reshape(-1), top_target.reshape(-1),
     ])
 
     mse = torch.mean((bc_pred - bc_target) ** 2)
@@ -174,6 +180,7 @@ def compute_pde_loss(
     input_data: torch.Tensor,
     pde_loss_fn: RayleighBenardFullPDELoss,
     nu: torch.Tensor,
+    t_offset: Optional[torch.Tensor] = None,
 ) -> tuple:
     """
     Compute RB PDE residual loss (per-equation normalized).
@@ -204,7 +211,7 @@ def compute_pde_loss(
         b = b.transpose(-1, -2)
 
         # κ = ν for Pr=1
-        total_loss, losses = pde_loss_fn(u, v, b, kappa=nu.float())
+        total_loss, losses = pde_loss_fn(u, v, b, kappa=nu.float(), t_offset=t_offset)
 
     return total_loss, losses
 
@@ -217,7 +224,8 @@ def compute_vrmse(
     """
     Compute VRMSE and RMSE for valid channels.
 
-    VRMSE = sqrt(MSE / Var(GT)), variance-normalized RMSE.
+    VRMSE = mean of per-channel sqrt(MSE_ch / Var_ch).
+    This avoids scale mixing when channels have different magnitudes.
 
     Returns:
         vrmse, rmse
@@ -227,12 +235,20 @@ def compute_vrmse(
     output_valid = output[..., valid_ch]
     target_valid = target[..., valid_ch]
 
+    # Overall RMSE (unchanged)
     mse = torch.mean((output_valid - target_valid) ** 2)
     rmse = torch.sqrt(mse + 1e-8)
 
-    # Var(GT) = mean((gt - mean(gt))²)
-    gt_var = torch.mean((target_valid - target_valid.mean()) ** 2)
-    vrmse = torch.sqrt(mse / (gt_var + 1e-8))
+    # Per-channel VRMSE, then average
+    n_ch = len(valid_ch)
+    vrmse_sum = torch.tensor(0.0, device=output.device)
+    for c in range(n_ch):
+        pred_c = output[..., valid_ch[c]]
+        gt_c = target[..., valid_ch[c]]
+        mse_c = torch.mean((pred_c - gt_c) ** 2)
+        var_c = torch.mean((gt_c - gt_c.mean()) ** 2)
+        vrmse_sum = vrmse_sum + torch.sqrt(mse_c / (var_c + 1e-8))
+    vrmse = vrmse_sum / n_ch
 
     return vrmse, rmse
 
@@ -242,6 +258,7 @@ def validate(
     model, val_loader, accelerator,
     pde_loss_fn: RayleighBenardFullPDELoss,
     t_input: int = 8,
+    bc_width: int = 1,
 ):
     """Validate and return (bc_loss, pde_loss, rmse, vrmse)."""
     accelerator.wait_for_everyone()
@@ -257,6 +274,9 @@ def validate(
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
         nu = batch['nu'].to(device=accelerator.device)
+        t_offset = batch.get('start_t', None)
+        if t_offset is not None:
+            t_offset = t_offset.to(device=accelerator.device)
 
         input_data = data[:, :t_input]
         target_data = data[:, 1:t_input + 1]
@@ -264,8 +284,8 @@ def validate(
         output_norm, mean, std = model(input_data, return_normalized=True)
         output = output_norm * std + mean
 
-        bc_loss = compute_boundary_loss(output, target_data, channel_mask)
-        pde_loss, _ = compute_pde_loss(output, input_data, pde_loss_fn, nu)
+        bc_loss = compute_boundary_loss(output, target_data, channel_mask, bc_width=bc_width)
+        pde_loss, _ = compute_pde_loss(output, input_data, pde_loss_fn, nu, t_offset=t_offset)
 
         vrmse, rmse = compute_vrmse(output, target_data, channel_mask)
 
@@ -312,15 +332,17 @@ def main():
     early_stopping_patience = config['training'].get('early_stopping_patience', 15)
     save_vrmse_weight = config['training'].get('save_vrmse_weight', 100.0)
     save_pde_weight = config['training'].get('save_pde_weight', 1.0)
+    bc_width = config['training'].get('bc_width', 1)
     t_input = config['dataset'].get('t_input', 8)
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    timeout_kwargs = InitProcessGroupKwargs(timeout=datetime.timedelta(minutes=30))
 
     accelerator = Accelerator(
         mixed_precision=config['training'].get('mixed_precision', 'no'),
         gradient_accumulation_steps=config['training'].get('gradient_accumulation_steps', 1),
         log_with="wandb",
-        kwargs_handlers=[ddp_kwargs]
+        kwargs_handlers=[ddp_kwargs, timeout_kwargs]
     )
 
     if accelerator.is_main_process:
@@ -328,7 +350,7 @@ def main():
         logger.info(f"Rayleigh-Bénard 2D LoRA Finetuning")
         logger.info(f"{'='*60}")
         logger.info(f"Config: {args.config}")
-        logger.info(f"Loss: BC + PDE (normalized continuity + buoyancy)")
+        logger.info(f"Loss: BC (w={bc_width}) + PDE (normalized continuity + buoyancy)")
         logger.info(f"Lambda BC: {lambda_bc}, Lambda PDE: {lambda_pde}")
         logger.info(f"Save: {save_vrmse_weight}*vrmse + {save_pde_weight}*pde")
         logger.info(f"{'='*60}")
@@ -385,6 +407,21 @@ def main():
     eq_scales = physics.get('eq_scales', None)
     eq_weights = physics.get('eq_weights', None)
 
+    # Load optional per-timestep normalization scales
+    eq_scales_per_t = None
+    eq_scales_per_t_path = physics.get('eq_scales_per_t_path', None)
+    if eq_scales_per_t_path:
+        p = Path(eq_scales_per_t_path)
+        if p.exists():
+            eq_scales_per_t = torch.load(str(p), map_location='cpu', weights_only=False)
+            if accelerator.is_main_process:
+                logger.info(f"Loaded per-timestep PDE scales from {p}")
+                for name, scales in eq_scales_per_t.items():
+                    logger.info(f"  {name}: shape={scales.shape}, "
+                                f"mean={scales.mean():.6f}, std={scales.std():.6f}")
+        elif accelerator.is_main_process:
+            logger.warning(f"eq_scales_per_t_path={p} not found, using fixed eq_scales")
+
     pde_loss_fn = RayleighBenardFullPDELoss(
         nx=physics.get('nx', 512),
         ny=physics.get('ny', 128),
@@ -395,6 +432,7 @@ def main():
         skip_bl=physics.get('skip_bl', 15),
         eq_scales=eq_scales,
         eq_weights=eq_weights,
+        eq_scales_per_t=eq_scales_per_t,
     )
 
     if accelerator.is_main_process:
@@ -466,6 +504,9 @@ def main():
                 data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
                 channel_mask = batch['channel_mask'].to(device=accelerator.device)
                 nu = batch['nu'].to(device=accelerator.device)
+                t_offset = batch.get('start_t', None)
+                if t_offset is not None:
+                    t_offset = t_offset.to(device=accelerator.device)
 
                 input_data = data[:, :t_input]
                 target_data = data[:, 1:t_input + 1]
@@ -475,8 +516,8 @@ def main():
                     output_norm, mean, std = model(input_data, return_normalized=True)
                     output = output_norm * std + mean
 
-                    bc_loss = compute_boundary_loss(output, target_data, channel_mask)
-                    pde_loss, losses = compute_pde_loss(output, input_data, pde_loss_fn, nu)
+                    bc_loss = compute_boundary_loss(output, target_data, channel_mask, bc_width=bc_width)
+                    pde_loss, losses = compute_pde_loss(output, input_data, pde_loss_fn, nu, t_offset=t_offset)
 
                     loss = lambda_bc * bc_loss + lambda_pde * pde_loss
 
@@ -516,7 +557,8 @@ def main():
 
                 if global_step % eval_interval == 0:
                     val_bc, val_pde, val_rmse, val_vrmse = validate(
-                        model, val_loader, accelerator, pde_loss_fn, t_input
+                        model, val_loader, accelerator, pde_loss_fn, t_input,
+                        bc_width=bc_width,
                     )
 
                     accelerator.log({

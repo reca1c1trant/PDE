@@ -38,6 +38,7 @@ os.environ.setdefault('TRITON_CACHE_DIR', triton_cache)
 import argparse
 import yaml
 import torch
+from typing import Optional
 from pathlib import Path
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from accelerate.utils import set_seed
@@ -149,6 +150,7 @@ def compute_pde_loss(
     output: torch.Tensor,
     input_data: torch.Tensor,
     pde_loss_fn: ShearFlowPDELossNPINN,
+    t_offset: Optional[torch.Tensor] = None,
 ) -> tuple:
     """
     Compute Shear Flow PDE residual loss.
@@ -159,6 +161,7 @@ def compute_pde_loss(
         output: Model output [B, T_out, H, W, 18] (denormalized)
         input_data: Model input [B, T_in, H, W, 18]
         pde_loss_fn: ShearFlowPDELossNPINN instance
+        t_offset: optional global timestep offset [B] for per-timestep scaling
 
     Returns:
         total_loss, losses_dict
@@ -181,7 +184,7 @@ def compute_pde_loss(
         p = torch.cat([t0_p, out_p], dim=1)
         s = torch.cat([t0_s, out_s], dim=1)
 
-        total_loss, losses = pde_loss_fn(u, v, p, s)
+        total_loss, losses = pde_loss_fn(u, v, p, s, t_offset=t_offset)
 
     return total_loss, losses
 
@@ -204,6 +207,9 @@ def validate(
     for batch in val_loader:
         data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
         channel_mask = batch['channel_mask'].to(device=accelerator.device)
+        t_offset = batch.get('start_t', None)
+        if t_offset is not None:
+            t_offset = t_offset.to(device=accelerator.device)
 
         input_data = data[:, :t_input]
         target_data = data[:, 1:t_input + 1]
@@ -215,7 +221,7 @@ def validate(
         bc_loss = compute_boundary_loss(output, target_data, channel_mask)
 
         # PDE loss
-        pde_loss, _ = compute_pde_loss(output, input_data, pde_loss_fn)
+        pde_loss, _ = compute_pde_loss(output, input_data, pde_loss_fn, t_offset=t_offset)
 
         # RMSE (full-field, for monitoring only)
         valid_ch = (torch.where(channel_mask[0] > 0)[0] if channel_mask.dim() > 1
@@ -336,6 +342,21 @@ def main():
     eq_scales = physics.get('eq_scales', None)
     eq_weights = physics.get('eq_weights', None)
 
+    # Load optional per-timestep normalization scales
+    eq_scales_per_t = None
+    eq_scales_per_t_path = physics.get('eq_scales_per_t_path', None)
+    if eq_scales_per_t_path:
+        p = Path(eq_scales_per_t_path)
+        if p.exists():
+            eq_scales_per_t = torch.load(str(p), map_location='cpu', weights_only=False)
+            if accelerator.is_main_process:
+                logger.info(f"Loaded per-timestep PDE scales from {p}")
+                for name, scales in eq_scales_per_t.items():
+                    logger.info(f"  {name}: shape={scales.shape}, "
+                                f"mean={scales.mean():.6f}, std={scales.std():.6f}")
+        elif accelerator.is_main_process:
+            logger.warning(f"eq_scales_per_t_path={p} not found, using fixed eq_scales")
+
     pde_loss_fn = ShearFlowPDELossNPINN(
         nx=physics.get('nx', 256),
         ny=physics.get('ny', 512),
@@ -347,6 +368,7 @@ def main():
         use_div_correction=True,
         eq_scales=eq_scales,
         eq_weights=eq_weights,
+        eq_scales_per_t=eq_scales_per_t,
     )
 
     if accelerator.is_main_process:
@@ -426,6 +448,9 @@ def main():
 
                 data = batch['data'].to(device=accelerator.device, dtype=torch.float32)
                 channel_mask = batch['channel_mask'].to(device=accelerator.device)
+                t_offset = batch.get('start_t', None)
+                if t_offset is not None:
+                    t_offset = t_offset.to(device=accelerator.device)
 
                 input_data = data[:, :t_input]
                 target_data = data[:, 1:t_input + 1]
@@ -440,7 +465,7 @@ def main():
                     bc_loss = compute_boundary_loss(output, target_data, channel_mask)
 
                     # PDE loss (cont + momentum + tracer, per-equation normalized)
-                    pde_loss, losses = compute_pde_loss(output, input_data, pde_loss_fn)
+                    pde_loss, losses = compute_pde_loss(output, input_data, pde_loss_fn, t_offset=t_offset)
 
                     # Total loss = BC + PDE (NO RMSE!)
                     loss = lambda_bc * bc_loss + lambda_pde * pde_loss

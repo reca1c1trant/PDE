@@ -63,7 +63,7 @@ class ActiveMatterPDELoss(nn.Module):
 
     def fft_dx(self, f: torch.Tensor) -> torch.Tensor:
         """FFT x方向导数"""
-        KX = self.KX
+        KX = self.KX.to(f.device)
         while KX.dim() < f.dim():
             KX = KX.unsqueeze(0)
         f_hat = torch.fft.fft2(f)
@@ -71,7 +71,7 @@ class ActiveMatterPDELoss(nn.Module):
 
     def fft_dy(self, f: torch.Tensor) -> torch.Tensor:
         """FFT y方向导数"""
-        KY = self.KY
+        KY = self.KY.to(f.device)
         while KY.dim() < f.dim():
             KY = KY.unsqueeze(0)
         f_hat = torch.fft.fft2(f)
@@ -158,6 +158,11 @@ class GrayScottPDELoss(nn.Module):
         - 时间: 二阶中心差分 (关键!)
     """
 
+    DEFAULT_EQ_SCALES = {
+        'A': 1.0,
+        'B': 1.0,
+    }
+
     def __init__(
         self,
         nx: int = 128,
@@ -169,6 +174,9 @@ class GrayScottPDELoss(nn.Module):
         k: float = 0.057,
         D_A: float = 1.81e-5,
         D_B: float = 1.39e-5,
+        eq_scales: Optional[Dict[str, float]] = None,
+        eq_weights: Optional[Dict[str, float]] = None,
+        eq_scales_per_t: Optional[Dict[str, torch.Tensor]] = None,
     ):
         super().__init__()
         self.nx = nx
@@ -180,6 +188,14 @@ class GrayScottPDELoss(nn.Module):
         self.k = k
         self.D_A = D_A
         self.D_B = D_B
+        self.eq_scales = {**self.DEFAULT_EQ_SCALES, **(eq_scales or {})}
+        self.eq_weights = {'A': 1.0, 'B': 1.0, **(eq_weights or {})}
+
+        # Per-timestep scales (time-aware normalization)
+        self.use_per_t_scales = eq_scales_per_t is not None
+        if eq_scales_per_t is not None:
+            for name, scales in eq_scales_per_t.items():
+                self.register_buffer(f'scales_t_{name}', scales.float())
 
         # 预计算FFT波数
         kx = torch.fft.fftfreq(nx, d=dx) * 2 * np.pi
@@ -191,7 +207,7 @@ class GrayScottPDELoss(nn.Module):
 
     def fft_laplacian(self, f: torch.Tensor) -> torch.Tensor:
         """FFT Laplacian"""
-        K2 = self.K2
+        K2 = self.K2.to(f.device)
         while K2.dim() < f.dim():
             K2 = K2.unsqueeze(0)
         f_hat = torch.fft.fft2(f)
@@ -239,16 +255,43 @@ class GrayScottPDELoss(nn.Module):
         R_A = dA_dt - self.D_A * lap_A + AB2 - self.F * (1 - A_n)
         R_B = dB_dt - self.D_B * lap_B - AB2 + (self.F + self.k) * B_n
 
-        # Loss计算
-        if reduction == 'mean':
-            loss_A = torch.mean(R_A ** 2)
-            loss_B = torch.mean(R_B ** 2)
-        elif reduction == 'sum':
-            loss_A = torch.sum(R_A ** 2)
-            loss_B = torch.sum(R_B ** 2)
+        # Loss计算 (per-equation normalized by eq_scales or per-timestep scales)
+        w_A = self.eq_weights['A']
+        w_B = self.eq_weights['B']
+
+        if self.use_per_t_scales and reduction == 'mean':
+            # Per-timestep normalization: R / s_t -> mean(normalized_R^2)
+            T_res = R_A.shape[1]
+
+            if hasattr(self, 'scales_t_A_equation'):
+                s_t_A = self.scales_t_A_equation[:T_res].clamp(min=1e-8)
+                R_A_norm = R_A / s_t_A[None, :, None, None]
+                loss_A = w_A * torch.mean(R_A_norm ** 2)
+            else:
+                s_A = self.eq_scales['A']
+                loss_A = w_A * torch.mean(R_A ** 2) / (s_A ** 2)
+
+            if hasattr(self, 'scales_t_B_equation'):
+                s_t_B = self.scales_t_B_equation[:T_res].clamp(min=1e-8)
+                R_B_norm = R_B / s_t_B[None, :, None, None]
+                loss_B = w_B * torch.mean(R_B_norm ** 2)
+            else:
+                s_B = self.eq_scales['B']
+                loss_B = w_B * torch.mean(R_B ** 2) / (s_B ** 2)
         else:
-            loss_A = R_A ** 2
-            loss_B = R_B ** 2
+            # Fallback: fixed per-equation scales
+            s_A = self.eq_scales['A']
+            s_B = self.eq_scales['B']
+
+            if reduction == 'mean':
+                loss_A = w_A * torch.mean(R_A ** 2) / (s_A ** 2)
+                loss_B = w_B * torch.mean(R_B ** 2) / (s_B ** 2)
+            elif reduction == 'sum':
+                loss_A = w_A * torch.sum(R_A ** 2) / (s_A ** 2)
+                loss_B = w_B * torch.sum(R_B ** 2) / (s_B ** 2)
+            else:
+                loss_A = w_A * R_A ** 2 / (s_A ** 2)
+                loss_B = w_B * R_B ** 2 / (s_B ** 2)
 
         total_loss = loss_A + loss_B
 
@@ -297,7 +340,7 @@ class ViscoelasticContinuityLoss(nn.Module):
     def fft_dx(self, f: torch.Tensor) -> torch.Tensor:
         """FFT x方向导数 (周期)"""
         # f: [..., X, Y]
-        kx = self.kx
+        kx = self.kx.to(f.device)
         f_hat = torch.fft.fft(f, dim=-2)
         return torch.fft.ifft(1j * kx * f_hat, dim=-2).real
 
@@ -518,6 +561,7 @@ class ActiveMatterNPINNPDELoss(nn.Module):
         use_div_correction: bool = True,
         eq_scales: Optional[Dict[str, float]] = None,
         eq_weights: Optional[Dict[str, float]] = None,
+        eq_scales_per_t: Optional[Dict[str, torch.Tensor]] = None,
     ):
         super().__init__()
         self.nx = nx
@@ -537,6 +581,12 @@ class ActiveMatterNPINNPDELoss(nn.Module):
         self.eq_weights = {'continuity': 1.0, 'concentration': 1.0, 'Dxx': 1.0}
         if eq_weights is not None:
             self.eq_weights.update(eq_weights)
+
+        # Per-timestep scales (time-aware normalization)
+        self.use_per_t_scales = eq_scales_per_t is not None
+        if eq_scales_per_t is not None:
+            for name, scales in eq_scales_per_t.items():
+                self.register_buffer(f'scales_t_{name}', scales.float())
 
     def _face_velocities(
         self, u: torch.Tensor, v: torch.Tensor
@@ -636,9 +686,16 @@ class ActiveMatterNPINNPDELoss(nn.Module):
         uc_e, uc_w, vc_n, vc_s = self._face_velocities(u_int, v_int)
         div = self._divergence(uc_e, uc_w, vc_n, vc_s)
 
-        scale_cont = self.eq_scales['continuity']
         w_cont = self.eq_weights['continuity']
-        losses['continuity'] = w_cont * torch.mean(div ** 2) / (scale_cont ** 2)
+        T_res = div.shape[1]
+
+        if self.use_per_t_scales and hasattr(self, 'scales_t_continuity'):
+            s_t_cont = self.scales_t_continuity[:T_res].clamp(min=1e-8)
+            div_norm = div / s_t_cont[None, :, None, None]
+            losses['continuity'] = w_cont * torch.mean(div_norm ** 2)
+        else:
+            scale_cont = self.eq_scales['continuity']
+            losses['continuity'] = w_cont * torch.mean(div ** 2) / (scale_cont ** 2)
 
         # ---- Eq 2: Concentration advection-diffusion ----
         w_conc = self.eq_weights['concentration']
@@ -653,8 +710,13 @@ class ActiveMatterNPINNPDELoss(nn.Module):
             if self.use_div_correction:
                 R_c = R_c - c_int * div
 
-            scale_conc = self.eq_scales['concentration']
-            losses['concentration'] = w_conc * torch.mean(R_c ** 2) / (scale_conc ** 2)
+            if self.use_per_t_scales and hasattr(self, 'scales_t_concentration'):
+                s_t_conc = self.scales_t_concentration[:T_res].clamp(min=1e-8)
+                R_c_norm = R_c / s_t_conc[None, :, None, None]
+                losses['concentration'] = w_conc * torch.mean(R_c_norm ** 2)
+            else:
+                scale_conc = self.eq_scales['concentration']
+                losses['concentration'] = w_conc * torch.mean(R_c ** 2) / (scale_conc ** 2)
         else:
             losses['concentration'] = torch.tensor(0.0, device=u.device)
 
@@ -718,6 +780,7 @@ class RayleighBenardFullPDELoss(nn.Module):
         skip_bl: int = 15,
         eq_scales: Optional[Dict[str, float]] = None,
         eq_weights: Optional[Dict[str, float]] = None,
+        eq_scales_per_t: Optional[Dict[str, torch.Tensor]] = None,
     ):
         super().__init__()
         self.nx = nx
@@ -735,6 +798,12 @@ class RayleighBenardFullPDELoss(nn.Module):
         self.eq_weights = {'continuity': 1.0, 'buoyancy': 1.0}
         if eq_weights is not None:
             self.eq_weights.update(eq_weights)
+
+        # Per-timestep normalization scales (optional)
+        self.has_per_t_scales = eq_scales_per_t is not None
+        if eq_scales_per_t is not None:
+            for name, scales in eq_scales_per_t.items():
+                self.register_buffer(f'scales_t_{name}', scales.float())
 
     # ---- x derivatives: 4th-order central, periodic via roll ----
 
@@ -782,12 +851,62 @@ class RayleighBenardFullPDELoss(nn.Module):
         zeros = torch.zeros_like(f[..., 0:1])
         return torch.cat([zeros, interior, zeros], dim=-1)
 
+    def _get_per_t_scale(
+        self, eq_name: str, T_res: int, t_offset: Optional[torch.Tensor],
+    ) -> Optional[torch.Tensor]:
+        """Get per-timestep scale for normalization.
+
+        Args:
+            eq_name: equation name (e.g. 'continuity', 'buoyancy')
+            T_res: number of interior timesteps in current residual
+            t_offset: global timestep index of the first frame in the clip [B]
+                      Interior timesteps start at t_offset+1 in global coords.
+
+        Returns:
+            scale tensor [1, T_res, 1, 1] or None if not available.
+        """
+        buf_name = f'scales_t_{eq_name}'
+        if not hasattr(self, buf_name):
+            return None
+        scales_full = getattr(self, buf_name)  # [T_total_interior]
+
+        if t_offset is not None:
+            # Each sample has different offset; take per-sample scales and average
+            # Interior timesteps of the clip: global indices t_offset+1 .. t_offset+T_res
+            # In the GT scales buffer, index 0 = global interior timestep 1
+            # So scale index = t_offset (since GT interior starts at global t=1, offset by 1)
+            B = t_offset.shape[0]
+            T_full = scales_full.shape[0]
+            scales_batch = []
+            for i in range(B):
+                off = int(t_offset[i].item())
+                # Clip interior timestep indices in GT buffer
+                idx_start = off  # GT buffer idx 0 = global t=1, clip interior starts at clip t=1 = global t=off+1
+                idx_end = idx_start + T_res
+                if idx_end <= T_full and idx_start >= 0:
+                    scales_batch.append(scales_full[idx_start:idx_end])
+                else:
+                    # Fallback: clamp to valid range
+                    idx_start = max(0, min(idx_start, T_full - T_res))
+                    idx_end = idx_start + T_res
+                    scales_batch.append(scales_full[idx_start:idx_end])
+            # Average across batch (different offsets) → [T_res]
+            scale_t = torch.stack(scales_batch, dim=0).mean(dim=0)  # [T_res]
+        else:
+            # No offset info: use global average (fallback)
+            scale_t = scales_full[:T_res] if T_res <= scales_full.shape[0] else scales_full.mean().expand(T_res)
+
+        # Clamp to avoid division by near-zero
+        scale_t = scale_t.clamp(min=1e-8)
+        return scale_t.view(1, T_res, 1, 1)
+
     def forward(
         self,
         u: torch.Tensor,
         v: torch.Tensor,
         b: torch.Tensor,
         kappa: Optional[torch.Tensor] = None,
+        t_offset: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Compute PDE residual losses.
@@ -797,6 +916,7 @@ class RayleighBenardFullPDELoss(nn.Module):
             v: y-velocity [B, T, Nx, Ny]
             b: buoyancy   [B, T, Nx, Ny]
             kappa: optional per-sample κ [B] overriding self.kappa
+            t_offset: optional global timestep offset [B] for per-timestep scaling
 
         Returns:
             total_loss, {eq_name: loss_value}
@@ -808,6 +928,7 @@ class RayleighBenardFullPDELoss(nn.Module):
         u_int = u[:, 1:-1]
         v_int = v[:, 1:-1]
         b_int = b[:, 1:-1]
+        T_int = u_int.shape[1]
 
         # ---- Eq 1: Continuity ----
         du_dx = self._dx_4th(u_int)
@@ -818,9 +939,19 @@ class RayleighBenardFullPDELoss(nn.Module):
         if skip > 0:
             R_cont = R_cont[..., skip:-skip]
 
-        scale_cont = self.eq_scales['continuity']
         w_cont = self.eq_weights['continuity']
-        losses['continuity'] = w_cont * torch.mean(R_cont ** 2) / (scale_cont ** 2)
+        if self.has_per_t_scales:
+            scale_cont_t = self._get_per_t_scale('continuity', T_int, t_offset)
+            if scale_cont_t is not None:
+                # Per-timestep normalized: R / scale_t, then MSE
+                R_cont_norm = R_cont / scale_cont_t
+                losses['continuity'] = w_cont * torch.mean(R_cont_norm ** 2)
+            else:
+                scale_cont = self.eq_scales['continuity']
+                losses['continuity'] = w_cont * torch.mean(R_cont ** 2) / (scale_cont ** 2)
+        else:
+            scale_cont = self.eq_scales['continuity']
+            losses['continuity'] = w_cont * torch.mean(R_cont ** 2) / (scale_cont ** 2)
 
         # ---- Eq 2: Buoyancy transport ----
         w_buoy = self.eq_weights['buoyancy']
@@ -852,8 +983,17 @@ class RayleighBenardFullPDELoss(nn.Module):
             if skip > 0:
                 R_buoy = R_buoy[..., skip:-skip]
 
-            scale_buoy = self.eq_scales['buoyancy']
-            losses['buoyancy'] = w_buoy * torch.mean(R_buoy ** 2) / (scale_buoy ** 2)
+            if self.has_per_t_scales:
+                scale_buoy_t = self._get_per_t_scale('buoyancy', T_int, t_offset)
+                if scale_buoy_t is not None:
+                    R_buoy_norm = R_buoy / scale_buoy_t
+                    losses['buoyancy'] = w_buoy * torch.mean(R_buoy_norm ** 2)
+                else:
+                    scale_buoy = self.eq_scales['buoyancy']
+                    losses['buoyancy'] = w_buoy * torch.mean(R_buoy ** 2) / (scale_buoy ** 2)
+            else:
+                scale_buoy = self.eq_scales['buoyancy']
+                losses['buoyancy'] = w_buoy * torch.mean(R_buoy ** 2) / (scale_buoy ** 2)
         else:
             losses['buoyancy'] = torch.tensor(0.0, device=u.device)
 
@@ -1040,6 +1180,7 @@ class ShearFlowPDELossNPINN(nn.Module):
         use_div_correction: bool = True,
         eq_scales: Optional[Dict[str, float]] = None,
         eq_weights: Optional[Dict[str, float]] = None,
+        eq_scales_per_t: Optional[Dict[str, torch.Tensor]] = None,
     ):
         super().__init__()
         self.nx = nx
@@ -1059,6 +1200,12 @@ class ShearFlowPDELossNPINN(nn.Module):
                            'y_momentum': 1.0, 'tracer': 1.0}
         if eq_weights is not None:
             self.eq_weights.update(eq_weights)
+
+        # Per-timestep normalization scales (optional)
+        self.has_per_t_scales = eq_scales_per_t is not None
+        if eq_scales_per_t is not None:
+            for name, scales in eq_scales_per_t.items():
+                self.register_buffer(f'scales_t_{name}', scales.float())
 
     # ---- Face velocities ----
 
@@ -1147,6 +1294,45 @@ class ShearFlowPDELossNPINN(nn.Module):
         p_S = torch.roll(p, 1, dims=-2)
         return (p_N - p_S) / (2 * self.dy)
 
+    def _get_per_t_scale(
+        self, eq_name: str, T_res: int, t_offset: Optional[torch.Tensor],
+    ) -> Optional[torch.Tensor]:
+        """Get per-timestep scale for normalization.
+
+        Args:
+            eq_name: equation name
+            T_res: number of interior timesteps in current residual
+            t_offset: global timestep index of the first frame in the clip [B]
+
+        Returns:
+            scale tensor [1, T_res, 1, 1] or None if not available.
+        """
+        buf_name = f'scales_t_{eq_name}'
+        if not hasattr(self, buf_name):
+            return None
+        scales_full = getattr(self, buf_name)  # [T_total_interior]
+
+        if t_offset is not None:
+            B = t_offset.shape[0]
+            T_full = scales_full.shape[0]
+            scales_batch = []
+            for i in range(B):
+                off = int(t_offset[i].item())
+                idx_start = off
+                idx_end = idx_start + T_res
+                if idx_end <= T_full and idx_start >= 0:
+                    scales_batch.append(scales_full[idx_start:idx_end])
+                else:
+                    idx_start = max(0, min(idx_start, T_full - T_res))
+                    idx_end = idx_start + T_res
+                    scales_batch.append(scales_full[idx_start:idx_end])
+            scale_t = torch.stack(scales_batch, dim=0).mean(dim=0)
+        else:
+            scale_t = scales_full[:T_res] if T_res <= scales_full.shape[0] else scales_full.mean().expand(T_res)
+
+        scale_t = scale_t.clamp(min=1e-8)
+        return scale_t.view(1, T_res, 1, 1)
+
     def forward(
         self,
         u: torch.Tensor,
@@ -1154,6 +1340,7 @@ class ShearFlowPDELossNPINN(nn.Module):
         p: torch.Tensor,
         s: torch.Tensor,
         reduction: str = 'mean',
+        t_offset: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Compute PDE residual losses.
@@ -1161,6 +1348,7 @@ class ShearFlowPDELossNPINN(nn.Module):
         Args:
             u, v, p, s: [B, T, H, W]
             reduction: 'mean' (default)
+            t_offset: optional global timestep offset [B] for per-timestep scaling
 
         Returns:
             total_loss, {eq_name: loss_value}
@@ -1172,6 +1360,7 @@ class ShearFlowPDELossNPINN(nn.Module):
         v_int = v[:, 1:-1]
         p_int = p[:, 1:-1]
         s_int = s[:, 1:-1]
+        T_int = u_int.shape[1]
 
         # Face velocities
         uc_e, uc_w, vc_n, vc_s = self._face_velocities(u_int, v_int)
@@ -1180,9 +1369,18 @@ class ShearFlowPDELossNPINN(nn.Module):
         div = self._divergence(uc_e, uc_w, vc_n, vc_s)
 
         # ---- Eq 1: Continuity ----
-        scale_cont = self.eq_scales['continuity']
         w_cont = self.eq_weights['continuity']
-        losses['continuity'] = w_cont * torch.mean(div ** 2) / (scale_cont ** 2)
+        if self.has_per_t_scales:
+            scale_cont_t = self._get_per_t_scale('continuity', T_int, t_offset)
+            if scale_cont_t is not None:
+                div_norm = div / scale_cont_t
+                losses['continuity'] = w_cont * torch.mean(div_norm ** 2)
+            else:
+                scale_cont = self.eq_scales['continuity']
+                losses['continuity'] = w_cont * torch.mean(div ** 2) / (scale_cont ** 2)
+        else:
+            scale_cont = self.eq_scales['continuity']
+            losses['continuity'] = w_cont * torch.mean(div ** 2) / (scale_cont ** 2)
 
         # ---- Eq 2: x-Momentum ----
         w_umom = self.eq_weights['x_momentum']
@@ -1196,8 +1394,17 @@ class ShearFlowPDELossNPINN(nn.Module):
             if self.use_div_correction:
                 R_u = R_u - u_int * div
 
-            scale_u = self.eq_scales['x_momentum']
-            losses['x_momentum'] = w_umom * torch.mean(R_u ** 2) / (scale_u ** 2)
+            if self.has_per_t_scales:
+                scale_u_t = self._get_per_t_scale('x_momentum', T_int, t_offset)
+                if scale_u_t is not None:
+                    R_u_norm = R_u / scale_u_t
+                    losses['x_momentum'] = w_umom * torch.mean(R_u_norm ** 2)
+                else:
+                    scale_u = self.eq_scales['x_momentum']
+                    losses['x_momentum'] = w_umom * torch.mean(R_u ** 2) / (scale_u ** 2)
+            else:
+                scale_u = self.eq_scales['x_momentum']
+                losses['x_momentum'] = w_umom * torch.mean(R_u ** 2) / (scale_u ** 2)
         else:
             losses['x_momentum'] = torch.tensor(0.0, device=u.device)
 
@@ -1213,8 +1420,17 @@ class ShearFlowPDELossNPINN(nn.Module):
             if self.use_div_correction:
                 R_v = R_v - v_int * div
 
-            scale_v = self.eq_scales['y_momentum']
-            losses['y_momentum'] = w_vmom * torch.mean(R_v ** 2) / (scale_v ** 2)
+            if self.has_per_t_scales:
+                scale_v_t = self._get_per_t_scale('y_momentum', T_int, t_offset)
+                if scale_v_t is not None:
+                    R_v_norm = R_v / scale_v_t
+                    losses['y_momentum'] = w_vmom * torch.mean(R_v_norm ** 2)
+                else:
+                    scale_v = self.eq_scales['y_momentum']
+                    losses['y_momentum'] = w_vmom * torch.mean(R_v ** 2) / (scale_v ** 2)
+            else:
+                scale_v = self.eq_scales['y_momentum']
+                losses['y_momentum'] = w_vmom * torch.mean(R_v ** 2) / (scale_v ** 2)
         else:
             losses['y_momentum'] = torch.tensor(0.0, device=u.device)
 
@@ -1229,8 +1445,17 @@ class ShearFlowPDELossNPINN(nn.Module):
             if self.use_div_correction:
                 R_s = R_s - s_int * div
 
-            scale_s = self.eq_scales['tracer']
-            losses['tracer'] = w_tracer * torch.mean(R_s ** 2) / (scale_s ** 2)
+            if self.has_per_t_scales:
+                scale_s_t = self._get_per_t_scale('tracer', T_int, t_offset)
+                if scale_s_t is not None:
+                    R_s_norm = R_s / scale_s_t
+                    losses['tracer'] = w_tracer * torch.mean(R_s_norm ** 2)
+                else:
+                    scale_s = self.eq_scales['tracer']
+                    losses['tracer'] = w_tracer * torch.mean(R_s ** 2) / (scale_s ** 2)
+            else:
+                scale_s = self.eq_scales['tracer']
+                losses['tracer'] = w_tracer * torch.mean(R_s ** 2) / (scale_s ** 2)
         else:
             losses['tracer'] = torch.tensor(0.0, device=u.device)
 
