@@ -1,0 +1,105 @@
+# Gray-Scott Reaction-Diffusion LoRA Finetuning — ABLATION: Fixed Normalization
+# eq_scales = GT RMS averaged over all space and time, no per-timestep
+# Uses PDEModelV3 with Shared FFN Transformer + Neighborhood Attention
+# NOTE: Gray-Scott base config had no GT eq_scales computed; using DEFAULT 1.0
+#       TODO: run test_gt_pde_gray_scott.py to get actual spatiotemporal-averaged values
+
+model_name: gray_scott_fullft_physonly
+pde_type: gray_scott
+
+model:
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+    post_smooth_kernel: 5
+
+  vector_channels: 3
+  scalar_channels: 15
+
+  enable_1d: false
+  enable_3d: false
+
+  pretrained_path: ./checkpoints_v4_2donly_postsmooth/best_tf.pt
+
+
+
+training:
+  max_epochs: 30
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_steps: 100
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  lambda_bc: 10000.0
+  lambda_pde: 8.5246e-04
+  bc_width: 16
+
+  save_vrmse_weight: 100
+  save_pde_weight: 1
+
+  eval_interval: 100
+  early_stopping_patience: 30
+
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
+dataloader:
+  batch_size: 20
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: /home/msai/song0304/code/PDE/data/finetune/gray_scott_test.h5
+  seed: 42
+  t_input: 8
+  train_ratio: 0.9
+  clips_per_sample: null
+  val_time_interval: 2
+  vector_dim: 0
+
+logging:
+  project: pde-gray-scott-lora
+  entity: null
+  save_dir: ./checkpoints_gray_scott_fullft_physonly
+  log_interval: 10
+
+checkpoint:
+  resume_from: null
+
+physics:
+  nx: 128
+  ny: 128
+  dx: 0.015748031
+  dy: 0.015748031
+  dt: 10.0
+  F: 0.098
+  k: 0.057
+  D_A: 1.81e-5
+  D_B: 1.39e-5
+
+  # Fixed normalization: GT RMS averaged over all space and time
+  eq_scales:
+    A_equation: 8.5246e-04
+    B_equation: 1.4122e-03

@@ -1,504 +1,152 @@
-###############################################################################
-#                              PRETRAIN
-###############################################################################
+# =====================================================================
+# 1D Advection full pipeline (n-PINN 2nd-order upwind PDE loss)
+# Step 1: Generate data  [DONE: job 19921]
+# Step 2: GT test — scheme C (n-PINN 2nd-order upwind) [SUBMITTED: job 19985]
+#   → logs_gen/test_gt_advection_1d_19985.out
+#   → read "n-PINN 2nd-order upwind: mean_RMS = X.XXXe-XX"
+#   → update configs/finetune_advection_1d_v3_rescaled_norm.yaml:
+#       lambda_pde: <upwind2 mean_rms>
+#       eq_scales.advection: <upwind2 mean_rms>
+# Step 3: Train [SUBMITTED: job 21404, 4th-order central, bc_width=16, eq_scale=8.5932e-03]
+#   sbatch run_train_advection_1d.sh
+# Burgers 1D: [SUBMITTED: job 21403, bc_width=16, eq_scale=9.2334e-06]
+#   sbatch run_train_burgers_1d.sh
+# =====================================================================
+
+# =====================================================================
+# 1D Pipeline: Generate → GT Verify → Train
+# =====================================================================
+
+# Step 1: Generate data
+sbatch run_gen_burgers_1d.sh
+sbatch run_gen_advection_1d.sh
+
+# Step 2: GT PDE verification (run after generation completes)
+#   burgers: upwind u*u_x + central u_xx/u_t  → expect RMS ~1e-3
+#   advection: central + upwind compared       → expect RMS ~1e-3
+sbatch run_test_gt_burgers_1d.sh
+sbatch run_test_gt_advection_1d.sh
+
+# Step 3: Train (run after GT verification passes)
+sbatch run_train_burgers_1d.sh
+sbatch run_train_advection_1d.sh
+
+# =====================================================================
+# 3D Exact-Solution PDE Datasets — Data Generation
+# =====================================================================
+
+# Submit both jobs (~1-2h each, CPU-only numpy, 50 samples, 64^3, T=21)
+sbatch run_gen_advection_3d.sh
+sbatch run_gen_heat_3d.sh
+
+# Check job status
+squeue -u $USER
+
+# After generation completes, verify:
+python -c "import h5py; f=h5py.File('/scratch-share/SONG0304/finetune/burgers_1d.hdf5','r'); print('burgers_1d vector:', f['vector'].shape, 'scalar:', f['scalar'].shape)"
+python -c "import h5py; f=h5py.File('/scratch-share/SONG0304/finetune/advection_1d.hdf5','r'); print('advection_1d vector:', f['vector'].shape, 'scalar:', f['scalar'].shape)"
+python -c "import h5py; f=h5py.File('/scratch-share/SONG0304/finetune/advection_3d.hdf5','r'); print('advection_3d vector:', f['vector'].shape, 'scalar:', f['scalar'].shape, 'scalar_indices:', f['scalar_indices'][:])"
+python -c "import h5py; f=h5py.File('/scratch-share/SONG0304/finetune/heat_3d.hdf5','r'); print('heat_3d vector:', f['vector'].shape, 'scalar:', f['scalar'].shape, 'scalar_indices:', f['scalar_indices'][:])"
+
+# =====================================================================
+# 1D Training (after data ready)
+# =====================================================================
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+    finetune/train_burgers_1d_lora_v3.py \
+    --config configs/finetune_burgers_1d_v3_rescaled_norm.yaml
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+    finetune/train_advection_1d_lora_v3.py \
+    --config configs/finetune_advection_1d_v3_rescaled_norm.yaml
+
+# =====================================================================
+# 3D Training (after data ready)
+# =====================================================================
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+    finetune/train_advection_3d_lora_v3.py \
+    --config configs/finetune_advection_3d_v3_rescaled_norm.yaml
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+    finetune/train_heat_3d_lora_v3.py \
+    --config configs/finetune_heat_3d_v3_rescaled_norm.yaml
+
+# =====================================================================
+# 5 New 2D+t Exact-Solution PDE Datasets — Full Pipeline
+# =====================================================================
+
+# =========================
+# 1. Taylor-Green Vortex 2D  (DATA READY: 5.0G)
+# =========================
+
+# Step 1: Generate data (DONE — /scratch-share/SONG0304/finetune/taylor_green_2d.hdf5)
+python tools/generate_taylor_green_2d.py
+
+# Step 2: GT PDE Verification
+python tools/test_gt_pde_taylor_green_2d.py
+
+# Step 3: Training (4 GPUs)
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+    finetune/train_taylor_green_2d_lora_v3.py \
+    --config configs/finetune_taylor_green_2d_v3.yaml
+
+# =========================
+# 2. KP-II (Kadomtsev-Petviashvili)  (DATA NOT YET GENERATED)
+# =========================
+
+# Step 1: Generate data
+python tools/generate_kp2_2d.py
+
+# Step 2: GT PDE Verification
+python tools/test_gt_pde_kp2_2d.py
 
-# --- V4 2D-only Pretrain (ns_incom + 2d_cfd + swe + diffusion_reaction) ---
-HDF5_USE_FILE_LOCKING=FALSE torchrun --nproc_per_node=8 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly.yaml
+# Step 3: Training (4 GPUs)
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+    finetune/train_kp2_2d_lora_v3.py \
+    --config configs/finetune_kp2_2d_v3.yaml
 
-# --- V2 Decoder + Post-Smooth 5x5 (cross-patch boundary smoothing, identity init) ---
-# Only decoder.post_smooth (2 keys) is new; all V2 weights loaded perfectly
-HDF5_USE_FILE_LOCKING=FALSE torchrun --nproc_per_node=8 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly_postsmooth.yaml
+# =========================
+# 3. Wave 2D  (DATA READY: 4.5G)
+# =========================
 
-# --- Decoder V3 Pretrain (A+B+C+D+E: skip, cross-patch, post-smooth 5x5) ---
-# Init from v4_2donly checkpoint, new decoder components identity-init
-HDF5_USE_FILE_LOCKING=FALSE torchrun --nproc_per_node=8 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly_dec_v3.yaml
+# Step 1: Generate data (DONE — /scratch-share/SONG0304/finetune/wave_2d.hdf5)
+python tools/generate_wave_2d.py
 
-# --- Decoder V3 Frozen: decoder-only on diffusion_reaction (4 GPU test) ---
-HDF5_USE_FILE_LOCKING=FALSE torchrun --nproc_per_node=4 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly_dec_v3_frozen.yaml
+# Step 2: GT PDE Verification
+python tools/test_gt_pde_wave_2d.py
 
-# --- Decoder V3 Frozen: 2-node 8 GPU (ssh5 + ssh6) ---
-# Terminal 1 (ssh 5, master):
-HDF5_USE_FILE_LOCKING=FALSE torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29501 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly_dec_v3_frozen.yaml
-# Terminal 2 (ssh 6):
-cd /home/msai/song0304/code/PDE && HDF5_USE_FILE_LOCKING=FALSE torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29501 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly_dec_v3_frozen.yaml
+# Step 3: Training (4 GPUs)
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+    finetune/train_wave_2d_lora_v3.py \
+    --config configs/finetune_wave_2d_v3.yaml
 
-# --- Multi-node connectivity test ---
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29501 tools/test_multi_node.py
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29501 tools/test_multi_node.py
+# =========================
+# 4. Advection-Diffusion 2D  (DATA NOT YET GENERATED)
+# =========================
 
+# Step 1: Generate data
+python tools/generate_advdiff_2d.py
 
-###############################################################################
-#                         FINETUNE - Data Generation
-###############################################################################
+# Step 2: GT PDE Verification
+python tools/test_gt_pde_advdiff_2d.py
 
-# Heat 3D: 128^3 grid, T=200, dt=0.01 (total time = 2.0s)
-python finetune/generate_analytical_3d.py \
-    --equation heat --output data/finetune/heat_3d_128.h5 \
-    --n_samples 20 --param_min 0.01 --param_max 0.1 \
-    --nx 128 --ny 128 --nz 128 --T 200 --dt 0.01
+# Step 3: Training (4 GPUs)
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+    finetune/train_advdiff_2d_lora_v3.py \
+    --config configs/finetune_advdiff_2d_v3.yaml
 
-# Ethier-Steinman 3D: 128^3 grid, T=200, dt=0.01 (total time = 2.0s)
-python finetune/generate_ethier_steinman_3d.py \
-    --output data/finetune/ethier_steinman_3d_128.h5 \
-    --n_samples 20 --nu_min 0.01 --nu_max 0.1 \
-    --nx 128 --ny 128 --nz 128 --T 200 --dt 0.01
+# =========================
+# 5. Burgers 2D Cole-Hopf  (DATA READY: 4.0G)
+# =========================
 
+# Step 1: Generate data (DONE — /scratch-share/SONG0304/finetune/burgers_2d_ch.hdf5)
+python tools/generate_burgers_2d_ch.py
 
-###############################################################################
-#                      FINETUNE - Gray-Scott
-###############################################################################
+# Step 2: GT PDE Verification
+python tools/test_gt_pde_burgers_2d_ch.py
 
-# Step 1: GT PDE verification -> get eq_scales
-python tools/test_gt_pde_gray_scott.py --data /scratch-share/SONG0304/finetune/gray_scott_test.h5
-
-# Step 2: Training (BC + PDE, per-equation normalized, postsmooth checkpoint)
-# NOTE: update eq_scales in config after running Step 1!
-torchrun --nproc_per_node=4 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3.yaml
-
-# Step 3: Postsmooth + patch-width boundary (bc_width=16)
-CUDA_VISIBLE_DEVICES=3,4,5,7 torchrun --nproc_per_node=4 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3_postsmooth.yaml
-
-# Step 4: Decoder V3 + patch-width boundary (bc_width=16)
-CUDA_VISIBLE_DEVICES=1,3,4,7 torchrun --nproc_per_node=4 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3_dec_v3.yaml
-
-# Step 5: A/B comparison — bc_width=1 (default) vs bc_width=16 (dec_v3)
-# bc_width=1 (default boundary, 1-pixel edge)
-CUDA_VISIBLE_DEVICES=1,3,4,7 torchrun --nproc_per_node=4 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3.yaml
-# bc_width=16 (resume from existing checkpoint)
-CUDA_VISIBLE_DEVICES=1,3,4,7 torchrun --nproc_per_node=4 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3_dec_v3.yaml --resume checkpoints_gray_scott_lora_v4_dec_v3/best_lora.pt
-
-# UNet baseline (BC + PDE only, no RMSE, train from scratch)
-torchrun --nproc_per_node=4 finetune/train_gray_scott_unet.py --config configs/finetune_gray_scott_unet.yaml
-
-###############################################################################
-#                      FINETUNE - Shear Flow
-###############################################################################
-
-# Training (BC + PDE, per-equation normalized, postsmooth checkpoint)
-torchrun --nproc_per_node=4 finetune/train_shear_flow_lora_v3.py --config configs/finetune_shear_flow_v3.yaml
-
-
-###############################################################################
-#                      FINETUNE - Taylor-Green
-###############################################################################
-
-CUDA_VISIBLE_DEVICES=1,2,3,5,6,7 torchrun --nproc_per_node=6 finetune/train_taylor_green_lora_v3.py --config configs/finetune_taylor_green_v3.yaml
-
-
-###############################################################################
-#                      FINETUNE - Heat 3D
-###############################################################################
-
-torchrun --nproc_per_node=8 finetune/train_heat_3d_lora_v3.py --config configs/finetune_heat_3d_v4.yaml
-
-
-###############################################################################
-#                      FINETUNE - Rayleigh-Benard
-###############################################################################
-
-# LoRA finetuning (BC + PDE: continuity + buoyancy, v2 decoder)
-torchrun --nproc_per_node=4 finetune/train_rayleigh_benard_lora_v3.py --config configs/finetune_rayleigh_benard_v3.yaml
-
-# A/B comparison: dec_v3 vs postsmooth (2-node 8 GPU, parallel)
-# --- dec_v3 (port 29502) ---
-# Terminal 1 (10.128.10.35, master):
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29502 finetune/train_rayleigh_benard_lora_v3.py --config configs/finetune_rayleigh_benard_v3.yaml
-# Terminal 2 (10.128.10.35):
-cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29502 finetune/train_rayleigh_benard_lora_v3.py --config configs/finetune_rayleigh_benard_v3.yaml
-
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29502 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3.yaml
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29502 finetune/train_gray_scott_lora_v3.py --config configs/finetune_gray_scott_v3.yaml
-
-# --- dec_v3 + bcw16 (port 29502) ---
-# Terminal 1 (10.128.10.35, master):
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29510 finetune/train_rayleigh_benard_lora_v3.py --config configs/finetune_rayleigh_benard_v3_bcw16.yaml
-# Terminal 2:
-cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29510 finetune/train_rayleigh_benard_lora_v3.py --config configs/finetune_rayleigh_benard_v3_bcw16.yaml
-
-# --- dec_v3 round2 continue (port 29503) ---
-# Terminal 1 (10.128.10.33, master):
-CUDA_VISIBLE_DEVICES=1,2,3 torchrun --nnodes=2 --nproc_per_node=3 --node_rank=0 --master_addr=10.128.10.33 --master_port=29503 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly_dec_v3.yaml --resume checkpoints_v4_2donly_dec_v3_round2/resume
-# Terminal 2 (10.128.10.33):
-cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.33 --master_port=29503 pretrain/train_pretrain_v4.py --config configs/pretrain_v4_2donly_dec_v3.yaml --resume checkpoints_v4_2donly_dec_v3_round2/resume
-
-
-
-
-###############################################################################
-#                      FINETUNE - NS-PwC
-###############################################################################
-
-# Step 1: Download data (~9.7 GB, first 2 velocity chunks)
-hf download camlab-ethz/NS-PwC velocity_0.nc velocity_1.nc --local-dir /scratch-share/SONG0304/finetune/NS-PwC --repo-type dataset
-
-# Step 2: Inspect data structure
-python -c "
-from netCDF4 import Dataset
-import numpy as np
-f = Dataset('/scratch-share/SONG0304/finetune/NS-PwC/velocity_0.nc', 'r')
-print('=== Dimensions ===')
-for d in f.dimensions: print(f'  {d}: {f.dimensions[d].size}')
-print('=== Variables ===')
-for v in f.variables: print(f'  {v}: shape={f.variables[v].shape}, dtype={f.variables[v].dtype}')
-data = f.variables['velocity'][0]  # first sample
-print(f'Sample 0 shape: {data.shape}')
-print(f'  ch0 (u_x): min={data[:,0].min():.4f}, max={data[:,0].max():.4f}')
-print(f'  ch1 (u_y): min={data[:,1].min():.4f}, max={data[:,1].max():.4f}')
-print(f'  ch2 (tracer): min={data[:,2].min():.4f}, max={data[:,2].max():.4f}')
-f.close()
-"
-
-# Step 3: GT PDE residual verification
-python tools/test_gt_pde_ns_pwc.py
-
-# Step 4: Preprocess NetCDF -> HDF5 (20,000 samples from 2 velocity files)
-HDF5_USE_FILE_LOCKING=FALSE python tools/preprocess_ns_pwc.py \
-    --input_dir /scratch-share/SONG0304/finetune/NS-PwC \
-    --output /scratch-share/SONG0304/finetune/ns_pwc.hdf5
-
-# Step 5: Full fine-tune (all params, full-field RMSE, dec_v3 init, 2-node 8 GPU)
-# Terminal 1 (10.128.10.35, node 0):
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29501 finetune/train_ns_pwc_fullft.py --config configs/finetune_ns_pwc_fullft.yaml
-# Terminal 2 (另一个 node, node 1):
-cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29501 finetune/train_ns_pwc_fullft.py --config configs/finetune_ns_pwc_fullft.yaml
-
-# Step 6: LoRA training (BC + PDE: div + vorticity + tracer, postsmooth checkpoint)
-torchrun --nproc_per_node=4 finetune/train_ns_pwc_lora_v3.py --config configs/finetune_ns_pwc_v3.yaml
-
-
-
-
-###############################################################################
-#                      FINETUNE - NS-SVS
-###############################################################################
-
-# Step 1: Download data (~82.6 GB, 17 velocity_*.nc files)
-hf download camlab-ethz/NS-SVS --local-dir /scratch-share/SONG0304/finetune/NS-SVS --repo-type dataset
-
-# Step 2: Preprocess NetCDF -> HDF5
-HDF5_USE_FILE_LOCKING=FALSE python tools/preprocess_ns_svs.py --input_dir /scratch-share/SONG0304/finetune/NS-SVS --output /scratch-share/SONG0304/finetune/ns_svs.hdf5
-
-# Step 3: GT PDE verification -> get eq_scales
-python tools/test_gt_pde_ns_svs.py --data_dir /scratch-share/SONG0304/finetune/NS-SVS
-
-# Step 4: LoRA training (BC + PDE, base=ns_pwc_fullft, 2-node 8 GPU)
-# Terminal 1 (10.128.10.35, node 0):
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29501 finetune/train_ns_svs_lora_v3.py --config configs/finetune_ns_svs_v3.yaml
-# Terminal 2 (另一个 node, node 1):
-cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29501 finetune/train_ns_svs_lora_v3.py --config configs/finetune_ns_svs_v3.yaml
-
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29510  finetune/train_ns_svs_lora_v3.py --config configs/finetune_ns_svs_v3_bcw16.yaml
-
-cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35  --master_port=29510 finetune/train_ns_svs_lora_v3.py --config configs/finetune_ns_svs_v3_bcw16.yaml
-
-###############################################################################
-#                      FINETUNE - Active Matter
-###############################################################################
-
-# Step 1: Download data (zeta=1.0, alpha=-1 to -5, ~3.6 GB)
-hf download polymathic-ai/active_matter \
-    data/train/active_matter_L_10.0_zeta_1.0_alpha_-1.0.hdf5 \
-    data/train/active_matter_L_10.0_zeta_1.0_alpha_-2.0.hdf5 \
-    data/train/active_matter_L_10.0_zeta_1.0_alpha_-3.0.hdf5 \
-    data/train/active_matter_L_10.0_zeta_1.0_alpha_-4.0.hdf5 \
-    data/train/active_matter_L_10.0_zeta_1.0_alpha_-5.0.hdf5 \
-    --local-dir /scratch-share/SONG0304/finetune/active_matter --repo-type dataset
-
-# Step 2: Preprocess (19 samples, 81 timesteps, 256x256)
-HDF5_USE_FILE_LOCKING=FALSE python tools/preprocess_active_matter.py \
-    --input_dir /scratch-share/SONG0304/finetune/active_matter/data/train \
-    --output /scratch-share/SONG0304/finetune/active_matter_zeta1.hdf5
-
-# Step 3: GT PDE verification -> get eq_scales
-CUDA_VISIBLE_DEVICES=0 python tools/test_gt_pde_active_matter.py
-
-# Step 4: LoRA training (BC + PDE: continuity + concentration, dec_v3)
-torchrun --nproc_per_node=4 finetune/train_active_matter_lora_v3.py --config configs/finetune_active_matter_v3.yaml
-
-
-###############################################################################
-#                      FINETUNE - Turbulent Radiative 2D
-###############################################################################
-
-
-
-# Step 2: Preprocess (48 samples, 101 timesteps, 128x384)
-HDF5_USE_FILE_LOCKING=FALSE python tools/preprocess_turbulent_radiative_2d.py \
-    --input_dir /scratch-share/SONG0304/finetune/turbulent_radiative_2d/data/train \
-    --output /scratch-share/SONG0304/finetune/turbulent_radiative_2d.hdf5
-
-# Step 3: GT PDE verification
-CUDA_VISIBLE_DEVICES=0 python tools/test_gt_pde_turbulent_radiative_2d.py
-
-# Step 4: LoRA training (BC + PDE: mass + momentum, dec_v3, 2-node 8 GPU)
-# Terminal 1 (10.128.10.35, node 0):
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29501 finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
-# Terminal 2 (另一个 node, node 1):
-cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29501 finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
-
-CUDA_VISIBLE_DEVICES=0torchrun --nproc_per_node=4  finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
-
-torchrun --nproc_per_node=4  finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3_bcw16.yaml
-
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29506   finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
-cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29506  finetune/train_turbulent_radiative_2d_lora_v3.py --config configs/finetune_turbulent_radiative_2d_v3.yaml
-
-
-###############################################################################
-#                      FINETUNE - Wave-Gauss
-###############################################################################
-
-# Step 1: Download data (~11.7 GB: 3 solution files + 1 c file)
-hf download camlab-ethz/Wave-Gauss --local-dir /scratch-share/SONG0304/finetune/Wave-Gauss --repo-type dataset
-
-# Step 2: Preprocess NetCDF -> HDF5 (10512 samples, T=15, 128x128)
-python tools/preprocess_wave_gauss.py \
-    --input_dir /scratch-share/SONG0304/finetune/Wave-Gauss \
-    --output /scratch-share/SONG0304/finetune/wave_gauss.hdf5
-
-# Step 3: GT PDE verification -> get eq_scales
-python tools/test_gt_pde_wave_gauss.py --data /scratch-share/SONG0304/finetune/wave_gauss.hdf5
-
-# Step 4: Training (update eq_scales in config after Step 3!)
-CUDA_VISIBLE_DEVICES=0,1,3,7  torchrun --nproc_per_node=4 finetune/train_wave_gauss_lora_v3.py --config configs/finetune_wave_gauss_v3.yaml
-
-
-###############################################################################
-#                   VISUALIZATION & EVALUATION
-###############################################################################
-
-# === Pretrain V4 Evaluation ===
-
-# All datasets (1D + 2D + 3D)
-torchrun --nproc_per_node=4 eval/eval_pretrain_v4.py \
-    --config configs/pretrain_v4_s_3D.yaml \
-    --checkpoint checkpoints_v4_s_3d_with_best1-2d/best_tf.pt \
-    --batch_size 4 --batch_size_3d 1
-
-# 3D only
-torchrun --nproc_per_node=8 eval/eval_pretrain_v4.py \
-    --config configs/pretrain_v4_s_3D.yaml \
-    --checkpoint checkpoints_v4_s_3d_with_best1-2d/best_tf.pt \
-    --datasets 3d_cfd --batch_size_3d 1
-
-# 1D+2D only (compare with V3)
-torchrun --nproc_per_node=4 eval/eval_pretrain_v4.py \
-    --config configs/pretrain_v4_2donly.yaml \
-    --checkpoint checkpoints_v4_2donly/best_tf.pt \
-    --datasets diffusion_reaction 2d_cfd swe 
-
-torchrun --nproc_per_node=4 eval/eval_pretrain_v4.py \
-    --config configs/pretrain_v4_2donly_postsmooth.yaml \
-    --checkpoint checkpoints_v4_2donly_postsmooth/best_tf.pt \
-    --datasets diffusion_reaction 2d_cfd swe
-
-# Decoder V3 (skip + cross-patch) vs V2
-torchrun --nproc_per_node=4 eval/eval_pretrain_v4.py \
-    --config configs/pretrain_v4_2donly_dec_v3.yaml \
-    --checkpoint checkpoints_v4_2donly_dec_v3/best_tf.pt \
-    --datasets diffusion_reaction 2d_cfd swe
-
-# === Gray-Scott ===
-
-# Multi-GPU full evaluation
-CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_gray_scott_lora.py \
-    --config configs/finetune_gray_scott_v3.yaml \
-    --checkpoint checkpoints_gray_scott_lora_v4_bc1/best_lora.pt --scan_all
-
-CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_gray_scott_lora.py \
-    --config configs/finetune_gray_scott_v3_dec_v3.yaml \
-    --checkpoint checkpoints_gray_scott_lora_v4_dec_v3/best_lora.pt --scan_all    
-
-CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_gray_scott_lora.py \
-    --config configs/finetune_gray_scott_v3_postsmooth.yaml \
-    --checkpoint checkpoints_gray_scott_lora_v4_postsmooth/best_lora.pt --scan_all        
-
-# Single-GPU visualization
-python tools/visualize_gray_scott_lora.py \
-    --config configs/finetune_gray_scott_v3.yaml \
-    --checkpoint checkpoints_gray_scott_lora_v4_lambda1/best_lora.pt --output_dir ./vis_results/gray_scott_vis
-
-# === Shear Flow ===
-
-# Multi-GPU full evaluation
-torchrun --nproc_per_node=4 tools/visualize_shear_flow_lora.py \
-    --config configs/finetune_shear_flow_v3.yaml \
-    --checkpoint checkpoints_shear_flow_lora_v3_origin_lambda_10000_continue/best_lora.pt --scan_all
-
-# Single-GPU visualization
-python tools/visualize_shear_flow_lora.py \
-    --config configs/finetune_shear_flow_v3.yaml \
-    --checkpoint checkpoints_shear_flow_lora_v3_origin_lambda_10000_continue/best_lora.pt --output_dir ./vis_results/shear_flow_vis
-
-# Per-timestep nRMSE evaluation
-CUDA_VISIBLE_DEVICES=0 python eval/eval_nrmse.py \
-    --config configs/finetune_shear_flow_v3.yaml \
-    --checkpoint checkpoints_shear_flow_lora_v3_origin_lambda_10000_continue/best_lora.pt \
-    --per_timestep
-
-# === Taylor-Green ===
-
-# Multi-GPU full evaluation
-torchrun --nproc_per_node=4 tools/visualize_taylor_green_lora.py \
-    --config configs/finetune_taylor_green_v3.yaml \
-    --checkpoint checkpoints_taylor_green_lora_v3/best_lora.pt --scan_all
-
-# Single-GPU visualization
-python tools/visualize_taylor_green_lora.py \
-    --config configs/finetune_taylor_green_v3.yaml \
-    --checkpoint checkpoints_taylor_green_lora_v3/best_lora.pt --output_dir ./taylor_green_vis
-
-# === Heat 3D ===
-
-# Multi-GPU full evaluation
-torchrun --nproc_per_node=8 tools/visualize_heat_3d_lora.py \
-    --config configs/finetune_heat_3d_v4.yaml \
-    --checkpoint checkpoints_heat_3d_lora_v4/best_lora.pt --scan_all
-
-# Single-GPU visualization
-python tools/visualize_heat_3d_lora.py \
-    --config configs/finetune_heat_3d_v4.yaml \
-    --checkpoint checkpoints_heat_3d_lora_v4/best_lora.pt \
-    --output_dir ./vis_results/heat_3d_vis
-
-# Raw 3D data visualization
-python tools/visualize_3d_data.py \
-    --heat data/finetune/heat_3d_128.h5 \
-    --samples 0 1 2 --times 0 50 100 199
-
-python tools/visualize_3d_data.py \
-    --ethier data/finetune/ethier_steinman_3d_128.h5 \
-    --samples 0 1 2 --times 0 50 100 199
-
-# === Rayleigh-Benard ===
-
-# Multi-GPU full evaluation
-CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_rayleigh_benard_lora.py \
-    --config configs/finetune_rayleigh_benard_v3.yaml \
-    --checkpoint checkpoints_rayleigh_benard_lora_v3/best_lora.pt --scan_all
-
-
-CUDA_VISIBLE_DEVICES=3,5,6,7  torchrun --nproc_per_node=4 tools/visualize_rayleigh_benard_lora.py \
-    --config configs/finetune_rayleigh_benard_v3_postsmooth.yaml \
-    --checkpoint checkpoints_rayleigh_benard_lora_v3_postsmooth/best_lora.pt --scan_all   
-
-torchrun --nproc_per_node=4 tools/visualize_rayleigh_benard_lora.py \
-    --config configs/finetune_rayleigh_benard_v3_bcw16.yaml \
-    --checkpoint checkpoints_rayleigh_benard_lora_v3_bcw16/best_lora.pt --scan_all
-
-# Single-GPU visualization
-python tools/visualize_rayleigh_benard_lora.py \
-    --config configs/finetune_rayleigh_benard_v3.yaml \
-    --checkpoint checkpoints_rayleigh_benard_lora_v3/best_lora.pt --output_dir ./vis_results/rayleigh_benard_vis
-
-# === Turbulent Radiative ===
-
-# Multi-GPU full evaluation
-CUDA_VISIBLE_DEVICES=2,3,5,6  torchrun --nproc_per_node=4 tools/visualize_turbulent_radiative_lora.py \
-    --config configs/finetune_turbulent_radiative_2d_v3_bcw16.yaml \
-    --checkpoint checkpoints_turbulent_radiative_2d_lora_v3_bcw16/best_lora.pt --scan_all
-
-# Single-GPU visualization
-python tools/visualize_turbulent_radiative_lora.py \
-    --config configs/finetune_turbulent_radiative_v3.yaml \
-    --checkpoint checkpoints_turbulent_radiative_lora_v3/best_lora.pt --output_dir ./vis_results/turbulent_radiative_vis
-
-# === NS-PwC ===
-
-# Multi-GPU full evaluation
-torchrun --nproc_per_node=4 tools/visualize_ns_pwc_lora.py \
-    --config configs/finetune_ns_pwc_v3.yaml \
-    --checkpoint checkpoints_ns_pwc_lora_v3/best_lora.pt --scan_all
-
-# Single-GPU visualization
-python tools/visualize_ns_pwc_lora.py \
-    --config configs/finetune_ns_pwc_v3.yaml \
-    --checkpoint checkpoints_ns_pwc_lora_v3/best_lora.pt --output_dir ./vis_results/ns_pwc_vis
-
-# === NS-SVS ===
-
-# Multi-GPU full evaluation
-CUDA_VISIBLE_DEVICES=1,3,4,7  torchrun --nproc_per_node=4 tools/visualize_ns_svs_lora.py --config configs/finetune_ns_svs_v3_bcw16.yaml --checkpoint checkpoints_ns_svs_lora_v3_bcw16/best_lora.pt --scan_all
-
-# Single-GPU visualization
-python tools/visualize_ns_svs_lora.py --config configs/finetune_ns_svs_v3.yaml --checkpoint checkpoints_ns_svs_lora_v3/best_lora.pt --output_dir ./vis_results/ns_svs_vis
-
-CUDA_VISIBLE_DEVICES=1,3,4,7 torchrun --nproc_per_node=4 tools/eval_zero_shot.py \
---checkpoint checkpoints_ns_pwc_fullft/best_tf.pt \
---config configs/finetune_ns_svs_v3.yaml
-
-# === Wave-Gauss ===
-
-# Multi-GPU full evaluation
-torchrun --nproc_per_node=4 tools/visualize_wave_gauss_lora.py \
-    --config configs/finetune_wave_gauss_v3.yaml \
-    --checkpoint checkpoints_wave_gauss_lora_v3/best_lora.pt --scan_all
-
-# Single-GPU visualization
-python tools/visualize_wave_gauss_lora.py \
-    --config configs/finetune_wave_gauss_v3.yaml \
-    --checkpoint checkpoints_wave_gauss_lora_v3/best_lora.pt --output_dir ./vis_results/wave_gauss_vis
-
-
-###############################################################################
-#                         DEMO VIDEOS
-###############################################################################
-
-# Gray-Scott demo video (Species A, viridis, 50-step rollout)
-python tools/generate_demo_video.py \
-    --dataset gray_scott \
-    --config configs/finetune_gray_scott_v3.yaml \
-    --checkpoint checkpoints_gray_scott_lora_v4_lambda1/best_lora.pt \
-    --output demo_gray_scott.mp4 --num_rollout 50 --fps 8
-
-# Shear Flow demo video (Tracer, RdBu_r, 50-step rollout)
-python tools/generate_demo_video.py \
-    --dataset shear_flow \
-    --config configs/finetune_shear_flow_v3.yaml \
-    --checkpoint checkpoints_shear_flow_lora_v3_origin_lambda_10000_continue/best_lora.pt \
-    --clip_idx 1
-
-
-###############################################################################
-#                      FINETUNE - Active Matter
-###############################################################################
-
-
-# Step 2: Preprocess (19 samples, 81T, 256x256, vx+vy+concentration only)
-HDF5_USE_FILE_LOCKING=FALSE python tools/preprocess_active_matter.py \
-    --input_dir /scratch-share/SONG0304/finetune/active_matter/data/train \
-    --output /scratch-share/SONG0304/finetune/active_matter_zeta1.hdf5
-
-# Step 3: GT PDE verification
-CUDA_VISIBLE_DEVICES=0 python tools/test_gt_pde_active_matter.py
-
-
-# Step 5: LoRA training (BC + PDE: continuity + concentration, dec_v3, 2-node 8 GPU)
-# Terminal 1 (10.128.10.35, node 0):
-torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --master_addr=10.128.10.35 --master_port=29505 finetune/train_active_matter_lora_v3.py --config configs/finetune_active_matter_v3.yaml
-# Terminal 2 (另一个 node, node 1):
-cd /home/msai/song0304/code/PDE && torchrun --nnodes=2 --nproc_per_node=4 --node_rank=1 --master_addr=10.128.10.35 --master_port=29505 finetune/train_active_matter_lora_v3.py --config configs/finetune_active_matter_v3.yaml
-
-# Step 6: Evaluation (bc_width=1, dec_v3)
-torchrun --nproc_per_node=4 tools/visualize_active_matter_lora.py \
-    --config configs/finetune_active_matter_v3.yaml \
-    --checkpoint checkpoints_active_matter_lora_v3/best_lora.pt --scan_all
-
-# Step 7: Evaluation (bc_width=16, dec_v3)
-torchrun --nproc_per_node=4 tools/visualize_active_matter_lora.py \
-    --config configs/finetune_active_matter_v3_bcw16.yaml \
-    --checkpoint checkpoints_active_matter_lora_v3_bcw16/best_lora.pt --scan_all
-
-
-CUDA_VISIBLE_DEVICES=1 python tools/diagnose_bc_width_effect.py \
-    --config_bc1 configs/finetune_gray_scott_v3.yaml \
-    --ckpt_bc1 checkpoints_gray_scott_lora_v4_bc1/best_lora.pt \
-    --config_bc16 configs/finetune_gray_scott_v3_dec_v3.yaml \
-    --ckpt_bc16 checkpoints_gray_scott_lora_v4_dec_v3/best_lora.pt
-
-
-CUDA_VISIBLE_DEVICES=3 python tools/diagnose_bc_width_effect.py \
-    --config_bc1 configs/finetune_rayleigh_benard_v3.yaml \
-    --ckpt_bc1 checkpoints_rayleigh_benard_lora_v3/best_lora.pt \
-    --config_bc16 configs/finetune_rayleigh_benard_v3_bcw16.yaml \
-    --ckpt_bc16 checkpoints_rayleigh_benard_lora_v3_bcw16/best_lora.pt    
+# Step 3: Training (4 GPUs)
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+    finetune/train_burgers_2d_ch_lora_v3.py \
+    --config configs/finetune_burgers_2d_ch_v3.yaml

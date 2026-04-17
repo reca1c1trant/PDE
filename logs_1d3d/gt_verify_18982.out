@@ -1,0 +1,10 @@
+=== 2D Burgers ===
+  alpha_2=1.464844e-05, delta_phys=-2.343750e-03
+  dx=0.006250, dt=1.0
+  u_momentum: mean=3.760996e-03, max=1.688147e-02
+  v_momentum: mean=3.651641e-03, max=1.688338e-02
+  min(eq_scales) = 3.651641e-03
+
+=== 1D Burgers ===
+  alpha_2=2.929687e-05, delta_phys=-4.687500e-03
+  momentum: mean=2.990856e-03, max=2.731718e-02

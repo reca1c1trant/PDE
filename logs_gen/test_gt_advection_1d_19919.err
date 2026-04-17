@@ -1,0 +1,17 @@
+/cm/local/apps/slurm/var/spool/job19919/slurm_script: line 18: activate: No such file or directory
+Traceback (most recent call last):
+  File "/home/msai/song0304/code/PDE/tools/test_gt_pde_advection_1d.py", line 148, in <module>
+    main()
+  File "/home/msai/song0304/code/PDE/tools/test_gt_pde_advection_1d.py", line 68, in main
+    with h5py.File(DATA_PATH, 'r') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/h5py/_hl/files.py", line 566, in __init__
+    fid = make_fid(name, mode, userblock_size, fapl, fcpl, swmr=swmr)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/h5py/_hl/files.py", line 241, in make_fid
+    fid = h5f.open(name, flags, fapl=fapl)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "h5py/_objects.pyx", line 54, in h5py._objects.with_phil.wrapper
+  File "h5py/_objects.pyx", line 55, in h5py._objects.with_phil.wrapper
+  File "h5py/h5f.pyx", line 104, in h5py.h5f.open
+FileNotFoundError: [Errno 2] Unable to synchronously open file (unable to open file: name = '/scratch-share/SONG0304/finetune/advection_1d.hdf5', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0)

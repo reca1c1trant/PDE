@@ -1,0 +1,13 @@
+2409.02313:memory_pde
+2412.04833:wdno
+2410.01337:phympgn
+2410.06820:pi_neural_solver
+2512.05297:cfo
+2504.00510:schwarz_ni
+2509.24332:imooe
+2602.15184:physics_knowledge_no
+2505.18671:ss_evoop
+2504.19496:disco
+2505.19105:lamo
+2412.04134:m2pde
+2503.18731:thermalizer

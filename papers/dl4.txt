@@ -1,0 +1,16 @@
+2509.23173:f_adapter
+2405.17211:spectral_refiner
+2203.07404:causal_pinn
+2007.14527:ntk_pinn
+2202.07643:lie_symmetry_aug
+2107.07562:fno_theory
+2402.15715:ol_survey_2024
+2403.17728:mae_pde
+2509.00867:sno_self_supervised
+2509.05117:hypino
+2512.04974:echo
+2505.18781:gaot
+2506.06158:enma
+2511.12764:inc_corrector
+2512.19643:anchor_hybrid
+2410.02698:lielac

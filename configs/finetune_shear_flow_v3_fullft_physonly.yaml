@@ -1,0 +1,106 @@
+# Shear Flow LoRA Finetuning — ABLATION: Fixed Normalization
+# eq_scales = GT RMS averaged over all space and time, no per-timestep
+# Incompressible NS + Tracer Transport, doubly periodic
+# Channels: Vx(0), Vy(1), tracer(14), pressure(15)
+# NOTE: Shear flow base config had no GT eq_scales computed; using DEFAULT 1.0
+#       TODO: run test_gt_pde_shear_flow.py to get actual spatiotemporal-averaged values
+
+model_name: shear_flow_fullft_physonly
+pde_type: shear_flow
+
+model:
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+    post_smooth_kernel: 5
+
+  vector_channels: 3
+  scalar_channels: 15
+
+  enable_1d: false
+  enable_3d: false
+
+  pretrained_path: ./checkpoints_v4_2donly_postsmooth/best_tf.pt
+
+
+
+training:
+  max_epochs: 30
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_steps: 200
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  lambda_bc: 10000.0
+  lambda_pde: 1.1684e-3
+  bc_width: 16
+
+  save_rmse_weight: 1000
+  save_pde_weight: 1
+
+  eval_interval: 200
+  early_stopping_patience: 30
+
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
+dataloader:
+  batch_size: 2
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: /scratch-share/SONG0304/finetune/shear_flow_clean.h5
+  seed: 42
+  t_input: 8
+  train_ratio: 0.9
+  clips_per_sample: 200
+  val_time_interval: 4
+  vector_dim: 2
+
+logging:
+  project: pde-shear-flow-lora
+  entity: null
+  save_dir: ./checkpoints_shear_flow_fullft_physonly
+  log_interval: 10
+
+checkpoint:
+  resume_from: null
+
+physics:
+  nx: 256
+  ny: 512
+  Lx: 1.0
+  Ly: 2.0
+  dt: 0.1
+  nu: 1.0e-4
+  D: 1.0e-3
+
+  # Fixed normalization: GT RMS averaged over all space and time
+  eq_scales:
+    continuity: 1.1684e-03
+    x_momentum: 2.0025e-03
+    y_momentum: 2.8181e-03
+    tracer: 2.9872e-03

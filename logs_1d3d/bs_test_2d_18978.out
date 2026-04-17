@@ -1,0 +1,20 @@
+
+Loading pretrained weights from: ./checkpoints_v4_2donly_postsmooth/best_tf.pt
+  Loaded 289 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'gate_proj', 'proj', 'down_proj', 'up_proj', 'qkv'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,064,264 total,  3,064,264 trainable
+Transformer (LoRA):   174,865,152 total,  4,866,048 trainable
+------------------------------------------------------------
+Total:                182,232,136 total, 12,233,032 trainable
+Trainable ratio: 6.71%
+============================================================
+
+Model loaded. Testing batch sizes for 2D (160x160)...

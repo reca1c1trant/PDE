@@ -44,7 +44,7 @@ model:
   enable_3d: false
 
   # Pretrained V4 2D-only checkpoint (decoder v3: skip + cross-patch)
-  pretrained_path: ./checkpoints_v4_2donly_dec_v3/best_tf.pt
+  pretrained_path: /home/msai/song0304/code/PDE/checkpoints_v4_2donly_dec_v3_round2/best_tf.pt
   gradient_checkpointing: true
 
   # Freeze options

@@ -81,5 +81,5 @@ logging:
   log_interval: 10
 
 checkpoint:
-  init_from: ./checkpoints_v4_2donly_dec_v3/best_tf.pt
+  init_from: ./checkpoints_v4_2donly_dec_v3_round2/best_tf.pt
   resume_from: null

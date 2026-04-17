@@ -1,0 +1,47 @@
+==========================================
+GT PDE Verification - 1D Advection
+Start: Sat Apr 11 12:34:16 AM +08 2026
+Node: TC2N05
+==========================================
+============================================================
+GT PDE Residual Verification - 1D Advection
+============================================================
+  scalar shape: torch.Size([1000, 101, 256, 1])
+  a range: [0.5008, 2.9987]
+
+Computing PDE residuals for 1000 samples...
+  (A) 4th-order central u_x, 2nd-order central u_t
+  (B) 1st-order upwind u_x (a-signed), 2nd-order central u_t
+  (C) n-PINN 2nd-order upwind a*(Fe-Fw)/dx  [matches training loss]
+
+  Sample 1/1000: central=3.4338e-03  upwind1=1.9286e-01  upwind2=2.3857e-02  a=1.436
+  Sample 100/1000: central=3.7885e-04  upwind1=7.7517e-02  upwind2=7.3961e-03  a=0.822
+  Sample 200/1000: central=8.2051e-03  upwind1=2.7067e-01  upwind2=3.6826e-02  a=1.867
+  Sample 300/1000: central=2.7896e-04  upwind1=6.2437e-02  upwind2=7.2140e-03  a=0.723
+  Sample 400/1000: central=1.0165e-03  upwind1=1.2651e-01  upwind2=1.6529e-02  a=0.913
+  Sample 500/1000: central=1.3217e-02  upwind1=2.6279e-01  upwind2=4.0699e-02  a=2.414
+  Sample 600/1000: central=9.6826e-04  upwind1=1.2182e-01  upwind2=1.0640e-02  a=1.108
+  Sample 700/1000: central=6.6535e-04  upwind1=1.3721e-01  upwind2=1.6236e-02  a=0.742
+  Sample 800/1000: central=3.1777e-03  upwind1=1.5091e-01  upwind2=1.2181e-02  a=2.065
+  Sample 900/1000: central=2.1000e-02  upwind1=3.6603e-01  upwind2=6.2308e-02  a=2.482
+  Sample 1000/1000: central=1.4425e-02  upwind1=3.7831e-01  upwind2=5.2304e-02  a=2.149
+
+============================================================
+Results (N=1000)
+============================================================
+  (A) 4th-order central:          mean_RMS = 8.593163e-03, max = 7.499381e-02
+  (B) 1st-order upwind:           mean_RMS = 2.075248e-01, max = 8.501800e-01
+  (C) n-PINN 2nd-order upwind:    mean_RMS = 3.030402e-02, max = 1.843208e-01
+
+  >>> Using n-PINN 2nd-order upwind RMS as eq_scales (matches Advection1DPDELoss)
+
+  --- eq_scales for config (mean RMS) ---
+  physics:
+    eq_scales:
+      advection: 3.0304e-02
+
+  Saved per-timestep scales to ./data/gt_scales/advection_1d_per_t.pt
+    advection (upwind2): shape=torch.Size([99]), mean=3.030402e-02
+
+============================================================
+Done: Sat Apr 11 12:34:20 AM +08 2026

@@ -97,13 +97,28 @@ class FinetuneDataset(Dataset):
                 self.n_samples = vec_shape[0]
                 self.n_timesteps = vec_shape[1]
 
-                # Auto-detect 2D vs 3D: [N,T,H,W,3]=6D vs [N,T,X,Y,Z,3]=7D
-                if len(vec_shape) == 7:
+                # Auto-detect 1D/2D/3D from vector shape:
+                #   1D: [N, T, X, 3]    -> len=4
+                #   2D: [N, T, H, W, 3] -> len=5
+                #   3D: [N, T, X, Y, Z, 3] -> len=6 (stored) or len=7 with extra dim
+                if len(vec_shape) == 4:
+                    # 1D: [N, T, X, 3]
+                    self.is_1d = True
+                    self.is_3d = False
+                    self.spatial_shape = (vec_shape[2],)  # (X,)
+                elif len(vec_shape) == 7:
+                    self.is_1d = False
                     self.is_3d = True
                     self.spatial_shape = vec_shape[2:5]  # (X, Y, Z)
                 else:
-                    self.is_3d = False
-                    self.spatial_shape = vec_shape[2:4]  # (H, W)
+                    # 2D: [N, T, H, W, 3] -> len=5, or 3D: [N, T, X, Y, Z, 3] -> len=6
+                    self.is_1d = False
+                    if len(vec_shape) == 6:
+                        self.is_3d = True
+                        self.spatial_shape = vec_shape[2:5]  # (X, Y, Z)
+                    else:
+                        self.is_3d = False
+                        self.spatial_shape = vec_shape[2:4]  # (H, W)
 
                 # Check for scalar
                 if 'scalar' in f and f['scalar'].shape[-1] > 0:
@@ -113,7 +128,7 @@ class FinetuneDataset(Dataset):
                     self.scalar_channels = 0
                     self.scalar_indices = []
 
-                dim_str = "3D" if self.is_3d else "2D"
+                dim_str = "1D" if getattr(self, 'is_1d', False) else ("3D" if self.is_3d else "2D")
                 logger.info(f"Detected NEW format ({dim_str}): {self.n_samples} samples, "
                            f"{self.n_timesteps} timesteps, shape {self.spatial_shape}")
 
@@ -248,6 +263,13 @@ class FinetuneDataset(Dataset):
             'vector_dim': torch.tensor(self.vector_dim, dtype=torch.long),
             'start_t': torch.tensor(start_t, dtype=torch.long),
         }
+
+        # Load per-sample advection params (a, b, c) for 3D advection datasets
+        for pname in ('params_a', 'params_b', 'params_c'):
+            if pname in f:
+                result[pname] = torch.tensor(
+                    float(f[pname][sample_idx]), dtype=torch.float32
+                )
 
         # Load boundary data if available (for PDE loss)
         if 'boundary_left' in f:
@@ -442,6 +464,11 @@ def finetune_collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch
         'nu': torch.stack([item['nu'] for item in batch], dim=0),
         'vector_dim': batch[0]['vector_dim'],
     }
+
+    # Optional per-sample advection params (3D advection datasets)
+    for pname in ('params_a', 'params_b', 'params_c'):
+        if pname in batch[0]:
+            result[pname] = torch.stack([item[pname] for item in batch], dim=0)
 
     # Optional boundary data
     if 'boundary_left' in batch[0]:

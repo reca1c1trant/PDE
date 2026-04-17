@@ -1,0 +1,120 @@
+# Taylor-Green Vortex 2D LoRA Finetuning Configuration
+# Incompressible Navier-Stokes: continuity + x-momentum + y-momentum
+# Periodic BC in both x and y, domain [0, 2pi]^2
+# Channels: Vx(0), Vy(1), pressure(15)
+# Loss: BC (supervised anchor) + PDE (continuity + x-mom + y-mom)
+
+model_name: taylor_green_2d_lora_v3_rescaled_norm
+
+model:
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+    post_smooth_kernel: 5
+
+  vector_channels: 3
+  scalar_channels: 15
+
+  enable_1d: false
+  enable_3d: false
+
+  pretrained_path: /home/msai/song0304/code/PDE/checkpoints_v4_2donly_postsmooth/best_tf.pt
+  gradient_checkpointing: true
+
+  freeze_encoder: false
+  freeze_decoder: false
+
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+      - qkv
+      - proj
+      - gate_proj
+      - up_proj
+      - down_proj
+
+training:
+  max_epochs: 30
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_steps: 200
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  lambda_bc: 10000.0
+  lambda_pde: 6.065e-7
+
+  # Save criterion: save_vrmse_weight * val_vrmse + save_pde_weight * val_pde
+  save_vrmse_weight: 100
+  save_pde_weight: 0
+
+  eval_interval: 200
+  early_stopping_patience: 30
+
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
+dataloader:
+  batch_size: 4
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: /scratch-share/SONG0304/finetune/taylor_green_2d.hdf5
+  seed: 42
+  t_input: 8
+  train_ratio: 0.9
+  clips_per_sample: null
+  val_time_interval: 20
+  vector_dim: 2
+
+logging:
+  project: pde-taylor-green-2d-lora
+  entity: null
+  save_dir: ./checkpoints_taylor_green_2d_lora_v3_rescaled_norm
+  log_interval: 10
+
+checkpoint:
+  resume_from: null
+
+physics:
+  nx: 256
+  ny: 256
+  Lx: 6.283185307    # 2*pi
+  Ly: 6.283185307    # 2*pi
+  dt: 0.01
+
+  # Per-equation normalization scales
+  eq_scales:
+    continuity: 6.065e-07
+    x_momentum: 5.960e-06
+    y_momentum: 5.960e-06
+
+  # Per-equation weights
+  eq_weights:
+    continuity: 1.0
+    x_momentum: 1.0
+    y_momentum: 1.0

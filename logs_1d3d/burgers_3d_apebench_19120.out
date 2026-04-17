@@ -1,0 +1,33 @@
+
+Loading pretrained weights from: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
+  Unexpected keys (ignored): 129
+    - encoder_1d.cnn_stem.stem.0.weight
+    - encoder_1d.cnn_stem.stem.0.bias
+    - encoder_1d.cnn_stem.stem.2.conv.0.weight
+    - encoder_1d.cnn_stem.stem.2.conv.0.bias
+    - encoder_1d.cnn_stem.stem.2.conv.2.weight
+    - encoder_1d.cnn_stem.stem.2.conv.2.bias
+    - encoder_1d.cnn_stem.stem.2.conv.3.weight
+    - encoder_1d.cnn_stem.stem.2.conv.3.bias
+    - encoder_1d.cnn_stem.stem.2.conv.5.weight
+    - encoder_1d.cnn_stem.stem.2.conv.5.bias
+    ... and 119 more
+  Loaded 428 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'down_proj', 'up_proj', 'proj', 'qkv', 'gate_proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,056,146 total,  3,056,146 trainable
+Encoder (3D):           9,260,288 total,  9,260,288 trainable
+Decoder (3D):          15,127,954 total, 15,127,954 trainable
+Transformer (LoRA):   204,098,304 total,  5,750,784 trainable
+------------------------------------------------------------
+Total:                235,845,412 total, 37,497,892 trainable
+Trainable ratio: 15.90%
+============================================================
+

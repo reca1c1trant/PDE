@@ -1,0 +1,62 @@
+2026-04-07 11:52:23,701 - INFO - ============================================================
+2026-04-07 11:52:23,701 - INFO - 1D Burgers LoRA Finetuning (V3 Model)
+2026-04-07 11:52:23,701 - INFO - ============================================================
+2026-04-07 11:52:23,701 - INFO - Config: configs/finetune_burgers_1d_v3_rescaled_norm.yaml
+2026-04-07 11:52:23,701 - INFO - Loss: BC (w=1) + PDE (u_t + u*u_x - nu*u_xx)
+2026-04-07 11:52:23,701 - INFO - Lambda BC: 10000.0, Lambda PDE: 9.2334e-06
+2026-04-07 11:52:23,701 - INFO - Save: 100*vrmse + 0*pde
+2026-04-07 11:52:23,701 - INFO - ============================================================
+2026-04-07 11:52:23,705 - INFO - Detected NEW format (1D): 1000 samples, 101 timesteps, shape (1024,)
+2026-04-07 11:52:23,717 - INFO - FinetuneDataset (train): 450 samples, all clips/sample, 41850 total clips
+2026-04-07 11:52:23,719 - INFO - Detected NEW format (1D): 1000 samples, 101 timesteps, shape (1024,)
+2026-04-07 11:52:23,721 - INFO - FinetuneDataset (val): 550 samples, all clips/sample, 2750 total clips
+2026-04-07 11:52:23,733 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 11:52:23,742 - INFO - FinetuneSampler: 550 batches, 550 per rank
+2026-04-07 11:52:23,743 - INFO - Steps per epoch: 2250
+2026-04-07 11:52:23,743 - INFO - Total steps: 67500
+2026-04-07 11:52:40,816 - INFO - PDE eq_scales: {'momentum': 9.2334e-06}
+2026-04-07 11:52:40,817 - INFO - PDE eq_weights: {'momentum': 1.0}
+wandb: Currently logged in as: reca1c1trant (reca1c1trant-ntu) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run rayl6qvf
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /home/msai/song0304/code/PDE/wandb/run-20260407_115243-rayl6qvf
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run burgers1d-lora-v3-r16
+wandb: ⭐️ View project at https://wandb.ai/reca1c1trant-ntu/pde-burgers-1d-lora
+wandb: 🚀 View run at https://wandb.ai/reca1c1trant-ntu/pde-burgers-1d-lora/runs/rayl6qvf
+2026-04-07 11:52:46,921 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 12:38:29,497 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 13:24:07,210 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 14:09:44,739 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+wandb: updating run metadata
+wandb: uploading output.log; uploading wandb-summary.json
+wandb: uploading output.log; uploading history steps 879-879, summary, console lines 188-195; uploading config.yaml
+wandb: uploading output.log; uploading config.yaml
+wandb: uploading data
+wandb: 
+wandb: Run history:
+wandb:    train/bc_loss ▁▂▁▁▂▁▆▁▂▁▁▁▂▁▁▁▂▄▂▁▂▂▁█▂▁▂▂▂▁▁▁▂▁▂▂▁▁▁▅
+wandb:      train/epoch ▁▁▁▁▁▁▁▁▁▁▃▃▃▃▃▃▃▃▆▆▆▆▆▆▆▆▆▆████████████
+wandb:         train/lr ▁████████████████████████████████▇▇▇▇▇▇▇
+wandb:   train/pde_loss ▁▂▁▂▂▃▁█▁▁▁▂▂▁▁▂▅▁▂▂▁▂▁▃▁▂▁▁▃▁▁▁▁▁▁▁▁▁▂▁
+wandb: train/total_loss ▂▁▁▁█▁▁▂▂▂▂▁▂▂▂▁▁▁▁▁▂▁▁▂▁▁▁▁▁▁▁▁▁▂▁▂▂▁▂▁
+wandb:      val/bc_loss ▄▄▄▃▄▆▄▂▄▃▇▃▁▂▁▂▂▂▂▁▂▁▃▅▃▂▁▂▁▃█▃▁▂▂█▁▁▃▃
+wandb:     val/pde_loss ▇▃▅▅▃█▂▂▂▂▇▂▂▃▂▃▃▂▂▂▂▂▂▂▂▂▂▂▁▂▅▂▁▁▂▃▁▁▁▂
+wandb:         val/rmse ▂▁▂▂▄▃▃▁▃▂▆▃▁▂▁▂▂▁▂▂▂▁▂▃▃▂▁▂▁▃▅▂▁▂▁█▁▁▂▂
+wandb:        val/vrmse ▂▁▂▂▄▃▃▁▃▂▆▃▁▂▁▁▂▁▂▁▃▁▂▄▃▂▁▂▁▃▅▂▁▂▁█▁▁▂▂
+wandb: 
+wandb: Run summary:
+wandb:    train/bc_loss 0.00235
+wandb:      train/epoch 4
+wandb:         train/lr 0.0001
+wandb:   train/pde_loss 179180064.0
+wandb: train/total_loss 1677.89184
+wandb:      val/bc_loss 0.002
+wandb:     val/pde_loss 775382016.0
+wandb:         val/rmse 0.00186
+wandb:        val/vrmse 0.03668
+wandb: 
+wandb: 🚀 View run burgers1d-lora-v3-r16 at: https://wandb.ai/reca1c1trant-ntu/pde-burgers-1d-lora/runs/rayl6qvf
+wandb: ⭐️ View project at: https://wandb.ai/reca1c1trant-ntu/pde-burgers-1d-lora
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260407_115243-rayl6qvf/logs

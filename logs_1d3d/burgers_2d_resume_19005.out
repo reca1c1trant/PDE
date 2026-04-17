@@ -1,0 +1,150 @@
+
+Loading pretrained weights from: ./checkpoints_v4_2donly_postsmooth/best_tf.pt
+  Loaded 289 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'proj', 'up_proj', 'down_proj', 'qkv', 'gate_proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,064,264 total,  3,064,264 trainable
+Transformer (LoRA):   174,865,152 total,  4,866,048 trainable
+------------------------------------------------------------
+Total:                182,232,136 total, 12,233,032 trainable
+Trainable ratio: 6.71%
+============================================================
+
+Loaded 300/300 trainable parameters
+
+Step 1200/8160 [E3]: vrmse=0.172551, rmse=0.030977, pde=14.284821, bc=0.024465
+Patience: 1/30
+
+Step 1400/8160 [E3]: vrmse=0.175091, rmse=0.031401, pde=13.923816, bc=0.024598
+Patience: 2/30
+
+Epoch 3/20: avg_bc=0.011897, avg_pde=11.083946
+
+Step 1600/8160 [E4]: vrmse=0.182915, rmse=0.032936, pde=14.943657, bc=0.024479
+Patience: 3/30
+
+Step 1800/8160 [E4]: vrmse=0.175301, rmse=0.031534, pde=14.477635, bc=0.022861
+Patience: 4/30
+
+Epoch 4/20: avg_bc=0.011094, avg_pde=11.291823
+
+Step 2000/8160 [E5]: vrmse=0.166951, rmse=0.029947, pde=14.394557, bc=0.021465
+Patience: 5/30
+
+Step 2200/8160 [E5]: vrmse=0.172477, rmse=0.030954, pde=15.277961, bc=0.021516
+Patience: 6/30
+
+Epoch 5/20: avg_bc=0.009710, avg_pde=11.084967
+
+Step 2400/8160 [E6]: vrmse=0.166814, rmse=0.029976, pde=14.671283, bc=0.020151
+Patience: 7/30
+
+Step 2600/8160 [E6]: vrmse=0.166797, rmse=0.029860, pde=14.959873, bc=0.020430
+Patience: 8/30
+
+Epoch 6/20: avg_bc=0.008818, avg_pde=11.473713
+
+Step 2800/8160 [E7]: vrmse=0.176474, rmse=0.031736, pde=15.060447, bc=0.020505
+Patience: 9/30
+
+Step 3000/8160 [E7]: vrmse=0.186192, rmse=0.033361, pde=14.992554, bc=0.022615
+Patience: 10/30
+
+Epoch 7/20: avg_bc=0.008280, avg_pde=11.530910
+
+Step 3200/8160 [E8]: vrmse=0.174812, rmse=0.031331, pde=15.131802, bc=0.020686
+Patience: 11/30
+
+Step 3400/8160 [E8]: vrmse=0.167534, rmse=0.030024, pde=14.858994, bc=0.019258
+Patience: 12/30
+
+Epoch 8/20: avg_bc=0.007836, avg_pde=11.560162
+
+Step 3600/8160 [E9]: vrmse=0.170605, rmse=0.030581, pde=14.675018, bc=0.019067
+Patience: 13/30
+
+Step 3800/8160 [E9]: vrmse=0.177754, rmse=0.031954, pde=14.741158, bc=0.019314
+Patience: 14/30
+
+Epoch 9/20: avg_bc=0.007007, avg_pde=11.414749
+
+Step 4000/8160 [E10]: vrmse=0.172799, rmse=0.030978, pde=14.637937, bc=0.018280
+Patience: 15/30
+
+Step 4200/8160 [E10]: vrmse=0.184085, rmse=0.032991, pde=15.440857, bc=0.019766
+Patience: 16/30
+
+Epoch 10/20: avg_bc=0.006918, avg_pde=11.557805
+
+Step 4400/8160 [E11]: vrmse=0.172809, rmse=0.031046, pde=14.656185, bc=0.018231
+Patience: 17/30
+
+Step 4600/8160 [E11]: vrmse=0.168438, rmse=0.030191, pde=14.421242, bc=0.018254
+Patience: 18/30
+
+Epoch 11/20: avg_bc=0.006485, avg_pde=11.531641
+
+Step 4800/8160 [E12]: vrmse=0.169392, rmse=0.030362, pde=14.673623, bc=0.017293
+Patience: 19/30
+
+Step 5000/8160 [E12]: vrmse=0.174627, rmse=0.031301, pde=14.839503, bc=0.018213
+Patience: 20/30
+
+Epoch 12/20: avg_bc=0.006012, avg_pde=11.460866
+
+Step 5200/8160 [E13]: vrmse=0.173598, rmse=0.031120, pde=14.661388, bc=0.017639
+Patience: 21/30
+
+Step 5400/8160 [E13]: vrmse=0.170332, rmse=0.030528, pde=14.863614, bc=0.016695
+Patience: 22/30
+
+Epoch 13/20: avg_bc=0.005758, avg_pde=11.594403
+
+Step 5600/8160 [E14]: vrmse=0.172073, rmse=0.030869, pde=14.827947, bc=0.016750
+Patience: 23/30
+
+Step 5800/8160 [E14]: vrmse=0.173660, rmse=0.031136, pde=14.666321, bc=0.017375
+Patience: 24/30
+
+Epoch 14/20: avg_bc=0.005377, avg_pde=11.412102
+
+Step 6000/8160 [E15]: vrmse=0.175974, rmse=0.031547, pde=14.603482, bc=0.017132
+Patience: 25/30
+
+Step 6200/8160 [E15]: vrmse=0.171395, rmse=0.030693, pde=14.653863, bc=0.016765
+Patience: 26/30
+
+Epoch 15/20: avg_bc=0.005181, avg_pde=11.368404
+
+Step 6400/8160 [E16]: vrmse=0.175944, rmse=0.031556, pde=14.652038, bc=0.016847
+Patience: 27/30
+
+Step 6600/8160 [E16]: vrmse=0.175874, rmse=0.031509, pde=14.549004, bc=0.016691
+Patience: 28/30
+
+Epoch 16/20: avg_bc=0.004908, avg_pde=11.332205
+
+Step 6800/8160 [E17]: vrmse=0.171462, rmse=0.030760, pde=14.483634, bc=0.016139
+Patience: 29/30
+
+Step 7000/8160 [E17]: vrmse=0.176081, rmse=0.031622, pde=14.685001, bc=0.016635
+Patience: 30/30
+Early stopping!
+
+Epoch 17/20: avg_bc=0.004691, avg_pde=10.954441
+⠦ [E17] BC=0.0041 PDE=8.4193 ━━━━━━━━━━━━━━━━━━━━━━━━      86% 7000/8160 0:25:30
+                              Training Complete                               
+┌───────────────┬────────────────────────────────────────────────────────────┐
+│ Total Epochs  │ 18                                                         │
+│ Total Steps   │ 7000                                                       │
+│ Best Val Loss │ 15.818290                                                  │
+│ Early Stopped │ Yes                                                        │
+│ Checkpoint    │ checkpoints_burgers_2d_apebench_rescaled_norm/best_lora.pt │
+└───────────────┴────────────────────────────────────────────────────────────┘

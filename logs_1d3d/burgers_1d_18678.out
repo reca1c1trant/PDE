@@ -1,0 +1,217 @@
+
+Loading pretrained weights from: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
+  Loaded 557 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'qkv', 'down_proj', 'proj', 'up_proj', 'gate_proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,056,146 total,  3,056,146 trainable
+Encoder (1D):           3,207,552 total,  3,207,552 trainable
+Decoder (1D):           1,127,954 total,  1,127,954 trainable
+Encoder (3D):           9,260,288 total,  9,260,288 trainable
+Decoder (3D):          15,127,954 total, 15,127,954 trainable
+Transformer (LoRA):   233,331,456 total,  6,635,520 trainable
+------------------------------------------------------------
+Total:                269,414,070 total, 42,718,134 trainable
+Trainable ratio: 15.86%
+============================================================
+
+
+Step 200/67500 : vrmse=0.030452, rmse=0.001567, pde=3990816000.000000, 
+bc=0.002538
+(warmup - no saving)
+
+Step 400/67500 [E1]: vrmse=0.025159, rmse=0.001271, pde=1584136064.000000, 
+bc=0.002312
+Saved best model (save=2.5159: 100*0.0252 + 0*1584136064.0000)
+
+Step 600/67500 [E1]: vrmse=0.031802, rmse=0.001581, pde=2970109184.000000, 
+bc=0.002593
+Patience: 1/30
+
+Step 800/67500 [E1]: vrmse=0.026273, rmse=0.001312, pde=2783528448.000000, 
+bc=0.001947
+Patience: 2/30
+
+Step 1000/67500 [E1]: vrmse=0.063980, rmse=0.003108, pde=1630183168.000000, 
+bc=0.002244
+Patience: 3/30
+
+Step 1200/67500 [E1]: vrmse=0.047852, rmse=0.002406, pde=4358582784.000000, 
+bc=0.003199
+Patience: 4/30
+
+Step 1400/67500 [E1]: vrmse=0.044235, rmse=0.002203, pde=1248692736.000000, 
+bc=0.002263
+Patience: 5/30
+
+Step 1600/67500 [E1]: vrmse=0.023225, rmse=0.001200, pde=1158199680.000000, 
+bc=0.001726
+Saved best model (save=2.3225: 100*0.0232 + 0*1158199680.0000)
+
+Step 1800/67500 [E1]: vrmse=0.046775, rmse=0.002334, pde=1226848128.000000, 
+bc=0.002332
+Patience: 1/30
+
+Step 2000/67500 [E1]: vrmse=0.034634, rmse=0.001754, pde=1157757312.000000, 
+bc=0.001775
+Patience: 2/30
+
+Step 2200/67500 [E1]: vrmse=0.086726, rmse=0.004230, pde=2836859648.000000, 
+bc=0.002944
+Patience: 3/30
+
+Epoch 1/30: avg_bc=0.002488, avg_pde=2039770514.925944
+
+Step 2400/67500 [E2]: vrmse=0.083881, rmse=0.004149, pde=4010273280.000000, 
+bc=0.003711
+Patience: 4/30
+
+Step 2600/67500 [E2]: vrmse=0.042917, rmse=0.002100, pde=1161682176.000000, 
+bc=0.002069
+Patience: 5/30
+
+Step 2800/67500 [E2]: vrmse=0.018688, rmse=0.000975, pde=816086976.000000, 
+bc=0.001172
+Saved best model (save=1.8688: 100*0.0187 + 0*816086976.0000)
+
+Step 3000/67500 [E2]: vrmse=0.027781, rmse=0.001412, pde=1807625984.000000, 
+bc=0.001451
+Patience: 1/30
+
+Step 3200/67500 [E2]: vrmse=0.022026, rmse=0.001135, pde=1251100288.000000, 
+bc=0.001122
+Patience: 2/30
+
+Step 3400/67500 [E2]: vrmse=0.025472, rmse=0.001317, pde=1328063232.000000, 
+bc=0.001395
+Patience: 3/30
+
+Step 3600/67500 [E2]: vrmse=0.036172, rmse=0.001802, pde=1326666240.000000, 
+bc=0.001367
+Patience: 4/30
+
+Step 3800/67500 [E2]: vrmse=0.023304, rmse=0.001198, pde=1076458752.000000, 
+bc=0.001409
+Patience: 5/30
+
+Step 4000/67500 [E2]: vrmse=0.036740, rmse=0.001836, pde=1265870976.000000, 
+bc=0.001680
+Patience: 6/30
+
+Step 4200/67500 [E2]: vrmse=0.025217, rmse=0.001312, pde=1179608832.000000, 
+bc=0.001271
+Patience: 7/30
+
+Step 4400/67500 [E2]: vrmse=0.019569, rmse=0.001015, pde=949394304.000000, 
+bc=0.001137
+Patience: 8/30
+
+Epoch 2/30: avg_bc=0.002275, avg_pde=1374547085.771549
+
+Step 4600/67500 [E3]: vrmse=0.039346, rmse=0.001975, pde=813566336.000000, 
+bc=0.001531
+Patience: 9/30
+
+Step 4800/67500 [E3]: vrmse=0.024845, rmse=0.001296, pde=859052992.000000, 
+bc=0.001168
+Patience: 10/30
+
+Step 5000/67500 [E3]: vrmse=0.038323, rmse=0.001948, pde=840216448.000000, 
+bc=0.001757
+Patience: 11/30
+
+Step 5200/67500 [E3]: vrmse=0.053302, rmse=0.002623, pde=958401216.000000, 
+bc=0.002632
+Patience: 12/30
+
+Step 5400/67500 [E3]: vrmse=0.045394, rmse=0.002270, pde=865129408.000000, 
+bc=0.002177
+Patience: 13/30
+
+Step 5600/67500 [E3]: vrmse=0.029786, rmse=0.001544, pde=816951616.000000, 
+bc=0.001378
+Patience: 14/30
+
+Step 5800/67500 [E3]: vrmse=0.019083, rmse=0.000997, pde=801212672.000000, 
+bc=0.001100
+Patience: 15/30
+
+Step 6000/67500 [E3]: vrmse=0.033013, rmse=0.001697, pde=844011584.000000, 
+bc=0.001671
+Patience: 16/30
+
+Step 6200/67500 [E3]: vrmse=0.024469, rmse=0.001288, pde=697644608.000000, 
+bc=0.001232
+Patience: 17/30
+
+Step 6400/67500 [E3]: vrmse=0.042336, rmse=0.002150, pde=867457088.000000, 
+bc=0.001937
+Patience: 18/30
+
+Step 6600/67500 [E3]: vrmse=0.058402, rmse=0.002842, pde=1245165440.000000, 
+bc=0.002904
+Patience: 19/30
+
+Epoch 3/30: avg_bc=0.002860, avg_pde=1239974799.367392
+
+Step 6800/67500 [E4]: vrmse=0.072642, rmse=0.003628, pde=2849014528.000000, 
+bc=0.003964
+Patience: 20/30
+
+Step 7000/67500 [E4]: vrmse=0.034583, rmse=0.001770, pde=805835584.000000, 
+bc=0.001803
+Patience: 21/30
+
+Step 7200/67500 [E4]: vrmse=0.020494, rmse=0.001040, pde=635810944.000000, 
+bc=0.001133
+Patience: 22/30
+
+Step 7400/67500 [E4]: vrmse=0.026538, rmse=0.001388, pde=649788608.000000, 
+bc=0.001434
+Patience: 23/30
+
+Step 7600/67500 [E4]: vrmse=0.021687, rmse=0.001141, pde=1125016448.000000, 
+bc=0.001389
+Patience: 24/30
+
+Step 7800/67500 [E4]: vrmse=0.115006, rmse=0.005672, pde=1685187456.000000, 
+bc=0.004133
+Patience: 25/30
+
+Step 8000/67500 [E4]: vrmse=0.021477, rmse=0.001156, pde=473492736.000000, 
+bc=0.001213
+Patience: 26/30
+
+Step 8200/67500 [E4]: vrmse=0.023981, rmse=0.001202, pde=515815744.000000, 
+bc=0.001223
+Patience: 27/30
+
+Step 8400/67500 [E4]: vrmse=0.037837, rmse=0.001930, pde=620883648.000000, 
+bc=0.001782
+Patience: 28/30
+
+Step 8600/67500 [E4]: vrmse=0.038029, rmse=0.001934, pde=649272832.000000, 
+bc=0.001662
+Patience: 29/30
+
+Step 8800/67500 [E4]: vrmse=0.036676, rmse=0.001860, pde=775382016.000000, 
+bc=0.002003
+Patience: 30/30
+Early stopping!
+
+Epoch 4/30: avg_bc=0.002160, avg_pde=875775400.094272
+⠏ [E4] BC=0.0023 PDE=179180064.0000 ━━                  13%  8800/67500 11:31:47
+                              Training Complete                              
+┌───────────────┬───────────────────────────────────────────────────────────┐
+│ Total Epochs  │ 5                                                         │
+│ Total Steps   │ 8800                                                      │
+│ Best Val Loss │ 1.868759                                                  │
+│ Early Stopped │ Yes                                                       │
+│ Checkpoint    │ checkpoints_burgers_1d_lora_v3_rescaled_norm/best_lora.pt │
+└───────────────┴───────────────────────────────────────────────────────────┘

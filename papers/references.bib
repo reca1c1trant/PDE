@@ -1,0 +1,906 @@
+% ============================================================
+% Neural Operators — Foundational
+% ============================================================
+
+@article{li2021fourier,
+  title={Fourier Neural Operator for Parametric Partial Differential Equations},
+  author={Li, Zongyi and Kovachki, Nikola and Azizzadenesheli, Kamyar and Liu, Burigede and Bhatt, Kaushik and Stuart, Andrew and Anandkumar, Anima},
+  journal={International Conference on Learning Representations (ICLR)},
+  year={2021},
+  note={arXiv:2010.08895}
+}
+
+@article{lu2021deeponet,
+  title={Learning Nonlinear Operators via {DeepONet} Based on the Universal Approximation Theorem of Operators},
+  author={Lu, Lu and Jin, Pengzhan and Pang, Guofei and Zhang, Zhongqiang and Karniadakis, George Em},
+  journal={Nature Machine Intelligence},
+  volume={3},
+  pages={218--229},
+  year={2021},
+  note={arXiv:1910.03193}
+}
+
+@article{kovachki2023neural,
+  title={Neural Operator: Learning Maps Between Function Spaces With Applications to {PDEs}},
+  author={Kovachki, Nikola and Li, Zongyi and Liu, Burigede and Azizzadenesheli, Kamyar and Bhatt, Kaushik and Stuart, Andrew and Anandkumar, Anima},
+  journal={Journal of Machine Learning Research},
+  volume={24},
+  number={89},
+  pages={1--97},
+  year={2023},
+  note={arXiv:2108.08481}
+}
+
+% ============================================================
+% FNO Variants
+% ============================================================
+
+@article{li2023geo,
+  title={Fourier Neural Operator with Learned Deformations for {PDEs} on General Geometries},
+  author={Li, Zongyi and Huang, Daniel Zhengyu and Liu, Burigede and Anandkumar, Anima},
+  journal={Journal of Machine Learning Research},
+  volume={24},
+  pages={1--26},
+  year={2023},
+  note={arXiv:2207.05209}
+}
+
+@inproceedings{tran2023ffno,
+  title={Factorized Fourier Neural Operators},
+  author={Tran, Alasdair and Mathews, Alexander and Xie, Lexing and Ong, Cheng Soon},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2023},
+  note={arXiv:2111.13802}
+}
+
+@article{kossaifi2023multigrid,
+  title={Multi-Grid Tensorized Fourier Neural Operator for High-Resolution {PDEs}},
+  author={Kossaifi, Jean and Kovachki, Nikola and Azizzadenesheli, Kamyar and Anandkumar, Anima},
+  year={2023},
+  note={arXiv:2310.00120}
+}
+
+@inproceedings{bonev2023sfno,
+  title={Spherical Fourier Neural Operators: Learning Stable Dynamics on the Sphere},
+  author={Bonev, Boris and Kurth, Thorsten and Hundt, Christian and Pathak, Jaideep and Baust, Maximilian and Kashinath, Karthik and Anandkumar, Anima},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2023},
+  note={arXiv:2306.03838}
+}
+
+% ============================================================
+% Neural Operator Architectures
+% ============================================================
+
+@article{raonic2024cno,
+  title={Convolutional Neural Operators for Robust and Accurate Learning of {PDEs}},
+  author={Raonic, Bogdan and Molinaro, Roberto and De Ryck, Tim and Rohner, Tobias and Bartolucci, Francesco and Alaifari, Rima and Mishra, Siddhartha and de Hoop, Maarten},
+  journal={International Conference on Machine Learning (ICML)},
+  year={2024},
+  note={arXiv:2302.01178}
+}
+
+@inproceedings{hao2023gnot,
+  title={{GNOT}: A General Neural Operator Transformer for Operator Learning},
+  author={Hao, Zhongkai and Ying, Chengyang and Wang, Zhengyi and Su, Hang and Dong, Yinpeng and Liu, Songming and Cheng, Ze and Song, Jian and Zhu, Jun},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2023},
+  note={arXiv:2302.14376}
+}
+
+@article{li2023oformer,
+  title={Transformer for Partial Differential Equations' Operator Learning},
+  author={Li, Zijie and Meidani, Kazem and Farimani, Amir Barati},
+  journal={Transactions on Machine Learning Research},
+  year={2023},
+  note={arXiv:2205.13671}
+}
+
+@article{rahman2023uno,
+  title={{U-NO}: {U}-shaped Neural Operators},
+  author={Rahman, Md Ashiqur and Ross, Zachary E. and Azizzadenesheli, Kamyar},
+  journal={Transactions on Machine Learning Research},
+  year={2023},
+  note={arXiv:2204.11127}
+}
+
+@inproceedings{wu2023lsm,
+  title={Solving High-Dimensional {PDEs} with Latent Spectral Models},
+  author={Wu, Haixu and Hu, Tengge and Luo, Huakun and Wang, Jianmin and Long, Mingsheng},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2023},
+  note={arXiv:2301.12664}
+}
+
+@inproceedings{wu2024transolver,
+  title={Transolver: A Fast Transformer Solver for {PDEs} on General Geometries},
+  author={Wu, Haixu and Luo, Huakun and Wang, Haowen and Wang, Jianmin and Long, Mingsheng},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2024},
+  note={arXiv:2402.02366}
+}
+
+@inproceedings{li2023factformer,
+  title={Scalable Transformer for {PDE} Surrogate Modeling},
+  author={Li, Zijie and Farimani, Amir Barati},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2023},
+  note={arXiv:2305.17560}
+}
+
+@article{kissas2022hamlet,
+  title={{HAMLET}: Graph Transformer Neural Operator for Partial Differential Equations},
+  author={Bryutkin, Andrey and Huang, Jiahao and Razi, Zhongying and Liò, Pietro},
+  year={2024},
+  note={arXiv:2402.03541}
+}
+
+@article{yang2023icon,
+  title={In-Context Operator Learning with Data Prompts for Differential Equation Problems},
+  author={Yang, Liu and Liu, Siting and Meng, Tingwei and Osher, Stanley J.},
+  journal={Proceedings of the National Academy of Sciences},
+  year={2023},
+  note={arXiv:2304.07993}
+}
+
+@inproceedings{rahman2024codano,
+  title={Pretraining Codomain Attention Neural Operators for Solving Multiphysics {PDEs}},
+  author={Rahman, Md Ashiqur and George, Robert Joseph and Engel, Mogab and Peng, Yen-Hsi Richard and Azizzadenesheli, Kamyar and Anandkumar, Anima},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2024},
+  note={arXiv:2403.12553, model name: CoDA-NO}
+}
+
+@article{liu2022hano,
+  title={Mitigating Spectral Bias for the Multiscale Operator Learning},
+  author={Liu, Bo and Jiang, Nima and Bhatt, Kaushik and Anandkumar, Anima},
+  year={2022},
+  note={arXiv:2210.10890}
+}
+
+@article{ye2024unisolver,
+  title={Unisolver: {PDE}-Conditional Transformers Are Universal {PDE} Solvers},
+  author={Ye, Zhanhong and others},
+  year={2024},
+  note={arXiv:2405.17527}
+}
+
+@article{alkin2024upt,
+  title={Universal Physics Transformers: A Framework For Efficiently Scaling Neural Operators},
+  author={Alkin, Benedikt and Fürst, Andreas and Schmid, Simon and Gruber, Lukas and Holzbauer, Markus and Brandstetter, Johannes},
+  year={2024},
+  note={arXiv:2402.12365}
+}
+
+@article{lorsung2024pitt,
+  title={Physics Informed Token Transformer for Solving Partial Differential Equations},
+  author={Lorsung, Cooper and Li, Zijie and Farimani, Amir Barati},
+  year={2024},
+  note={arXiv:2305.08757}
+}
+
+% ============================================================
+% PDE Foundation Models (Pretrain + Finetune)
+% ============================================================
+
+@inproceedings{herde2024poseidon,
+  title={Poseidon: Efficient Foundation Models for {PDEs}},
+  author={Herde, Maximilian and Raonić, Bogdan and Rohner, Tobias and Käppeli, Roger and Molinaro, Roberto and de Bézenac, Emmanuel and Mishra, Siddhartha},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2024},
+  note={arXiv:2405.19101}
+}
+
+@inproceedings{hao2024dpot,
+  title={{DPOT}: Auto-Regressive Denoising Operator Transformer for Large-Scale {PDE} Pre-Training},
+  author={Hao, Zhongkai and Su, Chang and Liu, Songming and Berner, Julius and Ying, Chengyang and Su, Hang and Anandkumar, Anima and Song, Jian and Zhu, Jun},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2024},
+  note={arXiv:2403.03542}
+}
+
+@inproceedings{mccabe2024mpp,
+  title={Multiple Physics Pretraining for Physical Surrogate Models},
+  author={McCabe, Michael and Blanber, Bruno and Ruhe, Lavi Miguel Pereira and Tong, Jiawei and Bronstein, Michael and Toth, Peter and Ruhe, David and Cataldo, Daniel and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2024},
+  note={arXiv:2310.02994}
+}
+
+@inproceedings{chen2025omniarch,
+  title={{OmniArch}: Building Foundation Model For Scientific Computing},
+  author={Chen, Tianyu and others},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2025},
+  note={arXiv:2402.16014}
+}
+
+@inproceedings{holzschuh2025pdetransformer,
+  title={{PDE}-Transformer: Efficient and Versatile Transformers for Physics Simulations},
+  author={Holzschuh, Benjamin and others},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2025},
+  note={arXiv:2505.24717}
+}
+
+@article{liu2024prosefd,
+  title={{PROSE-FD}: A Multimodal {PDE} Foundation Model for Learning Multiple Operators for Forecasting Fluid Dynamics},
+  author={Liu, Yuxuan and others},
+  year={2024},
+  note={arXiv:2409.09811}
+}
+
+@article{rautela2026morph,
+  title={{MORPH}: {PDE} Foundation Models with Arbitrary Data Modality},
+  author={Rautela, Mahindra and others},
+  year={2026},
+  note={arXiv:2509.21670}
+}
+
+@article{ye2024pdeformer,
+  title={{PDEformer}: Towards a Foundation Model for One-Dimensional Partial Differential Equations},
+  author={Ye, Zhanhong and others},
+  year={2024},
+  note={arXiv:2402.12652}
+}
+
+@article{zhang2024matey,
+  title={{MATEY}: Multiscale Adaptive Foundation Models for Spatiotemporal Physical Systems},
+  author={Zhang, Pei and others},
+  year={2024},
+  note={arXiv:2412.20601}
+}
+
+@article{liu2025bcat,
+  title={{BCAT}: A Block Causal Transformer for {PDE} Foundation Models for Fluid Dynamics},
+  author={Liu, Yuxuan and others},
+  year={2025},
+  note={arXiv:2501.18972}
+}
+
+@article{subramanian2024prose,
+  title={Towards a Foundation Model for Partial Differential Equations: Multi-Operator Learning and Extrapolation},
+  author={Subramanian, Shashank and others},
+  year={2024},
+  note={arXiv:2404.12355}
+}
+
+@article{ye2025pdeformer2,
+  title={{PDEformer-2}: A Versatile Foundation Model for Two-Dimensional Partial Differential Equations},
+  author={Ye, Zhanhong and others},
+  year={2025},
+  note={arXiv:2507.15409}
+}
+
+@article{anonymous2026compno,
+  title={{CompNO}: A Novel Foundation Model approach for solving Partial Differential Equations},
+  author={Anonymous},
+  year={2026},
+  note={arXiv:2601.07384}
+}
+
+@article{anonymous2025pdefm,
+  title={Towards a Foundation Model for Partial Differential Equations Across Physics Domains},
+  author={Anonymous},
+  year={2025},
+  note={arXiv:2511.21861}
+}
+
+@article{anonymous2025spus,
+  title={{SPUS}: A Lightweight and Parameter-Efficient Foundation Model for {PDEs}},
+  author={Anonymous},
+  year={2025},
+  note={arXiv:2510.01370}
+}
+
+@article{anonymous2025moepot,
+  title={Mixture-of-Experts Operator Transformer for Large-Scale {PDE} Pre-Training},
+  author={Anonymous},
+  year={2025},
+  note={arXiv:2510.25803}
+}
+
+% ============================================================
+% Physics-Informed Operator Learning / Finetuning
+% ============================================================
+
+@inproceedings{li2024pino,
+  title={Physics-Informed Neural Operator for Learning Partial Differential Equations},
+  author={Li, Zongyi and Zheng, Hongkai and Kovachki, Nikola and Jin, David and Chen, Haoxuan and Liu, Burigede and Azizzadenesheli, Kamyar and Anandkumar, Anima},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2024},
+  note={arXiv:2111.03794}
+}
+
+@article{wang2021pideeponet,
+  title={Learning the Solution Operator of Parametric Partial Differential Equations with Physics-Informed {DeepONets}},
+  author={Wang, Sifan and Wang, Hanwen and Perdikaris, Paris},
+  journal={Science Advances},
+  year={2021},
+  note={arXiv:2103.10974}
+}
+
+@article{song2024fmint,
+  title={{FMint}: Bridging Human Designed and Data Pretrained Models for Differential Equation Foundation Model},
+  author={Song, Zezheng and Yuan, Jiaxin and Yang, Haizhao},
+  year={2024},
+  note={arXiv:2404.14688}
+}
+
+@article{anonymous2024deeponetft,
+  title={{DeepONet} as a Multi-Operator Extrapolation Model: Distributed Pretraining with Physics-Informed Fine-Tuning},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2411.07239}
+}
+
+@article{anonymous2024ftopinn,
+  title={Fine-Tuning {DeepONets} to Enhance Physics-informed Neural Networks for solving {PDEs}},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2410.14134}
+}
+
+@article{anonymous2025constraintaware,
+  title={Paving the Way for Scientific Foundation Models: Enhancing Generalization and Robustness in {PDEs} with Constraint-Aware Pre-Training},
+  author={Anonymous},
+  year={2025},
+  note={arXiv:2503.19081}
+}
+
+@article{anonymous2024vino,
+  title={Variational Physics-informed Neural Operator ({VINO}) for Solving Partial Differential Equations},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2411.06587}
+}
+
+@article{anonymous2024pinto,
+  title={{PINTO}: Physics-informed Transformer Neural Operator},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2412.09009}
+}
+
+% ============================================================
+% Pretraining Strategies
+% ============================================================
+
+@article{anonymous2024pretrainstrat,
+  title={Strategies for Pretraining Neural Operators},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2406.08473}
+}
+
+@article{anonymous2024lnop,
+  title={Latent Neural Operator Pretraining for Solving Time-Dependent {PDEs}},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2410.20100}
+}
+
+@article{anonymous2024dataefficient,
+  title={Data-Efficient Operator Learning via Unsupervised Pretraining and In-Context Learning},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2402.15734}
+}
+
+@article{anonymous2024pretrainlowdim,
+  title={Pretraining a Neural Operator in Lower Dimensions},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2407.17616}
+}
+
+@article{anonymous2025universalnopretrain,
+  title={Towards Universal Neural Operators through Multiphysics Pretraining},
+  author={Anonymous},
+  year={2025},
+  note={arXiv:2511.10829}
+}
+
+% ============================================================
+% LoRA / Parameter-Efficient Finetuning for Science
+% ============================================================
+
+@article{anonymous2024loraclimax,
+  title={Efficient Localized Adaptation of Neural Weather Forecasting: A Case Study in the {MENA} Region},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2409.07585}
+}
+
+% ============================================================
+% Weather / Climate Foundation Models
+% ============================================================
+
+@inproceedings{nguyen2023climax,
+  title={{ClimaX}: A Foundation Model for Weather and Climate},
+  author={Nguyen, Tung and Brandstetter, Johannes and Kapoor, Ashish and Gupta, Jayesh K. and Grover, Aditya},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2023},
+  note={arXiv:2301.10343}
+}
+
+@article{pathak2022fourcastnet,
+  title={{FourCastNet}: A Global Data-driven High-resolution Weather Model using Adaptive Fourier Neural Operators},
+  author={Pathak, Jaideep and Subramanian, Shashank and Harrington, Peter and Raja, Sanjeev and Chattopadhyay, Ashesh and Mardani, Morteza and Kurth, Thorsten and Hall, David and Li, Zongyi and Azizzadenesheli, Kamyar and Hassanzadeh, Pedram and Kashinath, Karthik and Anandkumar, Anima},
+  year={2022},
+  note={arXiv:2202.11214}
+}
+
+@article{bi2023pangu,
+  title={Pangu-Weather: A {3D} High-Resolution Model for Fast and Accurate Global Weather Forecast},
+  author={Bi, Kaifeng and Xie, Lingxi and Zhang, Hengheng and Chen, Xin and Gu, Xiaotao and Tian, Qi},
+  journal={Nature},
+  year={2023},
+  note={arXiv:2211.02556}
+}
+
+@article{bodnar2024aurora,
+  title={Aurora: A Foundation Model for the Earth System},
+  author={Bodnar, Cristian and others},
+  journal={Nature},
+  year={2024},
+  note={arXiv:2405.13063}
+}
+
+@article{price2024gencast,
+  title={{GenCast}: Diffusion-based Ensemble Forecasting for Medium-Range Weather},
+  author={Price, Ilan and others},
+  journal={Nature},
+  year={2024},
+  note={arXiv:2312.15796}
+}
+
+@article{lam2023graphcast,
+  title={{GraphCast}: Learning Skillful Medium-Range Global Weather Forecasting},
+  author={Lam, Remi and others},
+  journal={Science},
+  year={2023},
+  note={arXiv:2212.12794}
+}
+
+@article{kochkov2024neuralgcm,
+  title={Neural General Circulation Models for Weather and Climate},
+  author={Kochkov, Dmitrii and others},
+  journal={Nature},
+  year={2024},
+  note={arXiv:2311.07222}
+}
+
+% ============================================================
+% Graph-based PDE Solvers
+% ============================================================
+
+@inproceedings{pfaff2021meshgraphnets,
+  title={Learning Mesh-Based Simulation with Graph Networks},
+  author={Pfaff, Tobias and Fortunato, Meire and Sanchez-Gonzalez, Alvaro and Battaglia, Peter W.},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2021},
+  note={arXiv:2010.03409}
+}
+
+@inproceedings{brandstetter2022mppde,
+  title={Message Passing Neural {PDE} Solvers},
+  author={Brandstetter, Johannes and Worrall, Daniel and Welling, Max},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2022},
+  note={arXiv:2202.03376}
+}
+
+% ============================================================
+% PDE Benchmarks
+% ============================================================
+
+@inproceedings{takamoto2022pdebench,
+  title={{PDEBench}: An Extensive Benchmark for Scientific Machine Learning},
+  author={Takamoto, Makoto and Praditia, Timothy and Leiteritz, Raphael and MacKinlay, Dan and Alesiani, Francesco and Pflüger, Dirk and Niepert, Mathias},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2022},
+  note={arXiv:2210.07182}
+}
+
+@inproceedings{koehler2024apebench,
+  title={{APEBench}: A Benchmark for Autoregressive Neural Emulators of {PDEs}},
+  author={Koehler, Felix and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2024},
+  note={arXiv:2411.00180}
+}
+
+@article{hao2023pinnacle,
+  title={{PINNacle}: A Comprehensive Benchmark of Physics-Informed Neural Networks for Solving {PDEs}},
+  author={Hao, Zhongkai and Yao, Jiachen and Su, Chang and Su, Hang and Wang, Ziao and Lu, Fanzhi and Xia, Zeyu and Zhang, Yichi and Liu, Songming and Lu, Lu and Zhu, Jun},
+  year={2023},
+  note={arXiv:2306.08827}
+}
+
+@inproceedings{ohana2024thewell,
+  title={The Well: a Large-Scale Collection of Diverse Physics Simulations for Machine Learning},
+  author={Ohana, Ruben and McCabe, Michael and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2024},
+  note={arXiv:2412.00568}
+}
+
+@article{yu2025isfno,
+  title={An Inverse Scattering Inspired Fourier Neural Operator for Time-Dependent {PDE} Learning},
+  author={Yu, Rixin},
+  year={2025},
+  note={arXiv:2512.19439}
+}
+
+% ============================================================
+% PINNs and Physics-Informed Methods
+% ============================================================
+
+@article{raissi2019pinn,
+  title={Physics-Informed Neural Networks: A Deep Learning Framework for Solving Forward and Inverse Problems Involving Nonlinear Partial Differential Equations},
+  author={Raissi, Maziar and Perdikaris, Paris and Karniadakis, George Em},
+  journal={Journal of Computational Physics},
+  volume={378},
+  pages={686--707},
+  year={2019}
+}
+
+@article{rackauckas2021universal,
+  title={Universal Differential Equations for Scientific Machine Learning},
+  author={Rackauckas, Christopher and others},
+  year={2021},
+  note={arXiv:2001.04385}
+}
+
+% ============================================================
+% Zero-shot / In-Context PDE
+% ============================================================
+
+@article{anonymous2024vicon,
+  title={{VICON}: Vision In-Context Operator Networks for Multi-Physics Fluid Dynamics Prediction},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2411.16063}
+}
+
+@article{anonymous2024llmpde,
+  title={Text-Trained {LLMs} Can Zero-Shot Extrapolate {PDE} Dynamics},
+  author={Anonymous},
+  year={2024},
+  note={arXiv:2509.06322}
+}
+
+@article{anonymous2025flowmarching,
+  title={Flow Marching for a Generative {PDE} Foundation Model},
+  author={Anonymous},
+  year={2025},
+  note={arXiv:2509.18611}
+}
+
+% ============================================================
+% LoRA/PEFT for Scientific Computing
+% ============================================================
+
+@inproceedings{zhang2025fadapter,
+  title={{F-Adapter}: Frequency-Adaptive Parameter-Efficient Fine-Tuning in Scientific Machine Learning},
+  author={Zhang, Hangwei and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2025},
+  note={arXiv:2509.23173}
+}
+
+@inproceedings{cao2025spectralrefiner,
+  title={Spectral-Refiner: Accurate Fine-Tuning of Spatiotemporal Fourier Neural Operator for Turbulent Flows},
+  author={Cao, Shuhao and others},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2025},
+  note={arXiv:2405.17211}
+}
+
+% ============================================================
+% PINN Improvements
+% ============================================================
+
+@article{wang2022causalpinn,
+  title={Respecting Causality Is All You Need for Training Physics-Informed Neural Networks},
+  author={Wang, Sifan and Sankaran, Shyam and Perdikaris, Paris},
+  journal={Computer Methods in Applied Mechanics and Engineering},
+  year={2024},
+  note={arXiv:2203.07404}
+}
+
+@article{wang2020ntkpinn,
+  title={When and Why {PINNs} Fail to Train: A Neural Tangent Kernel Perspective},
+  author={Wang, Sifan and Yu, Xinling and Perdikaris, Paris},
+  journal={Journal of Computational Physics},
+  year={2022},
+  note={arXiv:2007.14527}
+}
+
+@inproceedings{brandstetter2022lpsda,
+  title={Lie Point Symmetry Data Augmentation for Neural {PDE} Solvers},
+  author={Brandstetter, Johannes and Welling, Max and Worrall, Daniel E.},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2022},
+  note={arXiv:2202.07643}
+}
+
+% ============================================================
+% Operator Learning Theory
+% ============================================================
+
+@article{kovachki2021fnotheory,
+  title={On Universal Approximation and Error Bounds for Fourier Neural Operators},
+  author={Kovachki, Nikola and Lanthaler, Samuel and Mishra, Siddhartha},
+  journal={Journal of Machine Learning Research},
+  year={2021},
+  note={arXiv:2107.07562}
+}
+
+@article{kovachki2024olsurvey,
+  title={Operator Learning: Algorithms and Analysis},
+  author={Kovachki, Nikola B. and Lanthaler, Samuel and Stuart, Andrew M.},
+  journal={Handbook of Numerical Analysis},
+  year={2024},
+  note={arXiv:2402.15715}
+}
+
+% ============================================================
+% Pretraining Strategies
+% ============================================================
+
+@article{zhou2024maepde,
+  title={Masked Autoencoders are {PDE} Learners},
+  author={Zhou, Anthony and others},
+  journal={Transactions on Machine Learning Research},
+  year={2024},
+  note={arXiv:2403.17728}
+}
+
+@article{you2025sno,
+  title={Self-supervised Neural Operator for Solving Partial Differential Equations},
+  author={You, Wen and others},
+  year={2025},
+  note={arXiv:2509.00867}
+}
+
+% ============================================================
+% Multi-Physics / Hybrid Methods
+% ============================================================
+
+@article{bischof2025hypino,
+  title={{HyPINO}: Multi-Physics Neural Operators via {HyperPINNs} and the Method of Manufactured Solutions},
+  author={Bischof, Rafael and others},
+  year={2025},
+  note={arXiv:2509.05117}
+}
+
+@article{kassai2025echo,
+  title={Efficient Generative Transformer Operators for Million-Point {PDEs}},
+  author={Kassai Koupai, Armand and others},
+  year={2025},
+  note={arXiv:2512.04974}
+}
+
+@inproceedings{wen2025gaot,
+  title={Geometry Aware Operator Transformer As An Efficient And Accurate Neural Surrogate For {PDEs} On Arbitrary Domains},
+  author={Wen, Shizheng and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2025},
+  note={arXiv:2505.18781}
+}
+
+@inproceedings{kassai2025enma,
+  title={{ENMA}: Tokenwise Autoregression for Generative Neural {PDE} Operators},
+  author={Kassai Koupai, Armand and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2025},
+  note={arXiv:2506.06158}
+}
+
+@inproceedings{wei2025inc,
+  title={{INC}: An Indirect Neural Corrector for Auto-Regressive Hybrid {PDE} Solvers},
+  author={Wei, Hao and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2025},
+  note={arXiv:2511.12764}
+}
+
+@article{roy2025anchor,
+  title={The Best of Both Worlds: Hybridizing Neural Operators and Solvers for Stable Long-Horizon Inference},
+  author={Roy, Rajyasri and others},
+  year={2025},
+  note={arXiv:2512.19643}
+}
+
+@article{shumaylov2024lielac,
+  title={Lie Algebra Canonicalization: Equivariant Neural Operators under Arbitrary Lie Groups},
+  author={Shumaylov, Zakhar and others},
+  year={2025},
+  note={arXiv:2410.02698}
+}
+
+% ============================================================
+% Additional ICML/ICLR/NeurIPS Papers (Batch 5)
+% ============================================================
+
+@inproceedings{zhu2025pita,
+  title={Physics-informed Temporal Alignment for Auto-regressive {PDE} Foundation Models},
+  author={Zhu, Congcong and Xu, Xiaoyan and Han, Jiayue and Chen, Jingrun},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2025},
+  note={arXiv:2505.10930}
+}
+
+@inproceedings{zhou2025unisolver,
+  title={Unisolver: {PDE}-Conditional Transformers Are Universal {PDE} Solvers},
+  author={Zhou, Hang and others},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2025},
+  note={arXiv:2405.17527}
+}
+
+@inproceedings{luo2025transolverplusplus,
+  title={Transolver++: An Accurate Neural Solver for {PDEs} on Million-Scale Geometries},
+  author={Luo, Huakun and Wu, Haixu and Wang, Jianmin and Long, Mingsheng},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2025},
+  note={arXiv:2502.02414}
+}
+
+@inproceedings{qi2025spidersolver,
+  title={{SpiderSolver}: A Geometry-Aware Transformer for Solving {PDEs} on Complex Geometries},
+  author={Qi, Kai and Wang, Fan and Dong, Zhewen and Sun, Jian},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2025},
+  note={OpenReview: hWtvsL51hO}
+}
+
+@inproceedings{leboudec2025pineuralsolver,
+  title={Learning a Neural Solver for Parametric {PDEs} to Enhance Physics-Informed Methods},
+  author={Le Boudec, Lise and others},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2025},
+  note={arXiv:2410.06820}
+}
+
+@inproceedings{ma2026physicsknowledge,
+  title={Learning Data-Efficient and Generalizable Neural Operators via Fundamental Physics Knowledge},
+  author={Ma, Siying and others},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2026},
+  note={arXiv:2602.15184}
+}
+
+@inproceedings{huang2026schwarzni,
+  title={Operator Learning with Domain Decomposition for Geometry Generalization in {PDE} Solving},
+  author={Huang, Jianing and others},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2026},
+  note={arXiv:2504.00510}
+}
+
+@inproceedings{li2026imooe,
+  title={Towards Generalizable {PDE} Dynamics Forecasting via Physics-Guided Invariant Learning},
+  author={Li, Siyang and others},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2026},
+  note={arXiv:2509.24332}
+}
+
+@inproceedings{hu2025wdno,
+  title={Wavelet Diffusion Neural Operator},
+  author={Hu, Peiyan and others},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2025},
+  note={arXiv:2412.04833}
+}
+
+@inproceedings{zeng2025phympgn,
+  title={{PhyMPGN}: Physics-encoded Message Passing Graph Network for {PDE} Systems},
+  author={Zeng, Bocheng and others},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2025},
+  note={arXiv:2410.01337}
+}
+
+@inproceedings{buitrago2025memorypde,
+  title={On the Benefits of Memory for Modeling Time-Dependent {PDEs}},
+  author={Buitrago Ruiz, Ricardo and others},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2025},
+  note={arXiv:2409.02313}
+}
+
+@inproceedings{zhang2025m2pde,
+  title={{M2PDE}: Compositional Generative Multiphysics and Multi-component {PDE} Simulation},
+  author={Zhang, Tao and others},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2025},
+  note={arXiv:2412.04134}
+}
+
+@inproceedings{pedersen2025thermalizer,
+  title={Thermalizer: Stable Autoregressive Neural Emulation of Spatiotemporal Chaos},
+  author={Pedersen, Christian and others},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2025},
+  note={arXiv:2503.18731}
+}
+
+@article{hu2022lora,
+  title={{LoRA}: Low-Rank Adaptation of Large Language Models},
+  author={Hu, Edward J. and Shen, Yelong and Wallis, Phillip and Allen-Zhu, Zeyuan and Li, Yuanzhi and Wang, Shean and Wang, Lu and Chen, Weizhu},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2022},
+  note={arXiv:2106.09685}
+}
+
+@inproceedings{nguyen2025physix,
+  title={{PhysiX}: A Foundation Model for Physics Simulations},
+  author={Nguyen, Tung and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2025},
+  note={arXiv:2506.17774}
+}
+
+@inproceedings{bischof2025hypino_neurips,
+  title={{HyPINO}: Multi-Physics Neural Operators via {HyperPINNs} and the Method of Manufactured Solutions},
+  author={Bischof, Rafael and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2025},
+  note={arXiv:2509.05117}
+}
+
+@inproceedings{hagnberger2025calmpde,
+  title={{CALM-PDE}: Continuous and Adaptive Convolutions for Latent Space Modeling of Time-dependent {PDEs}},
+  author={Hagnberger, Jan and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2025},
+  note={arXiv:2505.12944}
+}
+
+@inproceedings{wang2025gradientalignment,
+  title={Gradient Alignment in Physics-informed Neural Networks: A Second-Order Optimization Perspective},
+  author={Wang, Sifan and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2025},
+  note={arXiv:2502.00604}
+}
+
+@article{sun2024lemon,
+  title={{LeMON}: Learning to Learn Multi-Operator Networks},
+  author={Sun, Jingmin and Zhang, Zecheng and Schaeffer, Hayden},
+  year={2025},
+  note={arXiv:2408.16168}
+}
+
+@article{serrano2026splitting,
+  title={Test-time Generalization for Physics through Neural Operator Splitting},
+  author={Serrano, Louis and Han, Jiequn and Oyallon, Edouard and Ho, Shirley and Morel, Rudy},
+  year={2026},
+  note={arXiv:2602.00884}
+}
+
+@article{zhu2025pimfm,
+  title={{PI-MFM}: Physics-informed Multimodal Foundation Model for Solving Partial Differential Equations},
+  author={Zhu, Min and Sun, Jingmin and Zhang, Zecheng and Schaeffer, Hayden and Lu, Lu},
+  year={2025},
+  note={arXiv:2512.23056}
+}
+
+@article{lorsung2024picl,
+  title={{PICL}: Physics Informed Contrastive Learning for Partial Differential Equations},
+  author={Lorsung, Cooper and Li, Zijie and Farimani, Amir Barati},
+  journal={APL Machine Learning},
+  year={2024},
+  note={arXiv:2401.16327}
+}
+
+@article{auroy2025perturbativepinn,
+  title={One-Shot Transfer Learning for Nonlinear {PDEs} with Perturbative {PINNs}},
+  author={Auroy, Samuel and Protopapas, Pavlos},
+  year={2025},
+  note={arXiv:2511.11137, NeurIPS 2025 ML4PS Workshop}
+}

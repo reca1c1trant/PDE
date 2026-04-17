@@ -1,0 +1,23 @@
+2026-04-08 15:12:47,571 - INFO - ============================================================
+2026-04-08 15:12:47,571 - INFO - 2D Burgers (Cole-Hopf) LoRA Finetuning
+2026-04-08 15:12:47,571 - INFO - ============================================================
+2026-04-08 15:12:47,571 - INFO - Config: configs/finetune_burgers_3d_apebench_rescaled_norm.yaml
+2026-04-08 15:12:47,571 - INFO - Loss: BC (w=1) + PDE (u_mom + v_mom + irrotational)
+2026-04-08 15:12:47,571 - INFO - Lambda BC: 10000.0, Lambda PDE: 0.000698
+2026-04-08 15:12:47,572 - INFO - Save: 100*vrmse + 0*pde
+2026-04-08 15:12:47,572 - INFO - ============================================================
+2026-04-08 15:12:47,576 - INFO - Detected NEW format (3D): 60 samples, 109 timesteps, shape (32, 32, 32)
+2026-04-08 15:12:47,579 - INFO - FinetuneDataset (train): 48 samples, all clips/sample, 4848 total clips
+2026-04-08 15:12:47,580 - INFO - Detected NEW format (3D): 60 samples, 109 timesteps, shape (32, 32, 32)
+2026-04-08 15:12:47,581 - INFO - FinetuneDataset (val): 12 samples, all clips/sample, 72 total clips
+2026-04-08 15:12:47,583 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 15:12:47,583 - INFO - FinetuneSampler: 12 batches, 12 per rank
+2026-04-08 15:12:47,584 - INFO - Steps per epoch: 192
+2026-04-08 15:12:47,584 - INFO - Total steps: 5760
+Traceback (most recent call last):
+  File "/home/msai/song0304/code/PDE/finetune/train_burgers_3d_apebench_lora.py", line 577, in <module>
+    main()
+  File "/home/msai/song0304/code/PDE/finetune/train_burgers_3d_apebench_lora.py", line 363, in main
+    pde_loss_fn = APEBenchBurgers3DPDELoss(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: APEBenchBurgers3DPDELoss.__init__() got an unexpected keyword argument 'ny'

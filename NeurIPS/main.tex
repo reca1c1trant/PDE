@@ -1,0 +1,544 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+\PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2026
+
+% The authors should use one of these tracks.
+% Before accepting by the NeurIPS conference, select one of the options below.
+% 0. "default" for submission
+
+% the "default" option is equal to the "main" option, which is used for the Main Track with double-blind reviewing.
+% 1. "main" option is used for the Main Track
+\usepackage[main]{neurips_2026}
+% 2. "position" option is used for the Position Paper Track
+%  \usepackage[position]{neurips_2026}
+% 3. "eandd" option is used for the Evaluations & Datasets Track
+ % \usepackage[eandd]{neurips_2026}
+ % if you want to opt-in for a de-anomymized submission (not recommended, but OK):
+ %\usepackage[eandd, nonanonymous]{neurips_2026}
+% 4. "creativeai" option is used for the Creative AI Track
+%  \usepackage[creativeai]{neurips_2026}
+% 5. "sglblindworkshop" option is used for the Workshop with single-blind reviewing
+ % \usepackage[sglblindworkshop]{neurips_2026}
+% 6. "dblblindworkshop" option is used for the Workshop with double-blind reviewing
+%  \usepackage[dblblindworkshop]{neurips_2026}
+% After being accepted, the authors should add "final" behind the track to compile a camera-ready version.
+% 1. Main Track
+ % \usepackage[main, final]{neurips_2026}
+% 2. Position Paper Track
+%  \usepackage[position, final]{neurips_2026}
+% 3. Evaluations & Datasets Track
+ % \usepackage[eandd, final]{neurips_2026}
+% 4. Creative AI Track
+%  \usepackage[creativeai, final]{neurips_2026}
+% 5. Workshop with single-blind reviewing
+%  \usepackage[sglblindworkshop, final]{neurips_2026}
+% 6. Workshop with double-blind reviewing
+%  \usepackage[dblblindworkshop, final]{neurips_2026}
+% Note. For the workshop paper template, both \title{} and \workshoptitle{} are required, with the former indicating the paper title shown in the title and the latter indicating the workshop title displayed in the footnote.
+% For workshops (5., 6.), the authors should add the name of the workshop, "\workshoptitle" command is used to set the workshop title.
+% \workshoptitle{WORKSHOP TITLE}
+% "preprint" option is used for arXiv or other preprint submissions
+ % \usepackage[preprint]{neurips_2026}
+% to avoid loading the natbib package, add option nonatbib:
+%    \usepackage[nonatbib]{neurips_2026}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{amsmath}        % math environments and \tfrac     
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+
+% Note. For the workshop paper template, both \title{} and \workshoptitle{} are required, with the former indicating the paper title shown in the title and the latter indicating the workshop title displayed in the footnote. 
+\title{Formatting Instructions For NeurIPS 2026}
+
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+
+\author{%
+  David S.~Hippocampus\thanks{Use footnote for providing further information
+    about author (webpage, alternative address)---\emph{not} for acknowledging
+    funding agencies.} \\
+  Department of Computer Science\\
+  Cranberry-Lemon University\\
+  Pittsburgh, PA 15213 \\
+  \texttt{hippo@cs.cranberry-lemon.edu} \\
+  % examples of more authors
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \AND
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+}
+
+
+\begin{document}
+
+
+\maketitle
+
+
+\begin{abstract}
+  The abstract paragraph should be indented \nicefrac{1}{2}~inch (3~picas) on both the left- and right-hand margins. Use 10~point type, with a vertical spacing (leading) of 11~points. The word \textbf{Abstract} must be centered, bold, and in point size 12. Two line spaces precede the abstract. The abstract must be limited to one paragraph.
+\end{abstract}
+
+
+
+\section{Introduction}
+Partial differential equations (PDEs) serve as the mathematical backbone of the physical sciences, with accurate and efficient PDE solvers being indispensable to a broad range of scientific and engineering applications. Traditional numerical methods, such as finite difference, finite element, and spectral methods~\cite{evans2010partial,leveque2007finite}, can yield highly accurate solutions given sufficient resolutions, yet they incur prohibitive computational cost in many-query and multi-scale scenarios~\cite{karniadakis2021physics}. This directly motivates the development of data-driven surrogate models~\cite{mccabe2024mpp, herde2024poseidon} as fast and scalable alternatives.
+
+Neural operators~\cite{kovachki2023neural} are designed to achieve discretization invariance by learning mapping between infinite-dimensional function spaces. Representative architectures include FNO~\cite{li2021fourier}, which parameterizes integral kernels in Fourier space with a lightweight framework, and DeepONet~\cite{lu2021deeponet}, which builds on the universal approximation theorem for operators~\cite{chen1995universal}. Subsequent works have advanced these methodologies to support complex geometries, improve efficiency, and facilitate deployments in large-scale industrial scenarios~\cite{li2023geo,wu2024transolver,wen2025gaot}. However, these methods are fundamentally constrained by their reliance on highly accurate training data. 
+
+
+
+In contrast to entirely data-driven approaches, Physics-Informed Neural Networks (PINNs)~\cite{raissi2019pinn} obviate the demand for high-fidelity data by integrating the PDE residuals along with initial and boundary conditions into the loss function. Notable advances span NTK-based training diagnostics~\cite{wang2020ntkpinn}, causal loss re-weighting~\cite{wang2022causalpinn}, gradient alignment via second-order optimization~\cite{wang2025gradientalignment}, and symmetry-based data augmentation~\cite{brandstetter2022lpsda}. Extending this physics-informed paradigm to neural operator learning, PINO~\cite{li2024pino} and PI-DeepONet~\cite{wang2021pideeponet} incorporate equation-level constraints into FNO~\cite{li2021fourier} and DeepONet~\cite{lu2021deeponet} respectively. Nevertheless, classical methods are trained from scratch for a single PDE family and cannot transfer knowledge across diverse PDE families.
+
+
+
+Inspired by the success of foundation models in natural language processing~\cite{brown2020language, devlin2019bert} and computer vision~\cite{dosovitskiy2021vit}, PDE foundation models have emerged to learn broadly transferable representations across heterogeneous physical systems, adapting to unseen physics with minimal downstream data. This addresses a fundamental challenge in conventional neural operator learning, which trains a dedicated model for a single PDE family and demands substantial simulation data per task. Models such as MPP~\cite{mccabe2024mpp}, Poseidon~\cite{herde2024poseidon}, DPOT~\cite{hao2024dpot}, OmniArch~\cite{chen2025omniarch}, PDE-Transformer~\cite{holzschuh2025pdetransformer}, and PhysiX~\cite{nguyen2025physix} have demonstrated remarkable sample efficiency across diverse physical systems. Although these advances mark a significant step forward, their finetuning stage universally relies on dense ground-truth field supervision. Even where physics priors are incorporated, such as the PDE-Aligner module in OmniArch~\cite{chen2025omniarch} and the physics-informed temporal alignment in PITA~\cite{zhu2025pita}, these serve as auxiliary regularizers alongside the dominant supervised loss.
+
+
+In this work, we ask a natural yet unexplored question: \emph{can a pretrained PDE foundation model be efficiently adapted to unseen PDEs using only physics constraints, without any dense ground-truth data?} We provide the first affirmative answer by proposing an \textbf{unsupervised PDE-based finetuning} framework with \textbf{Orthogonal LoRA}. We first pretrain a Transformer built upon neighborhood attention~\cite{hassani2023neighborhood} on PDEBench~\cite{takamoto2022pdebench}. The architecture operates across 1D, 2D, and 3D domains at varying spatial resolutions within a unified model, and is subsequently finetuned on downstream PDEs via Orthogonal LoRA, which applies Newton-Schulz orthogonalization~\cite{jordan2024muon} to each low-rank factor, using solely boundary condition losses and PDE residual losses, requiring no ground-truth solutions. Our framework generalizes to entirely unseen PDE systems absent from the pretraining data, a capability that conventional neural operators lack as they can only generalize within a single PDE family under varying initial conditions, boundary conditions, or parameters.
+
+
+Our central finding is that the pretrained model provides rich physical priors that make unsupervised PDE-based finetuning viable, enabling PDE residual and boundary condition losses to effectively guide the optimization. We evaluate on 1D, 2D, and 3D PDEs with closed-form solutions together with 4 datasets from The Well~\cite{ohana2024thewell}, and demonstrate that our framework consistently and significantly outperforms PINN baselines across all evaluated datasets, while training without pretrained initialization leads to severe performance degradation. Although a performance gap remains compared to fully supervised foundation model finetuning, we regard this work as a proof of concept toward a universal unsupervised PDE solver, with extension to higher dimensions and broader physical regimes being a natural next step. Our contributions are summarized as follows:
+\begin{itemize}
+    \item We propose and validate, for the first time, an unsupervised PDE-based LoRA finetuning paradigm for PDE foundation models that adapts to unseen PDEs using only boundary condition and PDE residual losses, without any ground-truth solution data.
+    \item We introduce Orthogonal LoRA, an orthogonal variant of LoRA that applies Newton-Schulz iteration to each low-rank factor independently, preserving the geometric structure of the pretrained feature space and preventing rank collapse during unsupervised adaptation.
+    \item We provide systematic ablation analyses demonstrating that pretrained initialization is essential for unsupervised PDE-based finetuning to succeed, and quantifying the remaining gap between unsupervised and fully supervised LoRA finetuning.
+    \item We conduct comprehensive evaluations across 1D, 2D, and 3D PDEs at varying resolutions, spanning PDEs with closed-form solutions and complex real-world simulations from The Well, demonstrating cross-physics and cross-dimensional transferability.
+\end{itemize}
+
+
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Neural operators.}
+\citet{kovachki2023neural} laid the theoretical groundwork for approximating operators across infinite dimensional Banach spaces. FNO~\cite{li2021fourier} performs global convolution via truncated Fourier modes, while DeepONet~\cite{lu2021deeponet} factorizes the operator into separate input encoding and output reconstruction branches~\cite{chen1995universal}. Ensuing developments extend the applicability to irregular domains, reduce model complexity through factorization, and preserve continuous-discrete equivalence in the convolutional design~\cite{li2023geo,tran2023ffno,raonic2024cno}. Transformer-based architectures further advance this direction, with Transolver~\cite{wu2024transolver} introducing adaptive slicing of the physical domain, UPT~\cite{alkin2024upt} operating in a compressed latent space, and GAOT~\cite{wen2025gaot} together with SpiderSolver~\cite{qi2025spidersolver}targeting complex real-world geometries and industrial-level tasks. Recent work has begun to break the single-family constraint. LeMON~\cite{sun2024lemon} applies meta-learning with symbolic operator encoding to train a single network across 19 PDE families, and \citet{serrano2026splitting} introduce an operator splitting strategy to approximate unseen combined dynamics without modifying any model weights. All the preceding methods remain purely data-driven and rely on ground-truth solutions for training.
+
+\paragraph{Physics-informed methods.}
+PINNs~\cite{raissi2019pinn} drastically reduce the reliance on dense solution data by formulating the training loss as a combination of PDE residuals at interior collocation points, initial condition fitting, and boundary condition fitting. Subsequent works have addressed training pathologies from complementary perspectives, such as analyzing training dynamics through the lens of the Neural Tangent Kernel~\cite{wang2020ntkpinn}, respecting temporal causality via weighted loss formulations~\cite{wang2022causalpinn}, mitigating directional gradient conflicts through second-order optimization~\cite{wang2025gradientalignment}, and exploiting Lie point symmetries of the PDE to generate physically consistent training samples~\cite{brandstetter2022lpsda}. Recent work begins to explore cross-PDE generalization within the physics-informed paradigm. HyPINO~\cite{bischof2025hypino_neurips} employs a hypernetwork to produce PINN weights conditioned on PDE parameters, achieving zero-shot predictions across elliptic, hyperbolic, and parabolic classes. \citet{auroy2025perturbativepinn} pretrain a multi-head PINN on a linear operator and transfer to nonlinear PDEs in closed form without retraining. These works represent notable progress, yet they are all trained from random initialization and have not been coupled with pretrained foundation models.
+
+
+\paragraph{PDE foundation models.}
+Foundation models for PDEs pretrain on heterogeneous PDE datasets~\cite{takamoto2022pdebench,ohana2024thewell,koehler2024apebench} and transfer to downstream tasks with significantly fewer labeled samples than training a dedicated model from scratch. Poseidon~\cite{herde2024poseidon}, built upon a multiscale Swin Transformer, leverages the semi-group property of time-dependent PDEs and substantially expands the effective training set.  OmniArch~\cite{chen2025omniarch} handles variable numbers of physical quantities through a channel-wise state representation, enabling attention across and within channels. PDE-Transformer~\cite{holzschuh2025pdetransformer} proposes a Diffusion Transformer backbone pretrained on APEBench~\cite{koehler2024apebench}. MORPH~\cite{rautela2025morph} supports heterogeneous spatial modalities and finetunes downstream tasks via LoRA~\cite{hu2022lora}, making it the closest in methodology to our work. MPP~\cite{mccabe2024mpp} and PhysiX~\cite{nguyen2025physix} corroborate that joint pretraining over diverse PDE families facilitates transfer and improves sample efficiency on unseen systems. Across all these works, downstream tasks remains supervised by ground-truth solution fields. Several recent studies aim to alleviate the reliance on dense supervision. PI-MFM~\cite{zhu2025pimfm} processes symbolic PDE representations and automatically assembles residual losses, enforcing physics constraints during both pretraining and adaptation across 1D time-dependent PDE families. 
+
+Orthogonal optimizers such as Muon~\cite{jordan2024muon} have demonstrated improved training stability by constraining weight updates to the nearest semi-orthogonal matrix via Newton-Schulz iteration, ensuring uniform spectral contribution across all update directions. We extend this principle to LoRA adaptation, orthogonalizing each low-rank factor to maintain spectral regularity throughout finetuning.
+
+Our work integrates unsupervised PDE-based finetuning with a Transformer foundation model, operating across 1D, 2D, and 3D spatiotemporal systems. We demonstrate that pretrained representations provide sufficient physical priors to guide successful adaptation using solely PDE residual and boundary condition losses, consistently outperforming PINN baselines trained from scratch.
+
+
+\section{Approach}
+\label{sec:method}
+
+Adapting a pretrained PDE foundation model to an unseen PDE system poses a central challenge because dense ground-truth solution fields for the target equation are typically unavailable. Our framework responds with three coupled design choices that are developed in the following subsections. Section~\ref{sec:formulation} formulates PDE solving as an autoregressive operator learning task. Section~\ref{sec:architecture} describes the forward pass of our multi-dimensional architecture. Section~\ref{sec:orthlora} introduces Orthogonal LoRA, a low-rank adaptation mechanism that preserves the spectral structure of the pretrained weights. Section~\ref{sec:physlora} defines the combined loss that supervises the adaptation using only boundary conditions and PDE residuals.
+
+\subsection{Problem Formulation}
+\label{sec:formulation}
+
+Consider a time-dependent PDE system
+\begin{equation}
+\partial_t \mathbf{u}(\mathbf{x}, t) + \mathcal{N}[\mathbf{u}](\mathbf{x}, t) = 0, \quad \mathbf{x} \in \Omega, \quad t \in [0, T],
+\end{equation}
+where $\mathbf{u}\!: \Omega \times [0,T] \to \mathbb{R}^c$ is a state variable comprising $c$ physical channels (velocity, pressure, concentration, etc.), $\mathcal{N}$ is a (possibly nonlinear) differential operator involving spatial derivatives, and $\Omega \subset \mathbb{R}^d$ with $d \in \{1,2,3\}$. The system is equipped with initial condition $\mathbf{u}(\mathbf{x}, 0) = \mathbf{u}_0(\mathbf{x})$ and boundary condition $\mathcal{B}[\mathbf{u}] = 0$ on $\partial\Omega$.
+
+We formulate PDE solving as an autoregressive operator learning task. Given $T_{\mathrm{in}}$ consecutive snapshots $\mathbf{U}_t = [\mathbf{u}_{t-T_{\mathrm{in}}+1}, \ldots, \mathbf{u}_t]$, the model learns an operator $\mathcal{G}_\theta$ that predicts the next snapshot $\hat{\mathbf{u}}_{t+1} = \mathcal{G}_\theta(\mathbf{U}_t)$. We set $T_{\mathrm{in}}=8$ throughout all experiments.
+
+\subsection{Forward Pass and Architecture}
+\label{sec:architecture}
+
+The forward pass maps an input snapshot stack through an encoder, a shared NA Transformer, and a decoder within a single architecture that handles 1D, 2D, and 3D spatiotemporal data (see Figure~\ref{fig:overview}).
+
+\paragraph{Unified channel representation.}
+All physical fields are mapped into a fixed 18-channel state vector, with the first 3 channels reserved for velocity components $(V_x, V_y, V_z)$ and the remaining 15 channels assigned to distinct scalar quantities (density, pressure, temperature, concentration, etc.). Each dataset specifies which channels it populates via a binary mask, and unused channels are zero-padded. This design allows a single model to ingest PDE systems with varying numbers of physical variables.
+
+\paragraph{Encoder.}
+The input $\mathbf{X} \in \mathbb{R}^{B \times T \times H \times W \times 18}$ is first normalized per sample and per channel (zero mean, unit variance). The spatial dimensions are then partitioned into non-overlapping $16 \times 16$ patches, and each patch is downsampled to a $4 \times 4$ feature map through two strided convolutions with residual blocks. An intra-patch temporal attention module allows tokens at different time steps within the same patch to exchange information. Finally, attention pooling compresses each $4 \times 4$ patch into a single 768-dimensional token, and learnable positional embeddings encoding $(t, h, w)$ coordinates are added.
+
+\paragraph{Shared NA Transformer.}
+The token sequence is processed by 12 Transformer layers with hidden dimension 768 and 12 attention heads. Each layer consists of Neighborhood Attention (NA)~\cite{hassani2023neighborhood} followed by a SwiGLU feed-forward network. NA restricts each token to attend only its spatial neighbors within a $5 \times 5$ window, yielding $O(N \cdot k^d)$ complexity. We adopt NA because it natively supports per-dimension causal control (causal along time, non-causal along space), operates uniformly across 1D, 2D, and 3D token grids without architectural changes, and handles periodic boundaries without additional padding logic. The SwiGLU FFN parameters are shared across all spatial dimensions, while NA layers are instantiated separately per dimension.
+
+\paragraph{Decoder and post-smoothing.}
+The decoder inverts the encoder pipeline through unpooling and transposed convolutions, recovering $16 \times 16$ patches that are reassembled into the full spatial resolution. A post-smoothing module mitigates grid artifacts at patch boundaries. This module consists of three $7 \times 7$ convolutional layers whose receptive field (19 pixels) exceeds the patch size (16 pixels), enabling cross-patch smoothing. A zero-initialized residual connection ensures the module acts as an identity mapping at the start of training. The output is then denormalized to recover the original physical scale. The full model comprises approximately 182M parameters.
+
+\subsection{Orthogonal LoRA Adaptation}
+\label{sec:orthlora}
+
+Given a target PDE absent from the pretraining data, we freeze the pretrained Transformer backbone and attach low-rank adapters to all 12 Transformer layers. LoRA modules~\cite{hu2022lora} are inserted into the fused query-key-value projection and output projection of each NA layer, and into the gate, up, and down projections of each SwiGLU layer, with rank $r\!=\!16$ and scaling factor $\alpha\!=\!32$.
+
+Standard LoRA parameterizes the weight update as $\Delta W = BA$ with $A \in \mathbb{R}^{r \times d_{\mathrm{in}}}$ and $B \in \mathbb{R}^{d_{\mathrm{out}} \times r}$. When driven by unsupervised physics losses, this parameterization tends to collapse toward a few dominant directions, leaving most of the available rank budget inactive. To preserve the spectral structure of the pretrained weights, we orthogonalize each low-rank factor independently via Newton-Schulz (NS) iteration~\cite{jordan2024muon}. The resulting weight update is
+\begin{equation}
+\Delta W = \|A\|_F \cdot \|B\|_F \cdot \mathrm{NS}(B)\,\mathrm{NS}(A),
+\end{equation}
+where $\mathrm{NS}(\cdot)$ projects a matrix onto its nearest semi-orthogonal form. The Frobenius norms $\|A\|_F$ and $\|B\|_F$ act as learnable scalar magnitudes that grow during training, while the orthogonalized factors enforce uniform spectral contribution across all $r$ rank components. We refer to this variant as Orthogonal LoRA.
+
+The adaptation is trained in two stages. The first stage trains standard LoRA with the update $\Delta W = BA$ from zero initialization, with the encoder and decoder left trainable to allow domain-specific adaptation of the input and output representations. The second stage initializes Orthogonal LoRA from the converged factors $A$ and $B$ and continues training with the orthogonalized update, while freezing the encoder and decoder. The first stage drives the adapters toward informative update directions, and the second stage redistributes the spectral energy across the full rank budget.
+
+\subsection{Unsupervised PDE-Based Training Objective}
+\label{sec:physlora}
+
+Both stages of adaptation are trained with the same objective, which combines a boundary condition loss (the only supervised signal) with a PDE residual loss evaluated on the predicted field.
+
+\paragraph{Boundary condition loss.}
+For each predicted snapshot, we compute the RMSE between the prediction and the reference boundary values within a strip of width $b$ pixels along the spatial domain boundary,
+\begin{equation}
+\mathcal{L}_{\mathrm{BC}} = \sqrt{\frac{1}{|\mathcal{S}_b|} \sum_{(\mathbf{x},t) \in \mathcal{S}_b} \|\hat{\mathbf{u}}(\mathbf{x},t) - \mathbf{u}^*(\mathbf{x},t)\|^2 + \epsilon},
+\end{equation}
+where $\mathcal{S}_b$ denotes the set of boundary grid points and $\epsilon = 10^{-8}$ prevents numerical instability. Reference values are required only within this thin boundary region.
+
+\paragraph{PDE residual loss.}
+Given the governing equation $\partial_t \mathbf{u} + \mathcal{N}[\mathbf{u}] = 0$, we evaluate the discrete PDE residual on the predicted field $\hat{\mathbf{u}}$. Temporal derivatives are approximated by second-order central differences $\partial_t \hat{u} \approx (\hat{u}^{n+1} - \hat{u}^{n-1}) / (2\Delta t)$. Spatial derivatives are computed via FFT for periodic domains (spectral accuracy) and via finite differences for non-periodic domains. For equations with convective nonlinearities (e.g., Navier-Stokes, Burgers), we employ a conservative upwind discretization with second-order face-value interpolation,
+\begin{equation}
+\hat{f}_{i+1/2}^{+} = \tfrac{3}{2} f_i - \tfrac{1}{2} f_{i-1}, \quad
+\hat{f}_{i+1/2}^{-} = \tfrac{3}{2} f_{i+1} - \tfrac{1}{2} f_{i+2},
+\end{equation}
+where the superscript $+/-$ indicates the upwind direction and the final face value is selected based on the sign of the face velocity. For PDE systems comprising multiple equation terms (e.g., continuity and momentum in Navier-Stokes), the residual magnitudes of different terms can differ by several orders of magnitude. We address this through equation-wise normalization,
+\begin{equation}
+\mathcal{L}_{\mathrm{PDE}} = \frac{1}{K} \sum_{k=1}^{K} \frac{\|R_k[\hat{\mathbf{u}}]\|^2}{s_k^2},
+\end{equation}
+where $K$ is the number of equation terms and $s_k = \mathrm{RMS}(R_k[\mathbf{u}^*])$ is the root-mean-square residual of the $k$-th term evaluated on a held-out set of ground-truth trajectories.
+
+\paragraph{Total loss.}
+The overall training objective is the weighted sum
+\begin{equation}
+\mathcal{L} = \lambda_{\mathrm{BC}} \cdot \mathcal{L}_{\mathrm{BC}} + \lambda_{\mathrm{PDE}} \cdot \mathcal{L}_{\mathrm{PDE}},
+\end{equation}
+with $\lambda_{\mathrm{BC}} \gg \lambda_{\mathrm{PDE}}$. The boundary term acts as the primary anchor that constrains the global solution structure, while the residual term enforces physical consistency in the interior. The sensitivity of performance to this weighting is examined in Section~\ref{sec:experiments}.
+
+
+\section{Experiments}
+\label{sec:experiments}
+
+\begin{table}[t]
+\centering
+\caption{Main results (VRMSE, $\downarrow$). The Well baselines from~\citet{ohana2024thewell} and~\citet{rautela2025morph}; PDE-Transformer~\cite{holzschuh2025pdetransformer} reports nRMSE (marked $^\dagger$). \textbf{Bold} marks the best among standard neural operator baselines per dataset. ``---'' indicates the method was not evaluated. ``Supervised'' uses dense ground-truth labels as an upper bound. Ours (nRMSE) reports nRMSE; Ours reports VRMSE.}
+\label{tab:main}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l cccc ccccccc}
+\toprule
+& \multicolumn{4}{c}{\textbf{The Well}} & \multicolumn{7}{c}{\textbf{Exact-Solution Datasets}} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-12}
+Method
+  & \shortstack{Rayleigh-\\B\'{e}nard}
+  & \shortstack{Shear\\Flow}
+  & \shortstack{Gray-\\Scott}
+  & \shortstack{Active\\Matter}
+  & \shortstack{1D\\Burgers}
+  & \shortstack{1D\\Adv.}
+  & \shortstack{Taylor-\\Green 2D}
+  & \shortstack{Wave\\2D}
+  & \shortstack{AdvDiff\\2D}
+  & \shortstack{Burgers\\2D}
+  & \shortstack{3D\\Adv.} \\
+\midrule
+FNO              & 0.8395          & 0.1567          & \textbf{0.1365} & 0.3691          & --- & --- & --- & \textbf{0.0102} & \textbf{0.0190} & 0.3280 & --- \\
+TFNO             & \textbf{0.6566} & \textbf{0.1348} & 0.3633          & 0.3598          & --- & --- & --- & ---             & ---             & ---    & --- \\
+U-Net            & 1.4860          & 0.5910          & 0.2252          & 0.2489          & --- & --- & --- & 0.0151          & 0.1160          & \textbf{0.1620} & --- \\
+CNextU-net       & 0.6699          & 0.2037          & 0.1761          & \textbf{0.1034} & --- & --- & --- & ---             & ---             & ---    & --- \\
+PDE-Trans.$^\dagger$ & 0.100$^\dagger$ & 0.125$^\dagger$ & ---          & 0.455$^\dagger$ & --- & --- & --- & ---             & ---             & ---    & --- \\
+MORPH            & ---             & ---             & 0.010           & ---             & --- & --- & --- & ---             & ---             & ---    & --- \\
+\midrule
+Ours (nRMSE)     & 0.1651          & ---             & 0.0623          & 0.0671          & --- & --- & 0.0060 & 0.0218 & 0.0038 & 0.0021 & --- \\
+Ours             & 0.1883          & 0.1151          & 0.1110          & 0.0767          & --- & --- & 0.0060 & 0.0218 & 0.0038 & 0.0021 & --- \\
+Supervised       & 0.1660          & 0.0446          & 0.0754          & 0.0639          & --- & --- & 0.0014 & 0.0097 & 0.0023 & 0.0022 & --- \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\section{Headings: first level}
+\label{headings}
+
+
+All headings should be lower case (except for first word and proper nouns),
+flush left, and bold.
+
+
+First-level headings should be in 12-point type.
+
+
+\subsection{Headings: second level}
+
+
+Second-level headings should be in 10-point type.
+
+
+\subsubsection{Headings: third level}
+
+
+Third-level headings should be in 10-point type.
+
+
+\paragraph{Paragraphs}
+
+
+There is also a \verb+\paragraph+ command available, which sets the heading in
+bold, flush left, and inline with the text, with the heading followed by 1\,em
+of space.
+
+
+\section{Citations, figures, tables, references}
+\label{others}
+
+
+These instructions apply to everyone.
+
+
+\subsection{Citations within the text}
+
+
+The \verb+natbib+ package will be loaded for you by default.  Citations may be
+author/year or numeric, as long as you maintain internal consistency.  As to the
+format of the references themselves, any style is acceptable as long as it is
+used consistently.
+
+
+The documentation for \verb+natbib+ may be found at
+\begin{center}
+  \url{http://mirrors.ctan.org/macros/latex/contrib/natbib/natnotes.pdf}
+\end{center}
+Of note is the command \verb+\citet+, which produces citations appropriate for
+use in inline text.  For example,
+\begin{verbatim}
+   \citet{hasselmo} investigated\dots
+\end{verbatim}
+produces
+\begin{quote}
+  Hasselmo, et al.\ (1995) investigated\dots
+\end{quote}
+
+
+If you wish to load the \verb+natbib+ package with options, you may add the
+following before loading the \verb+neurips_2026+ package:
+\begin{verbatim}
+   \PassOptionsToPackage{options}{natbib}
+\end{verbatim}
+
+
+If \verb+natbib+ clashes with another package you load, you can add the optional
+argument \verb+nonatbib+ when loading the style file:
+\begin{verbatim}
+   \usepackage[nonatbib]{neurips_2026}
+\end{verbatim}
+
+
+As submission is double blind, refer to your own published work in the third
+person. That is, use ``In the previous work of Jones et al.\ [4],'' not ``In our
+previous work [4].'' If you cite your other papers that are not widely available
+(e.g., a journal paper under review), use anonymous author names in the
+citation, e.g., an author of the form ``A.\ Anonymous'' and include a copy of the anonymized paper in the supplementary material.
+
+
+\subsection{Footnotes}
+
+
+Footnotes should be used sparingly.  If you do require a footnote, indicate
+footnotes with a number\footnote{Sample of the first footnote.} in the
+text. Place the footnotes at the bottom of the page on which they appear.
+Precede the footnote with a horizontal rule of 2~inches (12~picas).
+
+
+Note that footnotes are properly typeset \emph{after} punctuation
+marks.\footnote{As in this example.}
+
+
+\subsection{Figures}
+
+
+\begin{figure}
+  \centering
+  \fbox{\rule[-.5cm]{0cm}{4cm} \rule[-.5cm]{4cm}{0cm}}
+  \caption{Sample figure caption. Explain what the figure shows and add a key take-away message to the caption.}
+\end{figure}
+
+
+All artwork must be neat, clean, and legible. Lines should be dark enough for
+ reproduction purposes. The figure number and caption always appear after the
+figure. Place one line space before the figure caption and one line space after
+the figure. The figure caption should be lower case (except for the first word and proper nouns); figures are numbered consecutively.
+
+
+You may use color figures.  However, it is best for the figure captions and the
+paper body to be legible if the paper is printed in either black/white or in
+color.
+
+
+\subsection{Tables}
+
+
+All tables must be centered, neat, clean, and legible.  The table number and
+title always appear before the table.  See Table~\ref{sample-table}.
+
+
+Place one line space before the table title, one line space after the
+table title, and one line space after the table. The table title must
+be lower case (except for the first word and proper nouns); tables are
+numbered consecutively.
+
+
+Note that publication-quality tables \emph{do not contain vertical rules}. We
+strongly suggest the use of the \verb+booktabs+ package, which allows for
+typesetting high-quality, professional tables:
+\begin{center}
+  \url{https://www.ctan.org/pkg/booktabs}
+\end{center}
+This package was used to typeset Table~\ref{sample-table}.
+
+
+\begin{table}
+  \caption{Sample table caption. Explain what the table shows and add a key take-away message to the caption.}
+  \label{sample-table}
+  \centering
+  \begin{tabular}{lll}
+    \toprule
+    \multicolumn{2}{c}{Part}                   \\
+    \cmidrule(r){1-2}
+    Name     & Description     & Size ($\mu$m) \\
+    \midrule
+    Dendrite & Input terminal  & $\approx$100     \\
+    Axon     & Output terminal & $\approx$10      \\
+    Soma     & Cell body       & up to $10^6$  \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Math}
+Note that display math in bare TeX commands will not create correct line numbers for submission. Please use LaTeX (or AMSTeX) commands for unnumbered display math. (You really shouldn't be using \$\$ anyway; see \url{https://tex.stackexchange.com/questions/503/why-is-preferable-to} and \url{https://tex.stackexchange.com/questions/40492/what-are-the-differences-between-align-equation-and-displaymath} for more information.)
+
+\subsection{Final instructions}
+
+Do not change any aspects of the formatting parameters in the style files.  In
+particular, do not modify the width or length of the rectangle the text should
+fit into, and do not change font sizes. Please note that pages should be
+numbered.
+
+
+\section{Preparing PDF files}
+
+
+Please prepare submission files with paper size ``US Letter,'' and not, for
+example, ``A4.''
+
+
+Fonts were the main cause of problems in the past years. Your PDF file must only
+contain Type 1 or Embedded TrueType fonts. Here are a few instructions to
+achieve this.
+
+
+\begin{itemize}
+
+
+\item You should directly generate PDF files using \verb+pdflatex+.
+
+
+\item You can check which fonts a PDF files uses.  In Acrobat Reader, select the
+  menu Files$>$Document Properties$>$Fonts and select Show All Fonts. You can
+  also use the program \verb+pdffonts+ which comes with \verb+xpdf+ and is
+  available out-of-the-box on most Linux machines.
+
+
+\item \verb+xfig+ ``patterned'' shapes are implemented with bitmap fonts.  Use
+  "solid" shapes instead.
+
+
+\item The \verb+\bbold+ package almost always uses bitmap fonts.  You should use
+  the equivalent AMS Fonts:
+\begin{verbatim}
+   \usepackage{amsfonts}
+\end{verbatim}
+followed by, e.g., \verb+\mathbb{R}+, \verb+\mathbb{N}+, or \verb+\mathbb{C}+
+for $\mathbb{R}$, $\mathbb{N}$ or $\mathbb{C}$.  You can also use the following
+workaround for reals, natural and complex:
+\begin{verbatim}
+   \newcommand{\RR}{I\!\!R} %real numbers
+   \newcommand{\Nat}{I\!\!N} %natural numbers
+   \newcommand{\CC}{I\!\!\!\!C} %complex numbers
+\end{verbatim}
+Note that \verb+amsfonts+ is automatically loaded by the \verb+amssymb+ package.
+
+
+\end{itemize}
+
+
+If your file contains type 3 fonts or non embedded TrueType fonts, we will ask
+you to fix it.
+
+
+\subsection{Margins in \LaTeX{}}
+
+
+Most of the margin problems come from figures positioned by hand using
+\verb+\special+ or other commands. We suggest using the command
+\verb+\includegraphics+ from the \verb+graphicx+ package. Always specify the
+figure width as a multiple of the line width as in the example below:
+\begin{verbatim}
+   \usepackage[pdftex]{graphicx} ...
+   \includegraphics[width=0.8\linewidth]{myfile.pdf}
+\end{verbatim}
+See Section 4.4 in the graphics bundle documentation
+(\url{http://mirrors.ctan.org/macros/latex/required/graphics/grfguide.pdf})
+
+
+A number of width problems arise when \LaTeX{} cannot properly hyphenate a
+line. Please give LaTeX hyphenation hints using the \verb+\-+ command when
+necessary.
+
+\begin{ack}
+Use unnumbered first level headings for the acknowledgments. All acknowledgments
+go at the end of the paper before the list of references. Moreover, you are required to declare
+funding (financial activities supporting the submitted work) and competing interests (related financial activities outside the submitted work).
+More information about this disclosure can be found at: \url{https://neurips.cc/Conferences/2026/PaperInformation/FundingDisclosure}.
+
+
+Do {\bf not} include this section in the anonymized submission, only in the final paper. You can use the \texttt{ack} environment provided in the style file to automatically hide this section in the anonymized submission.
+\end{ack}
+
+
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\appendix
+
+\section{Technical appendices and supplementary material}
+Technical appendices with additional results, figures, graphs, and proofs may be submitted with the paper submission before the full submission deadline (see above). You can upload a ZIP file for videos or code, but do not upload a separate PDF file for the appendix. There is no page limit for the technical appendices. 
+
+Note: Think of the appendix as ``optional reading'' for reviewers. The paper must be able to stand alone without the appendix; for example, adding critical experiments that support the main claims to an appendix is inappropriate. 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\input{checklist.tex}
+
+
+\end{document}

@@ -1,0 +1,105 @@
+# Multi-Dataset Full Fine-Tuning (Postsmooth Decoder)
+# 10% of training clips from 4 finetune datasets
+# Loss: Normalized RMSE (same as pretrain, no PDE/BC loss)
+# All parameters trainable (no LoRA)
+#
+# Datasets: gray_scott, rayleigh_benard, shear_flow, active_matter
+# Each uses train_ratio=0.9, seed=42 (same split as LoRA configs)
+# Then 10% of training clips are randomly sampled (subsample_ratio=0.1)
+
+model_name: multidataset_fullft_postsmooth
+
+model:
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+    post_smooth_kernel: 5
+
+  vector_channels: 3
+  scalar_channels: 15
+
+  enable_1d: false
+  enable_3d: false
+  gradient_checkpointing: true
+
+training:
+  max_epochs: 20
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_steps: 50
+  min_lr: 1.0e-7
+  grad_clip: 1.0
+  eval_interval: 100
+  early_stopping_patience: 20
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+  subsample_ratio: 0.2
+
+dataloader:
+  batch_size: 2
+  num_workers: 4
+  pin_memory: true
+
+datasets:
+  - name: gray_scott
+    path: /scratch-share/SONG0304/finetune/gray_scott_test.h5
+    t_input: 8
+    train_ratio: 0.9
+    seed: 42
+    vector_dim: 0
+    val_time_interval: 20
+
+  - name: rayleigh_benard
+    path: ./data/finetune/rayleigh_benard_pr1.h5
+    t_input: 8
+    train_ratio: 0.9
+    seed: 42
+    vector_dim: 2
+    val_time_interval: 20
+
+  - name: shear_flow
+    path: ./data/finetune/shear_flow_clean.h5
+    t_input: 8
+    train_ratio: 0.9
+    seed: 42
+    vector_dim: 2
+    val_time_interval: 20
+
+  - name: active_matter
+    path: ./data/finetune/active_matter_all.hdf5
+    t_input: 8
+    train_ratio: 0.9
+    seed: 42
+    vector_dim: 2
+    val_time_interval: 16
+
+logging:
+  project: pde-multidataset-fullft
+  entity: null
+  save_dir: ./checkpoints_multidataset_fullft_postsmooth
+  log_interval: 10
+
+checkpoint:
+  init_from: ./checkpoints_v4_2donly_postsmooth/best_tf.pt
+  resume_from: null

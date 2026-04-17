@@ -1,0 +1,71 @@
+
+Loading pretrained weights from: ./checkpoints_v4_2donly_postsmooth/best_tf.pt
+  Loaded 289 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'qkv', 'proj', 'down_proj', 'gate_proj', 'up_proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,064,264 total,  3,064,264 trainable
+Transformer (LoRA):   174,865,152 total,  4,866,048 trainable
+------------------------------------------------------------
+Total:                182,232,136 total, 12,233,032 trainable
+Trainable ratio: 6.71%
+============================================================
+
+=== 2D Burgers (160x160) ===
+  bs=2: OK, peak=6.4GB
+  bs=4: OK, peak=12.0GB
+  bs=8: OK, peak=23.3GB
+  bs=12: OK, peak=32.9GB
+  bs=16: OK, peak=43.7GB
+  bs=20: OOM
+
+=== 1D Burgers (160) ===
+
+Loading pretrained weights from: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
+  Missing keys (randomly init): 2
+    - decoder.post_smooth.weight
+    - decoder.post_smooth.bias
+  Unexpected keys (ignored): 141
+    - encoder_3d.cnn_stem.stem.0.weight
+    - encoder_3d.cnn_stem.stem.0.bias
+    - encoder_3d.cnn_stem.stem.2.conv.0.weight
+    - encoder_3d.cnn_stem.stem.2.conv.0.bias
+    - encoder_3d.cnn_stem.stem.2.conv.2.weight
+    - encoder_3d.cnn_stem.stem.2.conv.2.bias
+    - encoder_3d.cnn_stem.stem.2.conv.3.weight
+    - encoder_3d.cnn_stem.stem.2.conv.3.bias
+    - encoder_3d.cnn_stem.stem.2.conv.5.weight
+    - encoder_3d.cnn_stem.stem.2.conv.5.bias
+    ... and 131 more
+  Loaded 416 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'qkv', 'proj', 'down_proj', 'gate_proj', 'up_proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,064,264 total,  3,064,264 trainable
+Encoder (1D):           3,207,552 total,  3,207,552 trainable
+Decoder (1D):           1,127,954 total,  1,127,954 trainable
+Transformer (LoRA):   204,098,304 total,  5,750,784 trainable
+------------------------------------------------------------
+Total:                215,800,794 total, 17,453,274 trainable
+Trainable ratio: 8.09%
+============================================================
+
+  bs=8: OK, peak=2.1GB
+  bs=16: OK, peak=2.9GB
+  bs=32: OK, peak=4.7GB
+  bs=64: OK, peak=8.6GB
+  bs=128: OK, peak=16.1GB
+  bs=256: OK, peak=31.3GB
+  bs=512: OOM

@@ -246,3 +246,4 @@ pdf/
 eval_results/
 *.png
 resume/
+*.log

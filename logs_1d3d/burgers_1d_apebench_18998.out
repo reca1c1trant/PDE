@@ -1,0 +1,186 @@
+
+Loading pretrained weights from: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
+  Unexpected keys (ignored): 141
+    - encoder_3d.cnn_stem.stem.0.weight
+    - encoder_3d.cnn_stem.stem.0.bias
+    - encoder_3d.cnn_stem.stem.2.conv.0.weight
+    - encoder_3d.cnn_stem.stem.2.conv.0.bias
+    - encoder_3d.cnn_stem.stem.2.conv.2.weight
+    - encoder_3d.cnn_stem.stem.2.conv.2.bias
+    - encoder_3d.cnn_stem.stem.2.conv.3.weight
+    - encoder_3d.cnn_stem.stem.2.conv.3.bias
+    - encoder_3d.cnn_stem.stem.2.conv.5.weight
+    - encoder_3d.cnn_stem.stem.2.conv.5.bias
+    ... and 131 more
+  Loaded 416 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'down_proj', 'qkv', 'proj', 'up_proj', 'gate_proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,056,146 total,  3,056,146 trainable
+Encoder (1D):           3,207,552 total,  3,207,552 trainable
+Decoder (1D):           1,127,954 total,  1,127,954 trainable
+Transformer (LoRA):   204,098,304 total,  5,750,784 trainable
+------------------------------------------------------------
+Total:                215,792,676 total, 17,445,156 trainable
+Trainable ratio: 8.08%
+============================================================
+
+
+Epoch 1/30: avg_bc=0.091104, avg_pde=255.846868
+
+Step 50/1440 : vrmse=0.549192, rmse=0.114783, pde=534.818787, bc=0.100353
+(warmup - no saving)
+
+Epoch 2/30: avg_bc=0.109584, avg_pde=338.791421
+
+Step 100/1440 [E3]: vrmse=0.455039, rmse=0.093867, pde=279.437164, bc=0.082809
+Saved best model (save=45.5039: 100*0.4550 + 0*279.4372)
+
+Epoch 3/30: avg_bc=0.065412, avg_pde=176.651266
+
+Step 150/1440 [E4]: vrmse=0.554927, rmse=0.113974, pde=312.667816, bc=0.111613
+Patience: 1/30
+
+Epoch 4/30: avg_bc=0.058040, avg_pde=205.484913
+
+Step 200/1440 [E5]: vrmse=0.513503, rmse=0.105497, pde=267.888428, bc=0.075147
+Patience: 2/30
+
+Epoch 5/30: avg_bc=0.057293, avg_pde=210.223415
+
+Step 250/1440 [E6]: vrmse=0.392952, rmse=0.080777, pde=230.153244, bc=0.051436
+Saved best model (save=39.2952: 100*0.3930 + 0*230.1532)
+
+Epoch 6/30: avg_bc=0.048828, avg_pde=165.394794
+
+Step 300/1440 [E7]: vrmse=0.471910, rmse=0.096517, pde=199.550491, bc=0.064902
+Patience: 1/30
+
+Epoch 7/30: avg_bc=0.054316, avg_pde=196.868241
+
+Step 350/1440 [E8]: vrmse=0.395359, rmse=0.080788, pde=228.279114, bc=0.052616
+Patience: 2/30
+
+Epoch 8/30: avg_bc=0.058855, avg_pde=233.872893
+
+Step 400/1440 [E9]: vrmse=0.417922, rmse=0.085015, pde=156.795471, bc=0.047409
+Patience: 3/30
+
+Epoch 9/30: avg_bc=0.041870, avg_pde=177.909952
+
+Step 450/1440 [E10]: vrmse=0.447345, rmse=0.091559, pde=233.756226, bc=0.064046
+Patience: 4/30
+
+Epoch 10/30: avg_bc=0.042319, avg_pde=149.973021
+
+Step 500/1440 [E11]: vrmse=0.434390, rmse=0.088703, pde=183.300232, bc=0.045004
+Patience: 5/30
+
+Epoch 11/30: avg_bc=0.032843, avg_pde=123.879630
+
+Step 550/1440 [E12]: vrmse=0.464455, rmse=0.094813, pde=157.705719, bc=0.064649
+Patience: 6/30
+
+Epoch 12/30: avg_bc=0.036524, avg_pde=119.947863
+
+Step 600/1440 [E13]: vrmse=0.402600, rmse=0.082654, pde=255.888687, bc=0.058656
+Patience: 7/30
+
+Epoch 13/30: avg_bc=0.032624, avg_pde=116.101072
+
+Step 650/1440 [E14]: vrmse=0.406240, rmse=0.083755, pde=200.717178, bc=0.053385
+Patience: 8/30
+
+Epoch 14/30: avg_bc=0.035502, avg_pde=121.767179
+
+Step 700/1440 [E15]: vrmse=0.385145, rmse=0.078533, pde=125.234306, bc=0.031114
+Saved best model (save=38.5145: 100*0.3851 + 0*125.2343)
+
+Epoch 15/30: avg_bc=0.026940, avg_pde=109.450439
+
+Step 750/1440 [E16]: vrmse=0.382647, rmse=0.078019, pde=200.625137, bc=0.047146
+Saved best model (save=38.2647: 100*0.3826 + 0*200.6251)
+
+Epoch 16/30: avg_bc=0.032665, avg_pde=114.814504
+
+Step 800/1440 [E17]: vrmse=0.394130, rmse=0.080633, pde=113.801140, bc=0.030102
+Patience: 1/30
+
+Epoch 17/30: avg_bc=0.033118, avg_pde=106.546840
+
+Step 850/1440 [E18]: vrmse=0.394985, rmse=0.080808, pde=123.628593, bc=0.035223
+Patience: 2/30
+
+Epoch 18/30: avg_bc=0.020904, avg_pde=80.456218
+
+Step 900/1440 [E19]: vrmse=0.388711, rmse=0.079177, pde=116.872589, bc=0.032060
+Patience: 3/30
+
+Epoch 19/30: avg_bc=0.021228, avg_pde=83.089132
+
+Step 950/1440 [E20]: vrmse=0.384310, rmse=0.078234, pde=108.895622, bc=0.031562
+Patience: 4/30
+
+Epoch 20/30: avg_bc=0.017198, avg_pde=74.505303
+
+Step 1000/1440 [E21]: vrmse=0.383082, rmse=0.078277, pde=103.564095, bc=0.026766
+Patience: 5/30
+
+Epoch 21/30: avg_bc=0.018453, avg_pde=70.266330
+
+Step 1050/1440 [E22]: vrmse=0.388145, rmse=0.079036, pde=100.691154, bc=0.027006
+Patience: 6/30
+
+Epoch 22/30: avg_bc=0.014799, avg_pde=69.525690
+
+Step 1100/1440 [E23]: vrmse=0.369967, rmse=0.075448, pde=99.943153, bc=0.030746
+Saved best model (save=36.9967: 100*0.3700 + 0*99.9432)
+
+Epoch 23/30: avg_bc=0.013041, avg_pde=66.994179
+
+Step 1150/1440 [E24]: vrmse=0.376427, rmse=0.076580, pde=94.539772, bc=0.021573
+Patience: 1/30
+
+Epoch 24/30: avg_bc=0.012161, avg_pde=67.521606
+
+Step 1200/1440 [E25]: vrmse=0.374793, rmse=0.076342, pde=95.274139, bc=0.025266
+Patience: 2/30
+
+Epoch 25/30: avg_bc=0.011263, avg_pde=64.724893
+
+Epoch 26/30: avg_bc=0.010476, avg_pde=62.781085
+
+Step 1250/1440 [E27]: vrmse=0.383799, rmse=0.078213, pde=85.698936, bc=0.021571
+Patience: 3/30
+
+Epoch 27/30: avg_bc=0.009118, avg_pde=62.569916
+
+Step 1300/1440 [E28]: vrmse=0.382741, rmse=0.077959, pde=88.267296, bc=0.022096
+Patience: 4/30
+
+Epoch 28/30: avg_bc=0.008501, avg_pde=62.622732
+
+Step 1350/1440 [E29]: vrmse=0.384588, rmse=0.078312, pde=85.175461, bc=0.020711
+Patience: 5/30
+
+Epoch 29/30: avg_bc=0.008123, avg_pde=60.963186
+
+Step 1400/1440 [E30]: vrmse=0.380254, rmse=0.077419, pde=86.424736, bc=0.020089
+Patience: 6/30
+
+Epoch 30/30: avg_bc=0.008126, avg_pde=62.261095
+  [E30] BC=0.0109 PDE=48.1033 ━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 1440/1440 0:00:00
+                              Training Complete                               
+┌───────────────┬────────────────────────────────────────────────────────────┐
+│ Total Epochs  │ 30                                                         │
+│ Total Steps   │ 1440                                                       │
+│ Best Val Loss │ 36.996734                                                  │
+│ Early Stopped │ No                                                         │
+│ Checkpoint    │ checkpoints_burgers_1d_apebench_rescaled_norm/best_lora.pt │
+└───────────────┴────────────────────────────────────────────────────────────┘

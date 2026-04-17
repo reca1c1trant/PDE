@@ -1,0 +1,76 @@
+INFO:finetune.dataset_finetune:Detected NEW format (3D): 60 samples, 109 timesteps, shape (32, 32, 32)
+INFO:finetune.dataset_finetune:FinetuneDataset (train): 48 samples, 100 clips/sample, 4800 total clips
+INFO:finetune.dataset_finetune:Detected NEW format (3D): 60 samples, 109 timesteps, shape (32, 32, 32)
+INFO:finetune.dataset_finetune:FinetuneDataset (val): 12 samples, all clips/sample, 72 total clips
+INFO:finetune.dataset_finetune:FinetuneSampler: 2400 batches, 2400 per rank
+INFO:finetune.dataset_finetune:FinetuneSampler: 36 batches, 36 per rank
+Traceback (most recent call last):
+  File "<string>", line 52, in <module>
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/code/PDE/finetune/model_lora_v3.py", line 244, in forward
+    result = self.model(x, channel_mask, return_normalized)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/code/PDE/pretrain/model_v3.py", line 453, in forward
+    tokens = self.transformer(tokens, shape_info)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/peft/peft_model.py", line 921, in forward
+    return self.get_base_model()(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/code/PDE/pretrain/model_v3.py", line 208, in forward
+    x = grad_checkpoint(layer, x, na_key, use_reentrant=False)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/_compile.py", line 53, in inner
+    return disable_fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py", line 1044, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/utils/checkpoint.py", line 503, in checkpoint
+    ret = function(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/code/PDE/pretrain/model_v3.py", line 112, in forward
+    x = na_module(x)
+        ^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/natten/modules.py", line 112, in forward
+    x = neighborhood_attention_generic(  # type: ignore[assignment]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/natten/functional.py", line 395, in neighborhood_attention_generic
+    check_args_against_input(
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/natten/utils/checks.py", line 497, in check_args_against_input
+    raise ValueError(
+ValueError: The product of kernel size and dilation cannot be larger than input size along any dimension, got input_size=torch.Size([8, 2, 2, 2]) (input_tensor.shape=torch.Size([2, 8, 2, 2, 2, 12, 64])), kernel_size=(5, 5, 5, 5), dilation=(1, 1, 1, 1).

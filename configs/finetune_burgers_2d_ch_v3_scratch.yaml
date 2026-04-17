@@ -1,0 +1,109 @@
+# 2D Burgers (Cole-Hopf, Periodic) LoRA Finetuning Configuration (V3 Model)
+# PDE: u_t + u*u_x + v*u_y = nu*(u_xx + u_yy), v_t + ... same
+# Constraint: irrotational (v_x - u_y = 0)
+# Loss: BC (supervised anchor) + PDE (u_mom + v_mom + irrotational, per-equation normalized)
+# Channels: Vx(0), Vy(1), vector_dim=2, NO scalar channels
+
+model_name: burgers_2d_ch_lora_v3_scratch
+
+pde_type: burgers_2d_ch
+
+model:
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+    post_smooth_kernel: 5
+
+  vector_channels: 3
+  scalar_channels: 15
+
+  enable_1d: false
+  enable_3d: false
+
+  gradient_checkpointing: true
+
+
+
+training:
+  max_epochs: 30
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_steps: 200
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  lambda_bc: 10000.0
+  lambda_pde: 1
+
+  # Save criterion: save_vrmse_weight * val_vrmse + save_pde_weight * val_pde
+  save_vrmse_weight: 100
+  save_pde_weight: 0
+
+  eval_interval: 200
+  early_stopping_patience: 30
+
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
+dataloader:
+  batch_size: 4
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: /scratch-share/SONG0304/finetune/burgers_2d_ch.hdf5
+  seed: 42
+  t_input: 8
+  train_ratio: 0.9
+  clips_per_sample: null
+  val_time_interval: 20
+  vector_dim: 2
+
+logging:
+  project: pde-burgers-2d-ch-lora
+  entity: null
+  save_dir: ./checkpoints_burgers_2d_ch_lora_v3_scratch
+  log_interval: 10
+
+checkpoint:
+  resume_from: null
+
+physics:
+  nx: 256
+  ny: 256
+  Lx: 6.283185307     # 2*pi
+  Ly: 6.283185307     # 2*pi
+  dt: 0.01
+
+  # Per-equation normalization scales
+  eq_scales:
+    u_momentum: 3.230e-05
+    v_momentum: 2.346e-05
+    irrotational: 1.0    # exact zero, use 1.0 as scale
+
+  # Per-equation weights
+  eq_weights:
+    u_momentum: 1.0
+    v_momentum: 1.0
+    irrotational: 1.0

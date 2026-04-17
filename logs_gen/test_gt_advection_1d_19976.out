@@ -1,0 +1,45 @@
+==========================================
+GT PDE Verification - 1D Advection
+Start: Fri Apr 10 11:57:28 PM +08 2026
+Node: TC2N05
+==========================================
+============================================================
+GT PDE Residual Verification - 1D Advection
+============================================================
+  scalar shape: torch.Size([1000, 101, 256, 1])
+  a range: [0.5008, 2.9987]
+
+Computing PDE residuals for 1000 samples...
+  (A) 4th-order central u_x, 2nd-order central u_t
+  (B) 1st-order upwind u_x (a-signed), 2nd-order central u_t
+
+  Sample 1/1000: central=3.433818e-03  upwind=1.928635e-01  a=1.436
+  Sample 100/1000: central=3.788488e-04  upwind=7.751714e-02  a=0.822
+  Sample 200/1000: central=8.205059e-03  upwind=2.706671e-01  a=1.867
+  Sample 300/1000: central=2.789627e-04  upwind=6.243707e-02  a=0.723
+  Sample 400/1000: central=1.016527e-03  upwind=1.265127e-01  a=0.913
+  Sample 500/1000: central=1.321727e-02  upwind=2.627940e-01  a=2.414
+  Sample 600/1000: central=9.682587e-04  upwind=1.218206e-01  a=1.108
+  Sample 700/1000: central=6.653536e-04  upwind=1.372139e-01  a=0.742
+  Sample 800/1000: central=3.177734e-03  upwind=1.509065e-01  a=2.065
+  Sample 900/1000: central=2.100026e-02  upwind=3.660250e-01  a=2.482
+  Sample 1000/1000: central=1.442489e-02  upwind=3.783103e-01  a=2.149
+
+============================================================
+Results (N=1000)
+============================================================
+  (A) 4th-order central:  mean_RMS = 8.593163e-03, max = 7.499381e-02
+  (B) 1st-order upwind:   mean_RMS = 2.075248e-01, max = 8.501800e-01
+
+  >>> Using central scheme RMS as eq_scales (lower = tighter bound)
+
+  --- eq_scales for config (mean RMS) ---
+  physics:
+    eq_scales:
+      advection: 8.5932e-03
+
+  Saved per-timestep scales to ./data/gt_scales/advection_1d_per_t.pt
+    advection: shape=torch.Size([99]), mean=8.593163e-03
+
+============================================================
+Done: Fri Apr 10 11:57:42 PM +08 2026

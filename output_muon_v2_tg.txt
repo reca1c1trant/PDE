@@ -1,0 +1,349 @@
+W0330 16:03:37.340000 517464 site-packages/torch/distributed/run.py:803] 
+W0330 16:03:37.340000 517464 site-packages/torch/distributed/run.py:803] *****************************************
+W0330 16:03:37.340000 517464 site-packages/torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0330 16:03:37.340000 517464 site-packages/torch/distributed/run.py:803] *****************************************
+2026-03-30 16:03:45,208 - INFO - ============================================================
+2026-03-30 16:03:45,208 - INFO - Muon-LoRA Finetuning (NS Orthogonalization)
+2026-03-30 16:03:45,208 - INFO - ============================================================
+2026-03-30 16:03:45,208 - INFO - Config: configs/finetune_taylor_green_2d_v3_muon_v2.yaml
+2026-03-30 16:03:45,208 - INFO - PDE type: taylor_green_2d
+2026-03-30 16:03:45,208 - INFO - NS steps: 5
+2026-03-30 16:03:45,208 - INFO - Lambda BC: 10000.0, Lambda PDE: 1
+2026-03-30 16:03:45,208 - INFO - BC width: 1
+2026-03-30 16:03:45,208 - INFO - ============================================================
+2026-03-30 16:03:45,212 - INFO - Detected NEW format (2D): 50 samples, 101 timesteps, shape (256, 256)
+2026-03-30 16:03:45,214 - INFO - FinetuneDataset (train): 45 samples, all clips/sample, 4185 total clips
+2026-03-30 16:03:45,216 - INFO - Detected NEW format (2D): 50 samples, 101 timesteps, shape (256, 256)
+2026-03-30 16:03:45,217 - INFO - FinetuneDataset (val): 5 samples, all clips/sample, 25 total clips
+2026-03-30 16:03:45,221 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+2026-03-30 16:03:45,221 - INFO - FinetuneSampler: 8 batches, 2 per rank
+2026-03-30 16:03:45,221 - INFO - Steps per epoch: 270, Total: 8100
+
+Loading pretrained weights from: /home/msai/song0304/code/PDE/checkpoints_v4_2donly_postsmooth/best_tf.pt
+  Loaded 289 keys successfully
+
+Muon-LoRA V2 config:
+  r=16, ns_steps=5
+  target_modules={'down_proj', 'up_proj', 'proj', 'qkv', 'gate_proj'}
+  Replaced 108 Linear layers
+  Trainable: 4,867,776 (A/B: 4,866,048, scale: 1,728)
+  Identity init: scale=0 → ΔW=0
+
+============================================================
+PDELoRAModelMuonV2 Parameter Summary
+============================================================
+Encoder (2D):                4,302,720 total,  4,302,720 trainable
+Decoder (2D):                3,064,264 total,  3,064,264 trainable
+Transformer (Muon-LoRA V2):  174,866,880 total,  4,867,776 trainable
+------------------------------------------------------------
+Total:                     182,233,864 total, 12,234,760 trainable
+Trainable ratio: 6.71%
+============================================================
+
+2026-03-30 16:03:54,879 - INFO - Parameters: 182,233,864 total, 12,234,760 trainable (6.7%)
+2026-03-30 16:03:56,712 - INFO - PDE loss: TaylorGreen2DPDELoss
+wandb: Currently logged in as: reca1c1trant (reca1c1trant-ntu) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run 1x3y735o
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /home/msai/song0304/code/PDE/wandb/run-20260330_160401-1x3y735o
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run taylor_green_2d_muon_lora_v2
+wandb: ⭐️ View project at https://wandb.ai/reca1c1trant-ntu/pde-muon-lora
+wandb: 🚀 View run at https://wandb.ai/reca1c1trant-ntu/pde-muon-lora/runs/1x3y735o
+2026-03-30 16:04:04,903 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 200/8100 : vrmse=0.126891, rmse=0.042675, pde=509483286528.000000, 
+bc=0.058455
+(warmup - no saving)
+
+Epoch 1/30: avg_bc=0.052859, avg_pde=173538972808.533325
+2026-03-30 16:10:16,003 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 400/8100 [E2]: vrmse=0.111014, rmse=0.039040, pde=95680356352.000000, 
+bc=0.053369
+Saved best (save=11.1014: 100*0.1110 + 0*95680356352.0000)
+
+Epoch 2/30: avg_bc=0.051173, avg_pde=72802236029.155548
+2026-03-30 16:16:20,454 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 600/8100 [E3]: vrmse=0.094713, rmse=0.032919, pde=85088256000.000000, 
+bc=0.044425
+Saved best (save=9.4713: 100*0.0947 + 0*85088256000.0000)
+
+Step 800/8100 [E3]: vrmse=0.078007, rmse=0.028307, pde=14256037888.000000, 
+bc=0.038345
+Saved best (save=7.8007: 100*0.0780 + 0*14256037888.0000)
+
+Epoch 3/30: avg_bc=0.040860, avg_pde=49005017414.162964
+2026-03-30 16:22:20,706 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 1000/8100 [E4]: vrmse=0.068429, rmse=0.024151, pde=35634814976.000000, 
+bc=0.033087
+Saved best (save=6.8429: 100*0.0684 + 0*35634814976.0000)
+
+Epoch 4/30: avg_bc=0.033009, avg_pde=26059407951.644444
+2026-03-30 16:28:59,073 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 1200/8100 [E5]: vrmse=0.062941, rmse=0.022498, pde=12462581760.000000, 
+bc=0.030886
+Saved best (save=6.2941: 100*0.0629 + 0*12462581760.0000)
+
+Epoch 5/30: avg_bc=0.029412, avg_pde=33492702803.437038
+2026-03-30 16:35:52,940 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 1400/8100 [E6]: vrmse=0.065404, rmse=0.023187, pde=24744210432.000000, 
+bc=0.032114
+Patience: 1/30
+
+Step 1600/8100 [E6]: vrmse=0.054766, rmse=0.019694, pde=13706486784.000000, 
+bc=0.027247
+Saved best (save=5.4766: 100*0.0548 + 0*13706486784.0000)
+
+Epoch 6/30: avg_bc=0.029269, avg_pde=15653371625.244444
+2026-03-30 16:42:48,939 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 1800/8100 [E7]: vrmse=0.055022, rmse=0.019055, pde=34548654080.000000, 
+bc=0.024652
+Patience: 1/30
+
+Epoch 7/30: avg_bc=0.024078, avg_pde=17558781827.792591
+2026-03-30 16:49:42,341 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 2000/8100 [E8]: vrmse=0.053021, rmse=0.018314, pde=39950491648.000000, 
+bc=0.024104
+Saved best (save=5.3021: 100*0.0530 + 0*39950491648.0000)
+
+Epoch 8/30: avg_bc=0.023480, avg_pde=14168473951.762962
+2026-03-30 16:56:02,411 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 2200/8100 [E9]: vrmse=0.066335, rmse=0.022115, pde=84331798528.000000, 
+bc=0.028814
+Patience: 1/30
+
+Step 2400/8100 [E9]: vrmse=0.048919, rmse=0.017020, pde=10070614016.000000, 
+bc=0.022564
+Saved best (save=4.8919: 100*0.0489 + 0*10070614016.0000)
+
+Epoch 9/30: avg_bc=0.022882, avg_pde=16068004142.459259
+2026-03-30 17:02:11,227 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 2600/8100 [E10]: vrmse=0.047280, rmse=0.016218, pde=24369332224.000000, 
+bc=0.020392
+Saved best (save=4.7280: 100*0.0473 + 0*24369332224.0000)
+
+Epoch 10/30: avg_bc=0.022337, avg_pde=14401357140.385185
+2026-03-30 17:08:16,037 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 2800/8100 [E11]: vrmse=0.050456, rmse=0.017987, pde=3741933056.000000, 
+bc=0.024097
+Patience: 1/30
+
+Epoch 11/30: avg_bc=0.023352, avg_pde=5329732421.214815
+2026-03-30 17:14:22,854 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 3000/8100 [E12]: vrmse=0.049958, rmse=0.017307, pde=13634568192.000000, 
+bc=0.022214
+Patience: 2/30
+
+Step 3200/8100 [E12]: vrmse=0.048264, rmse=0.017116, pde=5119824384.000000, 
+bc=0.022561
+Patience: 3/30
+
+Epoch 12/30: avg_bc=0.022338, avg_pde=6752599591.822222
+2026-03-30 17:20:31,777 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 3400/8100 [E13]: vrmse=0.046933, rmse=0.016192, pde=13263417344.000000, 
+bc=0.020498
+Saved best (save=4.6933: 100*0.0469 + 0*13263417344.0000)
+
+Epoch 13/30: avg_bc=0.020801, avg_pde=9385663903.288889
+2026-03-30 17:26:38,136 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 3600/8100 [E14]: vrmse=0.050246, rmse=0.017706, pde=2333025024.000000, 
+bc=0.023162
+Patience: 1/30
+
+Epoch 14/30: avg_bc=0.021151, avg_pde=6437236505.125926
+2026-03-30 17:32:44,354 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 3800/8100 [E15]: vrmse=0.048319, rmse=0.016682, pde=6809413632.000000, 
+bc=0.021094
+Patience: 2/30
+
+Step 4000/8100 [E15]: vrmse=0.048514, rmse=0.016613, pde=6765409280.000000, 
+bc=0.021184
+Patience: 3/30
+
+Epoch 15/30: avg_bc=0.020932, avg_pde=6445494422.755555
+2026-03-30 17:38:53,422 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 4200/8100 [E16]: vrmse=0.044573, rmse=0.015366, pde=7552052736.000000, 
+bc=0.019244
+Saved best (save=4.4573: 100*0.0446 + 0*7552052736.0000)
+
+Epoch 16/30: avg_bc=0.020388, avg_pde=4277183153.777778
+2026-03-30 17:44:59,665 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 4400/8100 [E17]: vrmse=0.047792, rmse=0.016736, pde=1506222848.000000, 
+bc=0.021301
+Patience: 1/30
+
+Epoch 17/30: avg_bc=0.020681, avg_pde=1872189649.303704
+2026-03-30 17:51:11,514 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 4600/8100 [E18]: vrmse=0.047375, rmse=0.016590, pde=1564039552.000000, 
+bc=0.021024
+Patience: 2/30
+
+Step 4800/8100 [E18]: vrmse=0.046425, rmse=0.016305, pde=1129122688.000000, 
+bc=0.020310
+Patience: 3/30
+
+Epoch 18/30: avg_bc=0.019978, avg_pde=1543805487.407408
+2026-03-30 17:57:23,770 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 5000/8100 [E19]: vrmse=0.044736, rmse=0.015514, pde=1885861376.000000, 
+bc=0.019061
+Patience: 4/30
+
+Epoch 19/30: avg_bc=0.019498, avg_pde=1929403970.133333
+2026-03-30 18:03:33,307 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 5200/8100 [E20]: vrmse=0.044417, rmse=0.015518, pde=1518789120.000000, 
+bc=0.019161
+Saved best (save=4.4417: 100*0.0444 + 0*1518789120.0000)
+
+Step 5400/8100 [E20]: vrmse=0.044232, rmse=0.015337, pde=2476011520.000000, 
+bc=0.018641
+Saved best (save=4.4232: 100*0.0442 + 0*2476011520.0000)
+
+Epoch 20/30: avg_bc=0.018600, avg_pde=2100681118.814815
+2026-03-30 18:09:42,621 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 5600/8100 [E21]: vrmse=0.046642, rmse=0.016287, pde=2055448832.000000, 
+bc=0.019761
+Patience: 1/30
+
+Epoch 21/30: avg_bc=0.019075, avg_pde=1584985770.548148
+2026-03-30 18:18:19,248 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 5800/8100 [E22]: vrmse=0.044705, rmse=0.015580, pde=1498897920.000000, 
+bc=0.018752
+Patience: 2/30
+
+Epoch 22/30: avg_bc=0.018609, avg_pde=1449579863.940741
+2026-03-30 18:27:41,134 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 6000/8100 [E23]: vrmse=0.045941, rmse=0.016106, pde=626251136.000000, 
+bc=0.019467
+Patience: 3/30
+
+Step 6200/8100 [E23]: vrmse=0.046570, rmse=0.016307, pde=738224768.000000, 
+bc=0.019677
+Patience: 4/30
+
+Epoch 23/30: avg_bc=0.019071, avg_pde=650322723.437037
+2026-03-30 18:37:24,119 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 6400/8100 [E24]: vrmse=0.046474, rmse=0.016309, pde=862063552.000000, 
+bc=0.019558
+Patience: 5/30
+
+Epoch 24/30: avg_bc=0.019052, avg_pde=629280845.392593
+2026-03-30 18:48:09,843 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 6600/8100 [E25]: vrmse=0.046462, rmse=0.016327, pde=562704640.000000, 
+bc=0.019392
+Patience: 6/30
+
+Epoch 25/30: avg_bc=0.018975, avg_pde=497790139.377778
+2026-03-30 18:58:58,372 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 6800/8100 [E26]: vrmse=0.046670, rmse=0.016411, pde=469335040.000000, 
+bc=0.019417
+Patience: 7/30
+
+Step 7000/8100 [E26]: vrmse=0.046913, rmse=0.016517, pde=428981056.000000, 
+bc=0.019607
+Patience: 8/30
+
+Epoch 26/30: avg_bc=0.018980, avg_pde=433910665.481481
+2026-03-30 19:09:44,790 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 7200/8100 [E27]: vrmse=0.046781, rmse=0.016481, pde=433042432.000000, 
+bc=0.019370
+Patience: 9/30
+
+Epoch 27/30: avg_bc=0.018955, avg_pde=409876281.718518
+2026-03-30 19:19:04,532 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 7400/8100 [E28]: vrmse=0.046921, rmse=0.016546, pde=391304576.000000, 
+bc=0.019301
+Patience: 10/30
+
+Epoch 28/30: avg_bc=0.018922, avg_pde=372898614.755556
+2026-03-30 19:28:23,189 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 7600/8100 [E29]: vrmse=0.047190, rmse=0.016635, pde=372606080.000000, 
+bc=0.019580
+Patience: 11/30
+
+Step 7800/8100 [E29]: vrmse=0.047082, rmse=0.016628, pde=365248256.000000, 
+bc=0.019268
+Patience: 12/30
+
+Epoch 29/30: avg_bc=0.018965, avg_pde=358546338.429630
+2026-03-30 19:37:44,054 - INFO - FinetuneSampler: 1080 batches, 270 per rank
+
+Step 8000/8100 [E30]: vrmse=0.047299, rmse=0.016696, pde=356704384.000000, 
+bc=0.019563
+Patience: 13/30
+
+
+
+
+Epoch 30/30: avg_bc=0.018982, avg_pde=347076388.562963
+  [E30] BC=0.0189 PDE=339444352.0000 ━━━━━━━━━━━━━━━━━━━━ 100% 8100/8100 0:00:00
+wandb: updating run metadata
+wandb: uploading output.log; uploading wandb-summary.json
+wandb: uploading wandb-summary.json; uploading config.yaml
+wandb: uploading history steps 808-809, summary, console lines 254-256
+wandb: 
+wandb: Run history:
+wandb:  train/alpha_max ▁▁▁▂▂▃▄▅▅▅▆▆▇▇▇██████████████████▇▇▇▇▇▇▇
+wandb: train/alpha_mean ████▇▇▇▇▇▇▆▆▆▆▆▅▅▄▃▃▂▂▂▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:  train/alpha_min ███████████▇▇▇▇▅▅▅▃▃▃▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:    train/bc_loss ██▇▆▆▃▃▃▂▂▂▂▂▂▂▂▂▂▂▂▂▁▁▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:      train/epoch ▁▁▁▁▁▂▂▂▂▂▂▃▃▄▄▄▄▄▄▅▅▅▅▅▅▆▆▆▇▇▇▇▇▇▇▇████
+wandb:         train/lr █████████▇▇▇▇▇▆▅▅▅▅▅▄▄▃▃▃▃▃▂▂▂▂▂▂▁▁▁▁▁▁▁
+wandb:   train/pde_loss █▃▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb: train/total_loss ▃▃█▂▃▃▂▁▁▂▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:      val/bc_loss █▇▆▄▄▃▃▃▂▂▃▂▁▂▂▂▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:     val/pde_loss █▂▂▁▁▁▁▁▁▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:               +2 ...
+wandb: 
+wandb: Run summary:
+wandb:  train/alpha_max 4.02997
+wandb: train/alpha_mean 3.96599
+wandb:  train/alpha_min 2.98411
+wandb:    train/bc_loss 0.0189
+wandb:      train/epoch 30
+wandb:         train/lr 0.0
+wandb:   train/pde_loss 339444352.0
+wandb: train/total_loss 339444540.96608
+wandb:      val/bc_loss 0.01956
+wandb:     val/pde_loss 356704384.0
+wandb:               +2 ...
+wandb: 
+wandb: 🚀 View run taylor_green_2d_muon_lora_v2 at: https://wandb.ai/reca1c1trant-ntu/pde-muon-lora/runs/1x3y735o
+wandb: ⭐️ View project at: https://wandb.ai/reca1c1trant-ntu/pde-muon-lora
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260330_160401-1x3y735o/logs
+                       Training Complete (Muon-LoRA)                       
+┌─────────────────┬───────────────────────────────────────────────────────┐
+│ PDE Type        │ taylor_green_2d                                       │
+│ Total Steps     │ 8100                                                  │
+│ Best Val Metric │ 4.423162                                              │
+│ Early Stopped   │ No                                                    │
+│ Checkpoint      │ checkpoints_taylor_green_2d_muon_lora_v2/best_lora.pt │
+└─────────────────┴───────────────────────────────────────────────────────┘

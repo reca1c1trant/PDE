@@ -1,0 +1,33 @@
+INFO:finetune.dataset_finetune:Detected NEW format (3D): 60 samples, 109 timesteps, shape (32, 32, 32)
+INFO:finetune.dataset_finetune:FinetuneDataset (train): 48 samples, 100 clips/sample, 4800 total clips
+INFO:finetune.dataset_finetune:Detected NEW format (3D): 60 samples, 109 timesteps, shape (32, 32, 32)
+INFO:finetune.dataset_finetune:FinetuneDataset (val): 12 samples, all clips/sample, 72 total clips
+INFO:finetune.dataset_finetune:FinetuneSampler: 2400 batches, 2400 per rank
+INFO:finetune.dataset_finetune:FinetuneSampler: 36 batches, 36 per rank
+Traceback (most recent call last):
+  File "<string>", line 25, in <module>
+  File "/home/msai/song0304/code/PDE/finetune/model_lora_v3.py", line 78, in __init__
+    self.model = PDEModelV3(config)
+                 ^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/code/PDE/pretrain/model_v3.py", line 275, in __init__
+    self.transformer = self._build_transformer(config, enable_1d, enable_3d)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/code/PDE/pretrain/model_v3.py", line 383, in _build_transformer
+    return SharedNATransformer(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/code/PDE/pretrain/model_v3.py", line 147, in __init__
+    SharedNATransformerLayer(
+  File "/home/msai/song0304/code/PDE/pretrain/model_v3.py", line 96, in __init__
+    self.na_3d = NattenNA4D(
+                 ^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/natten/modules.py", line 476, in __init__
+    super().__init__(
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/natten/modules.py", line 59, in __init__
+    kernel_size, stride, dilation, is_causal = check_all_args(
+                                               ^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/natten/utils/checks.py", line 476, in check_all_args
+    check_kernel_size_arg(na_dim, kernel_size),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/natten/utils/checks.py", line 402, in check_kernel_size_arg
+    raise ValueError(
+ValueError: Invalid value for `kernel_size`; expected an integer or iterable of integers, all >= 2, got <class 'tuple'>

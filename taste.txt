@@ -1,0 +1,90 @@
+**格式规则：**
+- 不用 `---`（em dash）
+- 不用冒号、分号
+- 不用 `'s` 表所属，用 "the X module in Y" 结构
+- 不用连字符复合修饰词（领域固定用法如 physics-informed、cross-PDE、zero-shot 除外）
+- 不用 "(ICML 2025)" 这种括号标注 venue
+- 不手动换行 LaTeX 源码
+- Introduction 里没有介绍过的次要方法用 `\cite{a,b,c}` 打包，不逐一列名
+- 人名开头的引用用 `\citet{}` 替代 "X et al.~\cite{}"
+
+**用词规则（最高优先级）：**
+- ⚠️ 学术英语的"高级感"来自 **精准 (Precision)** 和 **简洁 (Conciseness)**，绝不来自生僻词或文学词汇的堆砌
+- ⚠️ 禁止使用文学化/拟人化词汇替代技术术语。例如：不用 "purview"（管辖权）替代 "applicability"（适用性），不用 "gravitate toward" 替代 "move toward"，不用 "endeavors" 替代 "efforts"，不用 "propel" 替代 "advance"
+- ⚠️ 升级用词时，只选择该领域论文中实际高频出现的精准术语，不选择 GRE 词汇或文学词汇
+- 描述数学性质的维持/保证时，用 "preserve"（保持性质）而非 "enforce"（强制执行）。例如 "preserve continuous-discrete equivalence" 而非 "enforce continuous-discrete equivalence"
+- 不借用其他领域的术语。例如不用 "corpora"（NLP 语料库术语），PDE 领域用 "datasets" 或 "collections"
+- 同一篇文章内用词不重复（paradigm、nevertheless、however、attention 等各只用一次）
+- Introduction 和 Related Work 之间同一方法的描述必须用不同措辞
+- 不用 "full-field"（用 "dense ground-truth supervision" 或 "ground-truth solutions"）
+- 不用 "analytically solvable"（用 "closed-form solutions"）
+- 不用 "long-standing"（用 "fundamental"）
+- 不用 "groundwork"（用 "foundation" 或 "backbone"）
+- 不用 "traction"、"attention" 描述趋势（用 "momentum" 等更有力的词）
+- 不用 "enabler"
+- Related Work 不出现具体参数量数字，用定性描述（"large-scale"、"small-scale"、"billion-level"）
+
+**结构规则：**
+- 先亮成果再承认不足，不在读者还没看到成果时就用 although
+- gap 和 proof of concept 放在一起构成因果关系
+- 每段高密度引用流，用 "A, B, C, and D" 并列结构打包
+- Related Work 用 `\paragraph{}` 不用 `\subsection{}`
+- Related Work 每段最后一句是 gap statement，指向我们的工作
+- 量化数字如果跨数据集不统一就用定性描述，具体数字留给实验表格
+
+**写作风格（从 Introduction/Related Work 提取）：**
+- 句式偏长，善用从句和并列结构（"A, B, C, and D" 四元并列常见）
+- 开头句直接给出技术定位，不用空洞的 "Recently, X has gained attention"
+- 转折用 "However" / "Nevertheless" / "Although"，每种最多用一次
+- 用精准动词描述方法做了什么（"obviate", "integrate", "formulate", "augment", "condition on"）
+- 描述方法时先说 what it does，再说 what it enables
+- gap statement 结尾简洁有力，一句话点明缺什么
+- 不用 "we note that" / "it is worth noting" / "interestingly" 等 filler
+- 不用 "powerful" / "promising" / "exciting" 等主观形容词
+- 数字和量化留给实验，文字部分用定性描述（"significantly fewer", "consistently outperforms"）
+
+**内容规则：**
+- 引用的方法描述必须核实原文用语，不能自己编造术语
+- Introduction 里 cite 过的方法，Related Work 里必须展开
+- Related Work 不说 "如 Introduction 所述"，独立可读
+- 对比其他方法时不用 "In contrast" 或 "Instead"（已用过或不够正式），用 "differs from"、"while"、从句等
+
+data/finetune/apebench/apebench_1d_diff.hdf5
+data/finetune/apebench/apebench_1d_fisher.hdf5
+data/finetune/apebench/apebench_1d_kdv.hdf5
+data/finetune/apebench/apebench_1d_ks.hdf5
+data/finetune/apebench/apebench_2d_adv.hdf5
+data/finetune/apebench/apebench_2d_burgers_sc.hdf5
+data/finetune/apebench/apebench_2d_diff.hdf5
+data/finetune/apebench/apebench_2d_disp.hdf5
+
+
+
+
+
+1. 给模型一个初始条件  8 帧 input
+2. 模型预测 $\hat{u}^{[1]}
+3. 再用预测结果继续：$\hat{u}^{[2]} = f_\theta(\hat{u}^{[1]})$
+4. 一直 rollout 100 步
+这里我说一下，我们固定选择0:8作为input，然后模型的输出作为最后一个时间t，自动把最早的，也就是0踢掉，然后继续下一步rollout。
+我们对比一下，就是要输出两种，一种是咱们始终用ground truth作为输入，另一个是这种rollout的形式，两种nRMSE我都要。
+
+然后对**每个时间步 t**，算一个 nRMSE：
+
+$$L_{\text{nRMSE}}^{[t]} = \frac{1}{M}\sum_{j=1}^{M}\sqrt{\frac{\sum_{i}(\hat{u}_{j,i}^{[t]} - u_{j,i}^{[t]})^2}{\sum_{i}(u_{j,i}^{[t]})^2}}$$
+
+这里：
+- **j** = 第几个 test trajectory（M=30 个）
+- **i** = 空间格点（160×160 = 25600 个点）
+- **t** = rollout 的第几步
+
+所以对于 2D Burgers（2 channels），一个 sample j 在时间步 t 的 nRMSE 就是：
+
+$$\sqrt{\frac{\sum_{\text{x,y,ch}}(\hat{u} - u_{\text{GT}})^2}{\sum_{\text{x,y,ch}}(u_{\text{GT}})^2}}$$
+
+先对所有空间点（不取 mean，直接 sum），算出这一个 sample 的 relative L2 error，然后对 30 个 sample 取 mean。
+
+然后是对 100 个时间步取 **geometric mean**：
+
+$$L_{\text{agg}} = \exp\left(\frac{1}{100}\sum_{t=1}^{100}\log(L_{\text{nRMSE}}^{[t]})\right)$$
+每个channel单独计算，最后再mean一下算总的数据。

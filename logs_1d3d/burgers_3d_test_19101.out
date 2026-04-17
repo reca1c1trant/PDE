@@ -1,0 +1,78 @@
+=== GT Verification ===
+============================================================
+3D Burgers GT PDE Residual (APEBench)
+============================================================
+  N=32, D=3, L=1.0, dx=0.03125
+  γ₂=1.5, δ_conv=-1.5
+  α₂ (diffusion) = 2.441406e-04
+  β₁ (convection) = 1.562500e-02
+  dt = 1.0 (normalized)
+============================================================
+
+vector shape: torch.Size([60, 109, 32, 32, 32, 3])
+Using 5 samples, T=109
+  u range: [-1.0000, 1.0000]
+
+============================================================
+PDE Residual (RMS, float64, 5 samples)
+============================================================
+  u-momentum: 7.068536e-04
+  v-momentum: 6.980459e-04
+  w-momentum: 7.115464e-04
+  average:    7.055042e-04
+============================================================
+
+Per-sample breakdown:
+  Sample 0: u=6.621419e-04, v=7.153328e-04, w=7.354410e-04
+  Sample 1: u=7.440129e-04, v=7.131245e-04, w=7.140936e-04
+  Sample 2: u=7.255992e-04, v=6.675001e-04, w=7.257476e-04
+  Sample 3: u=6.763841e-04, v=6.840536e-04, w=6.694456e-04
+  Sample 4: u=7.226572e-04, v=7.089481e-04, w=7.112112e-04
+
+Per-timestep RMS (first 10 / last 5):
+  u: t0=5.065098e-03, t5=7.501512e-04, t_last=4.410698e-04, mean=3.884429e-04
+  v: t0=4.908168e-03, t5=7.252851e-04, t_last=4.693935e-04, mean=3.987140e-04
+  w: t0=5.046826e-03, t5=7.438191e-04, t_last=4.668577e-04, mean=4.012361e-04
+
+Done!
+
+=== Training Test (5 steps) ===
+Train batches: 2400, Val batches: 36
+
+Loading pretrained weights from: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
+  Unexpected keys (ignored): 129
+    - encoder_1d.cnn_stem.stem.0.weight
+    - encoder_1d.cnn_stem.stem.0.bias
+    - encoder_1d.cnn_stem.stem.2.conv.0.weight
+    - encoder_1d.cnn_stem.stem.2.conv.0.bias
+    - encoder_1d.cnn_stem.stem.2.conv.2.weight
+    - encoder_1d.cnn_stem.stem.2.conv.2.bias
+    - encoder_1d.cnn_stem.stem.2.conv.3.weight
+    - encoder_1d.cnn_stem.stem.2.conv.3.bias
+    - encoder_1d.cnn_stem.stem.2.conv.5.weight
+    - encoder_1d.cnn_stem.stem.2.conv.5.bias
+    ... and 119 more
+  Loaded 428 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'qkv', 'gate_proj', 'up_proj', 'proj', 'down_proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,056,146 total,  3,056,146 trainable
+Encoder (3D):           9,260,288 total,  9,260,288 trainable
+Decoder (3D):          15,127,954 total, 15,127,954 trainable
+Transformer (LoRA):   204,098,304 total,  5,750,784 trainable
+------------------------------------------------------------
+Total:                235,845,412 total, 37,497,892 trainable
+Trainable ratio: 15.90%
+============================================================
+
+Model loaded. Params: 235,845,412
+Step 0: pde_loss=479.7437, mem=1.9GB
+Step 1: pde_loss=860.0067, mem=2.2GB
+Step 2: pde_loss=389.6783, mem=2.2GB
+Training test passed!

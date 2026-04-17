@@ -1,0 +1,96 @@
+2026-04-08 15:15:51,629 - INFO - ============================================================
+2026-04-08 15:15:51,630 - INFO - 2D Burgers (Cole-Hopf) LoRA Finetuning
+2026-04-08 15:15:51,630 - INFO - ============================================================
+2026-04-08 15:15:51,630 - INFO - Config: configs/finetune_burgers_3d_apebench_rescaled_norm.yaml
+2026-04-08 15:15:51,630 - INFO - Loss: BC (w=1) + PDE (u_mom + v_mom + irrotational)
+2026-04-08 15:15:51,630 - INFO - Lambda BC: 10000.0, Lambda PDE: 0.000698
+2026-04-08 15:15:51,630 - INFO - Save: 100*vrmse + 0*pde
+2026-04-08 15:15:51,630 - INFO - ============================================================
+2026-04-08 15:15:51,633 - INFO - Detected NEW format (3D): 60 samples, 109 timesteps, shape (32, 32, 32)
+2026-04-08 15:15:51,637 - INFO - FinetuneDataset (train): 48 samples, all clips/sample, 4848 total clips
+2026-04-08 15:15:51,639 - INFO - Detected NEW format (3D): 60 samples, 109 timesteps, shape (32, 32, 32)
+2026-04-08 15:15:51,640 - INFO - FinetuneDataset (val): 12 samples, all clips/sample, 72 total clips
+2026-04-08 15:15:51,642 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 15:15:51,642 - INFO - FinetuneSampler: 12 batches, 12 per rank
+2026-04-08 15:15:51,643 - INFO - Steps per epoch: 192
+2026-04-08 15:15:51,643 - INFO - Total steps: 5760
+2026-04-08 15:15:55,905 - INFO - PDE eq_scales: {'u_momentum': 0.0007069, 'v_momentum': 0.000698, 'w_momentum': 0.0007115}
+2026-04-08 15:15:55,906 - INFO - PDE eq_weights: {'u_momentum': 1.0, 'v_momentum': 1.0, 'w_momentum': 1.0}
+wandb: Currently logged in as: reca1c1trant (reca1c1trant-ntu) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run 9mf3n8bt
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /home/msai/song0304/code/PDE/wandb/run-20260408_151557-9mf3n8bt
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run burgers2d_ch-lora-v3-r16
+wandb: ⭐️ View project at https://wandb.ai/reca1c1trant-ntu/pde-burgers-3d-apebench
+wandb: 🚀 View run at https://wandb.ai/reca1c1trant-ntu/pde-burgers-3d-apebench/runs/9mf3n8bt
+2026-04-08 15:15:59,426 - INFO - FinetuneSampler: 192 batches, 192 per rank
+/home/msai/song0304/.conda/envs/icml/lib/python3.12/site-packages/torch/nn/attention/flex_attention.py:1687: UserWarning: flex_attention called without torch.compile() - this will use an unfused implementation that materializes the full scores matrix instead of generating a fused kernel.
+
+SOLUTION: Use torch.compile(flex_attention)(...)
+
+If you want to debug your score_mod/mask_mod, you can set:
+torch.nn.attention.flex_attention._FLEX_ATTENTION_DISABLE_COMPILE_DEBUG = True
+
+This will allow you to use print statements or breakpoints. Note: This doesn't work with the backwards pass and may produce incorrect results.
+  _warn_once(
+2026-04-08 15:23:19,778 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 15:30:44,093 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 15:37:58,267 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 15:45:19,714 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 15:52:30,276 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 15:59:52,339 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 16:07:03,850 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 16:14:27,051 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 16:21:49,221 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 16:29:01,934 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 16:36:27,365 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 16:43:41,195 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 16:51:06,318 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 16:58:19,354 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 17:05:46,406 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 17:12:58,557 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 17:20:20,949 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 17:27:43,420 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 17:34:53,727 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 17:42:16,286 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 17:49:30,394 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 17:56:54,517 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 18:04:09,323 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 18:11:32,612 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 18:18:56,531 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 18:26:07,799 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 18:33:34,517 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 18:40:45,936 - INFO - FinetuneSampler: 192 batches, 192 per rank
+2026-04-08 18:48:06,311 - INFO - FinetuneSampler: 192 batches, 192 per rank
+wandb: updating run metadata
+wandb: uploading output.log; uploading wandb-summary.json
+wandb: uploading output.log; uploading config.yaml
+wandb: uploading data
+wandb: 
+wandb: Run history:
+wandb:    train/bc_loss ▂▂▃▂▅▃▃▂█▄█▃▂▂▄▂▃▂▂▃▄▂▂▄▄▄▃▃▂▂▃▅▄▄▃▃▃▃▁▄
+wandb:      train/epoch ▁▁▁▁▁▂▂▂▂▂▃▃▃▃▃▃▃▃▃▄▄▄▄▅▅▅▅▅▅▅▆▆▆▇▇▇▇███
+wandb:         train/lr ████████████▇▇▇▆▆▆▆▅▄▄▄▃▃▃▃▃▃▂▂▂▂▂▂▁▁▁▁▁
+wandb:   train/pde_loss ▁▅▅▇▃▂▃▇▂▂▅▄▃▂▄▃▁▁▁█▃▅▄▂▃▂▃▃▃▁▃▃▃▂▄▃▂▄▂▃
+wandb: train/total_loss ▃▇▇▅▂▇▅▄▅▄▅▇▁▆▄▆▂▆▄▄▃▆▄▃▁▂▄▄▃▇▁▃▇▇▄▂▁█▃▄
+wandb:      val/bc_loss ██▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:     val/pde_loss ▃█▁▁▃▁▂▂▁▁▁▁▂▃▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:         val/rmse █▆▃▂▁▁▁▁▁▁▁▁▁▁▁▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:        val/vrmse █▆▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb: 
+wandb: Run summary:
+wandb:    train/bc_loss 0.01723
+wandb:      train/epoch 30
+wandb:         train/lr 0.0
+wandb:   train/pde_loss 891.14807
+wandb: train/total_loss 172.89811
+wandb:      val/bc_loss 0.02435
+wandb:     val/pde_loss 2623.54883
+wandb:         val/rmse 0.06288
+wandb:        val/vrmse 1.00022
+wandb: 
+wandb: 🚀 View run burgers2d_ch-lora-v3-r16 at: https://wandb.ai/reca1c1trant-ntu/pde-burgers-3d-apebench/runs/9mf3n8bt
+wandb: ⭐️ View project at: https://wandb.ai/reca1c1trant-ntu/pde-burgers-3d-apebench
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260408_151557-9mf3n8bt/logs

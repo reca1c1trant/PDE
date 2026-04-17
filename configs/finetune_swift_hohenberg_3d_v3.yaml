@@ -1,0 +1,120 @@
+# 3D Swift-Hohenberg LoRA Finetuning Configuration
+# PDE: u_t = r*u - (k + Δ)²*u + u² - u³
+# Periodic BC, 32³ grid, 1 channel (scalar)
+# From APEBench (NeurIPS 2024), Table 13
+
+model_name: swift_hohenberg_3d_lora_v3
+
+model:
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  patch_size_3d: 16
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+
+  na:
+    base_kernel: 5
+
+  decoder:
+    version: 'v3'
+    stem_channels: 256
+    hidden_channels: 256
+    use_skip: true
+    cross_patch:
+      enabled: true
+      kernel_size: 3
+      num_layers: 2
+
+  vector_channels: 3
+  scalar_channels: 15
+
+  enable_1d: false
+  enable_3d: true
+
+  pretrained_path: /home/msai/song0304/code/PDE/checkpoints_v4_2donly_dec_v3_round2/best_tf.pt
+  gradient_checkpointing: true
+
+  freeze_encoder: false
+  freeze_decoder: false
+
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+      - qkv
+      - proj
+      - gate_proj
+      - up_proj
+      - down_proj
+
+training:
+  max_epochs: 30
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_steps: 200
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+
+  lambda_bc: 10000.0
+  lambda_pde: 1
+
+  save_vrmse_weight: 100
+  save_pde_weight: 1
+
+  eval_interval: 100
+  early_stopping_patience: 30
+
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
+dataloader:
+  batch_size: 1
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: /scratch-share/SONG0304/finetune/swift_hohenberg_3d_apebench.hdf5
+  seed: 42
+  t_input: 8
+  train_ratio: 0.8
+  clips_per_sample: null
+  val_time_interval: 40
+  vector_dim: 0
+
+logging:
+  project: pde-swift-hohenberg-3d-lora
+  entity: null
+  save_dir: ./checkpoints_swift_hohenberg_3d_lora_v3
+  log_interval: 10
+
+checkpoint:
+  resume_from: null
+
+physics:
+  domain_extent: 31.41592653589793   # 10π
+  num_points: 32
+  dt: 0.1
+  reactivity: 0.7
+  critical_number: 1.0
+
+  eq_scales:
+    swift_hohenberg: 1.3715e-01
+
+  eq_weights:
+    swift_hohenberg: 1.0
+
+  eq_scales_per_t_path: ./data/gt_scales/swift_hohenberg_3d_per_t.pt

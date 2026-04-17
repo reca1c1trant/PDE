@@ -1,0 +1,41 @@
+Data: M=30, T=201, spatial=torch.Size([160, 160])
+Valid channels: [(0, 'v0'), (1, 'v1')]
+t_input=8, T_pred=193
+
+Loading pretrained weights from: ./checkpoints_v4_2donly_postsmooth/best_tf.pt
+  Loaded 289 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'up_proj', 'qkv', 'gate_proj', 'down_proj', 'proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,064,264 total,  3,064,264 trainable
+Transformer (LoRA):   174,865,152 total,  4,866,048 trainable
+------------------------------------------------------------
+Total:                182,232,136 total, 12,233,032 trainable
+Trainable ratio: 6.71%
+============================================================
+
+Loaded 300/300 trainable parameters
+Model loaded: lora
+
+======================================================================
+Results (T_pred=193 steps, M=30 samples)
+======================================================================
+
+  Channel: v0
+    One-step  nRMSE: gmean=0.130927, t1=0.144549, t_last=0.099144
+    Rollout   nRMSE: gmean=1.265807, t1=0.144549, t_last=1.482687
+
+  Channel: v1
+    One-step  nRMSE: gmean=0.129583, t1=0.158742, t_last=0.094818
+    Rollout   nRMSE: gmean=6.410672, t1=0.158742, t_last=9.950303
+
+  Overall (mean of channel gmeans):
+    One-step  nRMSE: 0.130255
+    Rollout   nRMSE: 3.838240
+======================================================================

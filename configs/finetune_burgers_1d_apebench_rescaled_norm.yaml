@@ -1,0 +1,86 @@
+model_name: burgers_1d_apebench_rescaled_norm
+
+model:
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+  na:
+    base_kernel: 5
+  decoder:
+    stem_channels: 256
+    hidden_channels: 128
+  vector_channels: 3
+  scalar_channels: 15
+  enable_1d: true
+  enable_3d: false
+  pretrained_path: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
+  gradient_checkpointing: true
+  freeze_encoder: false
+  freeze_decoder: false
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: [qkv, proj, gate_proj, up_proj, down_proj]
+
+training:
+  max_epochs: 30
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_steps: 50
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+  lambda_bc: 10000.0
+  lambda_pde: 2.9909e-3
+  bc_width: 1
+  save_vrmse_weight: 100
+  save_pde_weight: 0
+  eval_interval: 24
+  early_stopping_patience: 30
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+
+dataloader:
+  batch_size: 128
+  num_workers: 4
+  pin_memory: true
+
+dataset:
+  path: ./data/finetune/apebench/apebench_1d_burgers.hdf5
+  seed: 42
+  t_input: 8
+  train_ratio: 0.8
+  clips_per_sample: null
+  val_time_interval: 20
+  vector_dim: 1
+
+logging:
+  project: pde-burgers-1d-apebench
+  entity: null
+  save_dir: ./checkpoints_burgers_1d_apebench_rescaled_norm
+  log_interval: 10
+
+checkpoint:
+  resume_from: null
+
+physics:
+  Lx: 1.0
+  dt: 1.0
+  alpha_2: 2.9297e-5
+  delta_conv: -4.6875e-3
+  eq_scales:
+    momentum: 2.991e-03
+  eq_weights:
+    momentum: 1.0

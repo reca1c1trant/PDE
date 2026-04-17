@@ -1,0 +1,156 @@
+========== 2D Burgers APEBench ==========
+Data: M=30, T=201, spatial=torch.Size([160, 160])
+Valid channels: [(0, 'v0'), (1, 'v1')]
+t_input=8, T_pred=193
+
+Loading pretrained weights from: ./checkpoints_v4_2donly_postsmooth/best_tf.pt
+  Loaded 289 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'down_proj', 'proj', 'qkv', 'gate_proj', 'up_proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,064,264 total,  3,064,264 trainable
+Transformer (LoRA):   174,865,152 total,  4,866,048 trainable
+------------------------------------------------------------
+Total:                182,232,136 total, 12,233,032 trainable
+Trainable ratio: 6.71%
+============================================================
+
+Loaded 300/300 trainable parameters
+Model loaded: lora
+
+======================================================================
+Results (T_pred=193 steps, M=30 samples)
+======================================================================
+
+  Channel: v0
+    One-step  nRMSE: gmean=0.130927, t1=0.144549, t_last=0.099144
+    Rollout   nRMSE: gmean=1.265807, t1=0.144549, t_last=1.482687
+
+  Channel: v1
+    One-step  nRMSE: gmean=0.129583, t1=0.158742, t_last=0.094818
+    Rollout   nRMSE: gmean=6.410672, t1=0.158742, t_last=9.950303
+
+  Overall (mean of channel gmeans):
+    One-step  nRMSE: 0.130255
+    Rollout   nRMSE: 3.838240
+======================================================================
+
+========== 1D Burgers APEBench ==========
+Data: M=30, T=201, spatial=torch.Size([160])
+Valid channels: [(0, 'v0')]
+t_input=8, T_pred=193
+
+Loading pretrained weights from: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
+  Unexpected keys (ignored): 141
+    - encoder_3d.cnn_stem.stem.0.weight
+    - encoder_3d.cnn_stem.stem.0.bias
+    - encoder_3d.cnn_stem.stem.2.conv.0.weight
+    - encoder_3d.cnn_stem.stem.2.conv.0.bias
+    - encoder_3d.cnn_stem.stem.2.conv.2.weight
+    - encoder_3d.cnn_stem.stem.2.conv.2.bias
+    - encoder_3d.cnn_stem.stem.2.conv.3.weight
+    - encoder_3d.cnn_stem.stem.2.conv.3.bias
+    - encoder_3d.cnn_stem.stem.2.conv.5.weight
+    - encoder_3d.cnn_stem.stem.2.conv.5.bias
+    ... and 131 more
+  Loaded 416 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'up_proj', 'gate_proj', 'qkv', 'proj', 'down_proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,056,146 total,  3,056,146 trainable
+Encoder (1D):           3,207,552 total,  3,207,552 trainable
+Decoder (1D):           1,127,954 total,  1,127,954 trainable
+Transformer (LoRA):   204,098,304 total,  5,750,784 trainable
+------------------------------------------------------------
+Total:                215,792,676 total, 17,445,156 trainable
+Trainable ratio: 8.08%
+============================================================
+
+Loaded 427/427 trainable parameters
+Model loaded: lora
+
+======================================================================
+Results (T_pred=193 steps, M=30 samples)
+======================================================================
+
+  Channel: v0
+    One-step  nRMSE: gmean=0.254980, t1=0.434852, t_last=0.214765
+    Rollout   nRMSE: gmean=1.055123, t1=0.434852, t_last=1.134649
+
+  Overall (mean of channel gmeans):
+    One-step  nRMSE: 0.254980
+    Rollout   nRMSE: 1.055123
+======================================================================
+
+========== 3D Burgers APEBench ==========
+Data: M=60, T=109, spatial=torch.Size([32, 32, 32])
+Valid channels: [(0, 'v0'), (1, 'v1'), (2, 'v2')]
+t_input=8, T_pred=101
+
+Loading pretrained weights from: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
+  Unexpected keys (ignored): 129
+    - encoder_1d.cnn_stem.stem.0.weight
+    - encoder_1d.cnn_stem.stem.0.bias
+    - encoder_1d.cnn_stem.stem.2.conv.0.weight
+    - encoder_1d.cnn_stem.stem.2.conv.0.bias
+    - encoder_1d.cnn_stem.stem.2.conv.2.weight
+    - encoder_1d.cnn_stem.stem.2.conv.2.bias
+    - encoder_1d.cnn_stem.stem.2.conv.3.weight
+    - encoder_1d.cnn_stem.stem.2.conv.3.bias
+    - encoder_1d.cnn_stem.stem.2.conv.5.weight
+    - encoder_1d.cnn_stem.stem.2.conv.5.bias
+    ... and 119 more
+  Loaded 428 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'up_proj', 'gate_proj', 'down_proj', 'qkv', 'proj'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,056,146 total,  3,056,146 trainable
+Encoder (3D):           9,260,288 total,  9,260,288 trainable
+Decoder (3D):          15,127,954 total, 15,127,954 trainable
+Transformer (LoRA):   204,098,304 total,  5,750,784 trainable
+------------------------------------------------------------
+Total:                235,845,412 total, 37,497,892 trainable
+Trainable ratio: 15.90%
+============================================================
+
+Loaded 439/439 trainable parameters
+Model loaded: lora
+
+======================================================================
+Results (T_pred=101 steps, M=60 samples)
+======================================================================
+
+  Channel: v0
+    One-step  nRMSE: gmean=1.000493, t1=1.001472, t_last=1.000432
+    Rollout   nRMSE: gmean=1.000169, t1=1.001472, t_last=1.000203
+
+  Channel: v1
+    One-step  nRMSE: gmean=1.000567, t1=1.001412, t_last=1.000510
+    Rollout   nRMSE: gmean=1.002750, t1=1.001412, t_last=1.004606
+
+  Channel: v2
+    One-step  nRMSE: gmean=0.999926, t1=1.000579, t_last=1.000043
+    Rollout   nRMSE: gmean=1.005592, t1=1.000579, t_last=1.009377
+
+  Overall (mean of channel gmeans):
+    One-step  nRMSE: 1.000329
+    Rollout   nRMSE: 1.002837
+======================================================================

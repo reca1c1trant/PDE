@@ -1,0 +1,36 @@
+============================================================
+3D Swift-Hohenberg Dataset Generation (APEBench ETDRK)
+============================================================
+  Scenario: 3d_phy_sh
+  num_channels: 1
+  num_points: 32 (grid: 32^3)
+  domain_extent: 31.41592653589793
+  dt: 0.1
+  num_substeps: 5
+  reactivity: 0.7
+  critical_number: 1.0
+  polynomial_coefficients: (0.0, 0.0, 1.0, -1.0)
+  Test: 30 samples x 201 snapshots
+============================================================
+
+Generating test data...
+  Shape: (30, 201, 1, 32, 32, 32)
+  Range: [-1.0934, 1.8241]
+  Time: 29.9s
+
+Saved raw data to /scratch-share/SONG0304/finetune/swift_hohenberg_3d_raw/
+  test.npy: (30, 201, 1, 32, 32, 32), 790.4 MB
+
+Done! Switch to icml env and run convert script.
+============================================================
+Convert 3D Swift-Hohenberg APEBench → HDF5
+============================================================
+  test: (30, 201, 1, 32, 32, 32), range=[-1.0934, 1.8241]
+  scalar: (30, 201, 32, 32, 32, 1)
+  vector: (30, 201, 32, 32, 32, 3)
+
+Saved: /scratch-share/SONG0304/finetune/swift_hohenberg_3d_apebench.hdf5
+  scalar: (30, 201, 32, 32, 32, 1), dtype=float32
+  File size: 3161.5 MB
+Cleaned up /scratch-share/SONG0304/finetune/swift_hohenberg_3d_raw
+Done!

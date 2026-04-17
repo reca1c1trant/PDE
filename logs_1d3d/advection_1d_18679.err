@@ -1,0 +1,60 @@
+2026-04-07 14:53:14,223 - INFO - ============================================================
+2026-04-07 14:53:14,223 - INFO - 1D Advection LoRA Finetuning (V3 Model)
+2026-04-07 14:53:14,223 - INFO - ============================================================
+2026-04-07 14:53:14,224 - INFO - Config: configs/finetune_advection_1d_v3_rescaled_norm.yaml
+2026-04-07 14:53:14,224 - INFO - Loss: BC (w=1) + PDE (u_t + a*u_x)
+2026-04-07 14:53:14,224 - INFO - Lambda BC: 10000.0, Lambda PDE: 0.0086566
+2026-04-07 14:53:14,224 - INFO - Save: 100*vrmse + 0*pde
+2026-04-07 14:53:14,224 - INFO - ============================================================
+2026-04-07 14:53:14,230 - INFO - Detected NEW format (1D): 1000 samples, 101 timesteps, shape (1024,)
+2026-04-07 14:53:14,243 - INFO - FinetuneDataset (train): 450 samples, all clips/sample, 41850 total clips
+2026-04-07 14:53:14,246 - INFO - Detected NEW format (1D): 1000 samples, 101 timesteps, shape (1024,)
+2026-04-07 14:53:14,248 - INFO - FinetuneDataset (val): 550 samples, all clips/sample, 2750 total clips
+2026-04-07 14:53:14,259 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 14:53:14,268 - INFO - FinetuneSampler: 550 batches, 550 per rank
+2026-04-07 14:53:14,268 - INFO - Steps per epoch: 2250
+2026-04-07 14:53:14,268 - INFO - Total steps: 67500
+2026-04-07 14:53:19,087 - INFO - PDE eq_scales: {'advection': 0.0086566}
+2026-04-07 14:53:19,087 - INFO - PDE eq_weights: {'advection': 1.0}
+wandb: Currently logged in as: reca1c1trant (reca1c1trant-ntu) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run bvdey6nt
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /home/msai/song0304/code/PDE/wandb/run-20260407_145321-bvdey6nt
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run advection1d-lora-v3-r16
+wandb: ⭐️ View project at https://wandb.ai/reca1c1trant-ntu/pde-advection-1d-lora
+wandb: 🚀 View run at https://wandb.ai/reca1c1trant-ntu/pde-advection-1d-lora/runs/bvdey6nt
+2026-04-07 14:53:22,703 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 15:39:01,978 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 16:24:32,891 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+wandb: updating run metadata
+wandb: uploading output.log; uploading wandb-summary.json
+wandb: uploading config.yaml
+wandb: uploading history steps 639-639, summary, console lines 136-143
+wandb: 
+wandb: Run history:
+wandb:    train/bc_loss ▅▅▅▅▂▁▄▃▄▃▄▃▆▃██▃▃▃▂▄▂▁▃▂▃▃▄▂▄▂▅▁▂▂▄▃▅▄▂
+wandb:      train/epoch ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅██████████
+wandb:         train/lr ██████████▇▇▇▇▇▇▆▆▆▆▅▅▅▅▅▅▅▄▄▄▃▃▂▂▂▂▂▁▁▁
+wandb:   train/pde_loss ▃▄█▂▂▂▁▁▂▄▂▂▅▁▂▁▁▁▆▂▁▁▁▁▄▁▂▅▁▁▁▁▁▁▁▃▃▁▁▂
+wandb: train/total_loss █▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:      val/bc_loss ▃▂▄▃▃▄▂▃▂▃▃▃▄▄▂▂▃▂█▄▄▂▂▃▂▃▂▂▄▂▂▁
+wandb:     val/pde_loss ██▄▄▅▄▄▃▃▃▃▃▄▃▂▂▆▃▆▂▂▂▁▂▂▂▁▁▄▁▂▃
+wandb:         val/rmse ▁▁▄▂▆▄▃▄▅▄▃▄▆▅▃▄▄▄█▅▅▅▆▇▄▆▄▅▆▅▄▅
+wandb:        val/vrmse ▁▁▄▂▇▄▃▅▆▅▃▄▆▅▄▅▄▅█▆▅▆▆▇▄▆▅▆▆▅▄▆
+wandb: 
+wandb: Run summary:
+wandb:    train/bc_loss 0.01619
+wandb:      train/epoch 3
+wandb:         train/lr 0.0001
+wandb:   train/pde_loss 3759.24683
+wandb: train/total_loss 194.45429
+wandb:      val/bc_loss 0.02608
+wandb:     val/pde_loss 53602.88672
+wandb:         val/rmse 0.12094
+wandb:        val/vrmse 0.18074
+wandb: 
+wandb: 🚀 View run advection1d-lora-v3-r16 at: https://wandb.ai/reca1c1trant-ntu/pde-advection-1d-lora/runs/bvdey6nt
+wandb: ⭐️ View project at: https://wandb.ai/reca1c1trant-ntu/pde-advection-1d-lora
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260407_145321-bvdey6nt/logs

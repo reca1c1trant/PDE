@@ -43,7 +43,7 @@ model:
   enable_1d: false
   enable_3d: false
 
-  pretrained_path: ./checkpoints_v4_2donly_dec_v3/best_tf.pt
+  pretrained_path: ./checkpoints_v4_2donly_dec_v3_round2/best_tf.pt
   gradient_checkpointing: true
 
   freeze_encoder: false

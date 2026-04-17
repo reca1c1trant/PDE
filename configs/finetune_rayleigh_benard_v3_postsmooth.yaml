@@ -58,7 +58,7 @@ training:
   learning_rate: 1.0e-4
   weight_decay: 0.01
   betas: [0.9, 0.999]
-  warmup_steps: 50
+  warmup_steps: 200
   min_lr: 1.0e-6
   grad_clip: 1.0
 
@@ -69,7 +69,7 @@ training:
   save_vrmse_weight: 100
   save_pde_weight: 1
 
-  eval_interval: 100
+  eval_interval: 200
   early_stopping_patience: 30
 
   mixed_precision: "no"

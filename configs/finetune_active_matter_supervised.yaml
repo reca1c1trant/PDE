@@ -1,0 +1,80 @@
+# active_matter — Supervised LoRA Finetuning (Full-Field RMSE, Upper Bound)
+# Loss: RMSE on all valid channels. No BC, no PDE.
+
+model_name: active_matter_supervised_lora
+model:
+  in_channels: 18
+  hidden_dim: 768
+  patch_size: 16
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.0
+  encoder:
+    stem_hidden: 128
+    stem_out: 256
+    use_cnn_pool: false
+  intra_patch:
+    num_layers: 2
+    temporal_window: 3
+    num_heads: 8
+  na:
+    base_kernel: 5
+  decoder:
+    version: 'v3'
+    stem_channels: 256
+    hidden_channels: 256
+    use_skip: true
+    cross_patch:
+      enable: true
+      kernel_size: 3
+  vector_channels: 3
+  scalar_channels: 15
+  enable_1d: false
+  enable_3d: false
+  pretrained_path: /home/msai/song0304/code/PDE/checkpoints_v4_2donly_dec_v3_round2/best_tf.pt
+  gradient_checkpointing: true
+  freeze_encoder: false
+  freeze_decoder: false
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+    - qkv
+    - proj
+    - gate_proj
+    - up_proj
+    - down_proj
+training:
+  max_epochs: 30
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  betas:
+  - 0.9
+  - 0.999
+  warmup_steps: 200
+  min_lr: 1.0e-06
+  grad_clip: 1.0
+  eval_interval: 200
+  early_stopping_patience: 30
+  mixed_precision: 'no'
+  gradient_accumulation_steps: 1
+dataloader:
+  batch_size: 4
+  num_workers: 4
+  pin_memory: true
+dataset:
+  path: /home/msai/song0304/code/PDE/data/finetune/active_matter_all.hdf5
+  seed: 42
+  t_input: 8
+  train_ratio: 0.9
+  clips_per_sample: null
+  val_time_interval: 16
+  vector_dim: 2
+logging:
+  project: pde-active-matter-supervised
+  entity: null
+  save_dir: ./checkpoints_active_matter_supervised_lora
+  log_interval: 10
+checkpoint:
+  resume_from: null

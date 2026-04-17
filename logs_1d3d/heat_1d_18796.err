@@ -1,0 +1,35 @@
+2026-04-07 17:04:51,347 - INFO - ============================================================
+2026-04-07 17:04:51,347 - INFO - 1D Heat Equation LoRA Finetuning (V3 Model)
+2026-04-07 17:04:51,347 - INFO - ============================================================
+2026-04-07 17:04:51,347 - INFO - Config: configs/finetune_heat_1d_v3_rescaled_norm.yaml
+2026-04-07 17:04:51,347 - INFO - Loss: BC (w=1) + PDE (u_t - alpha*u_xx)
+2026-04-07 17:04:51,347 - INFO - Lambda BC: 10000.0, Lambda PDE: 0.023326
+2026-04-07 17:04:51,347 - INFO - Save: 100*vrmse + 0*pde
+2026-04-07 17:04:51,348 - INFO - ============================================================
+2026-04-07 17:04:51,354 - INFO - Detected NEW format (1D): 1000 samples, 101 timesteps, shape (1024,)
+2026-04-07 17:04:51,366 - INFO - FinetuneDataset (train): 450 samples, all clips/sample, 41850 total clips
+2026-04-07 17:04:51,368 - INFO - Detected NEW format (1D): 1000 samples, 101 timesteps, shape (1024,)
+2026-04-07 17:04:51,370 - INFO - FinetuneDataset (val): 550 samples, all clips/sample, 2750 total clips
+2026-04-07 17:04:51,381 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 17:04:51,389 - INFO - FinetuneSampler: 550 batches, 550 per rank
+2026-04-07 17:04:51,390 - INFO - Steps per epoch: 2250
+2026-04-07 17:04:51,390 - INFO - Total steps: 67500
+2026-04-07 17:04:56,012 - INFO - PDE eq_scales: {'heat': 0.023326}
+2026-04-07 17:04:56,012 - INFO - PDE eq_weights: {'heat': 1.0}
+wandb: Currently logged in as: reca1c1trant (reca1c1trant-ntu) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run rmga84l4
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /home/msai/song0304/code/PDE/wandb/run-20260407_170457-rmga84l4
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run heat1d-lora-v3-r16
+wandb: ⭐️ View project at https://wandb.ai/reca1c1trant-ntu/pde-heat-1d-lora
+wandb: 🚀 View run at https://wandb.ai/reca1c1trant-ntu/pde-heat-1d-lora/runs/rmga84l4
+2026-04-07 17:04:59,251 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 17:50:35,708 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 18:36:06,530 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 19:21:36,768 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 20:08:49,052 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 20:54:16,990 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 21:39:43,592 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+2026-04-07 22:25:11,915 - INFO - FinetuneSampler: 2250 batches, 2250 per rank
+slurmstepd: error: *** JOB 18796 ON TC2N01 CANCELLED AT 2026-04-07T22:55:02 DUE TO TIME LIMIT ***

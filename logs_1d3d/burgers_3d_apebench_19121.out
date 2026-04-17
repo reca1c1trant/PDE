@@ -1,0 +1,383 @@
+
+Loading pretrained weights from: ./checkpoints_v4_s_3d_with_best1-2d/best_tf.pt
+  Unexpected keys (ignored): 129
+    - encoder_1d.cnn_stem.stem.0.weight
+    - encoder_1d.cnn_stem.stem.0.bias
+    - encoder_1d.cnn_stem.stem.2.conv.0.weight
+    - encoder_1d.cnn_stem.stem.2.conv.0.bias
+    - encoder_1d.cnn_stem.stem.2.conv.2.weight
+    - encoder_1d.cnn_stem.stem.2.conv.2.bias
+    - encoder_1d.cnn_stem.stem.2.conv.3.weight
+    - encoder_1d.cnn_stem.stem.2.conv.3.bias
+    - encoder_1d.cnn_stem.stem.2.conv.5.weight
+    - encoder_1d.cnn_stem.stem.2.conv.5.bias
+    ... and 119 more
+  Loaded 428 keys successfully
+
+LoRA config:
+  r=16, alpha=32
+  target_modules={'proj', 'gate_proj', 'down_proj', 'up_proj', 'qkv'}
+
+============================================================
+PDELoRAModelV3 Parameter Summary
+============================================================
+Encoder (2D):           4,302,720 total,  4,302,720 trainable
+Decoder (2D):           3,056,146 total,  3,056,146 trainable
+Encoder (3D):           9,260,288 total,  9,260,288 trainable
+Decoder (3D):          15,127,954 total, 15,127,954 trainable
+Transformer (LoRA):   204,098,304 total,  5,750,784 trainable
+------------------------------------------------------------
+Total:                235,845,412 total, 37,497,892 trainable
+Trainable ratio: 15.90%
+============================================================
+
+
+Step 75/5760 [E1]: vrmse=1.373299, rmse=0.088380, pde=5261.812012, bc=0.032170
+Saved best model (save=137.3299: 100*1.3733 + 0*5261.8120)
+
+Step 150/5760 [E1]: vrmse=1.270142, rmse=0.079967, pde=10992.292969, bc=0.028203
+Saved best model (save=127.0142: 100*1.2701 + 0*10992.2930)
+
+Epoch 1/30: avg_bc=0.016306, avg_pde=1483.460172
+
+Step 225/5760 [E2]: vrmse=1.054940, rmse=0.066379, pde=4415.894043, bc=0.024438
+Saved best model (save=105.4940: 100*1.0549 + 0*4415.8940)
+
+Step 300/5760 [E2]: vrmse=1.094302, rmse=0.068873, pde=6680.564453, bc=0.032055
+Patience: 1/30
+
+Step 375/5760 [E2]: vrmse=1.032332, rmse=0.064882, pde=3888.594482, bc=0.024281
+Saved best model (save=103.2332: 100*1.0323 + 0*3888.5945)
+
+Epoch 2/30: avg_bc=0.017139, avg_pde=1487.628646
+
+Step 450/5760 [E3]: vrmse=1.010558, rmse=0.063530, pde=2948.397705, bc=0.024514
+Saved best model (save=101.0558: 100*1.0106 + 0*2948.3977)
+
+Step 525/5760 [E3]: vrmse=1.005255, rmse=0.063217, pde=2808.221680, bc=0.024298
+Saved best model (save=100.5255: 100*1.0053 + 0*2808.2217)
+
+Epoch 3/30: avg_bc=0.016893, avg_pde=990.291614
+
+Step 600/5760 [E4]: vrmse=1.026106, rmse=0.064510, pde=4664.437988, bc=0.024413
+Patience: 1/30
+
+Step 675/5760 [E4]: vrmse=1.007989, rmse=0.063348, pde=3102.198486, bc=0.024304
+Patience: 2/30
+
+Step 750/5760 [E4]: vrmse=1.038745, rmse=0.065313, pde=5330.986816, bc=0.024596
+Patience: 3/30
+
+Epoch 4/30: avg_bc=0.016996, avg_pde=1318.620186
+
+Step 825/5760 [E5]: vrmse=1.011187, rmse=0.063558, pde=3215.218994, bc=0.024288
+Patience: 4/30
+
+Step 900/5760 [E5]: vrmse=1.006238, rmse=0.063249, pde=2929.990234, bc=0.024486
+Patience: 5/30
+
+Epoch 5/30: avg_bc=0.016933, avg_pde=991.214817
+
+Step 975/5760 [E6]: vrmse=1.013209, rmse=0.063694, pde=3141.294678, bc=0.024505
+Patience: 6/30
+
+Step 1050/5760 [E6]: vrmse=1.005737, rmse=0.063219, pde=2820.620361, bc=0.024518
+Patience: 7/30
+
+Step 1125/5760 [E6]: vrmse=1.014003, rmse=0.063756, pde=2900.312256, bc=0.024434
+Patience: 8/30
+
+Epoch 6/30: avg_bc=0.017100, avg_pde=859.677620
+
+Step 1200/5760 [E7]: vrmse=1.007966, rmse=0.063372, pde=3021.345947, bc=0.024439
+Patience: 9/30
+
+Step 1275/5760 [E7]: vrmse=1.014634, rmse=0.063808, pde=3435.255127, bc=0.024687
+Patience: 10/30
+
+Epoch 7/30: avg_bc=0.017146, avg_pde=1166.017269
+
+Step 1350/5760 [E8]: vrmse=1.020036, rmse=0.064125, pde=3872.519775, bc=0.024354
+Patience: 11/30
+
+Step 1425/5760 [E8]: vrmse=1.005140, rmse=0.063184, pde=3020.217041, bc=0.024471
+Saved best model (save=100.5140: 100*1.0051 + 0*3020.2170)
+
+Step 1500/5760 [E8]: vrmse=1.007980, rmse=0.063375, pde=2925.693115, bc=0.024549
+Patience: 1/30
+
+Epoch 8/30: avg_bc=0.017045, avg_pde=967.563072
+
+Step 1575/5760 [E9]: vrmse=1.002756, rmse=0.063036, pde=2747.779541, bc=0.024316
+Saved best model (save=100.2756: 100*1.0028 + 0*2747.7795)
+
+Step 1650/5760 [E9]: vrmse=1.005736, rmse=0.063223, pde=2746.856445, bc=0.024572
+Patience: 1/30
+
+Step 1725/5760 [E9]: vrmse=1.004143, rmse=0.063123, pde=2839.093994, bc=0.024301
+Patience: 2/30
+
+Epoch 9/30: avg_bc=0.016946, avg_pde=769.674572
+
+Step 1800/5760 [E10]: vrmse=1.002278, rmse=0.063015, pde=2719.948486, 
+bc=0.024341
+Saved best model (save=100.2278: 100*1.0023 + 0*2719.9485)
+
+Step 1875/5760 [E10]: vrmse=1.003943, rmse=0.063106, pde=2822.026367, 
+bc=0.024412
+Patience: 1/30
+
+Epoch 10/30: avg_bc=0.016967, avg_pde=771.578747
+
+Step 1950/5760 [E11]: vrmse=1.001912, rmse=0.062982, pde=2732.963135, 
+bc=0.024279
+Saved best model (save=100.1912: 100*1.0019 + 0*2732.9631)
+
+Step 2025/5760 [E11]: vrmse=1.014158, rmse=0.063772, pde=4056.730469, 
+bc=0.024442
+Patience: 1/30
+
+Step 2100/5760 [E11]: vrmse=1.037111, rmse=0.065239, pde=5015.536621, 
+bc=0.025061
+Patience: 2/30
+
+Epoch 11/30: avg_bc=0.016904, avg_pde=1133.049800
+
+Step 2175/5760 [E12]: vrmse=1.015218, rmse=0.063846, pde=3076.951416, 
+bc=0.024493
+Patience: 3/30
+
+Step 2250/5760 [E12]: vrmse=1.007832, rmse=0.063386, pde=3039.639648, 
+bc=0.024180
+Patience: 4/30
+
+Epoch 12/30: avg_bc=0.016970, avg_pde=1042.608938
+
+Step 2325/5760 [E13]: vrmse=1.013082, rmse=0.063669, pde=3339.026611, 
+bc=0.024641
+Patience: 5/30
+
+Step 2400/5760 [E13]: vrmse=1.009597, rmse=0.063452, pde=2869.759766, 
+bc=0.024492
+Patience: 6/30
+
+Step 2475/5760 [E13]: vrmse=1.007589, rmse=0.063349, pde=3001.098389, 
+bc=0.024347
+Patience: 7/30
+
+Epoch 13/30: avg_bc=0.017014, avg_pde=945.970724
+
+Step 2550/5760 [E14]: vrmse=1.002032, rmse=0.062984, pde=2722.250244, 
+bc=0.024376
+Patience: 8/30
+
+Step 2625/5760 [E14]: vrmse=1.004929, rmse=0.063172, pde=2892.244873, 
+bc=0.024264
+Patience: 9/30
+
+Epoch 14/30: avg_bc=0.016883, avg_pde=807.245424
+
+Step 2700/5760 [E15]: vrmse=1.003175, rmse=0.063072, pde=2743.250244, 
+bc=0.024434
+Patience: 10/30
+
+Step 2775/5760 [E15]: vrmse=1.001765, rmse=0.062971, pde=2701.399414, 
+bc=0.024349
+Saved best model (save=100.1765: 100*1.0018 + 0*2701.3994)
+
+Step 2850/5760 [E15]: vrmse=1.001975, rmse=0.062989, pde=2687.426025, 
+bc=0.024493
+Patience: 1/30
+
+Epoch 15/30: avg_bc=0.016886, avg_pde=737.891116
+
+Step 2925/5760 [E16]: vrmse=1.001127, rmse=0.062936, pde=2660.109863, 
+bc=0.024342
+Saved best model (save=100.1127: 100*1.0011 + 0*2660.1099)
+
+Step 3000/5760 [E16]: vrmse=1.001272, rmse=0.062950, pde=2680.137939, 
+bc=0.024276
+Patience: 1/30
+
+Epoch 16/30: avg_bc=0.016887, avg_pde=729.095231
+
+Step 3075/5760 [E17]: vrmse=1.000779, rmse=0.062917, pde=2654.323975, 
+bc=0.024265
+Saved best model (save=100.0779: 100*1.0008 + 0*2654.3240)
+
+Step 3150/5760 [E17]: vrmse=1.002161, rmse=0.063003, pde=2662.288330, 
+bc=0.024362
+Patience: 1/30
+
+Step 3225/5760 [E17]: vrmse=1.002177, rmse=0.063009, pde=2670.798584, 
+bc=0.024384
+Patience: 2/30
+
+Epoch 17/30: avg_bc=0.017027, avg_pde=746.228419
+
+Step 3300/5760 [E18]: vrmse=1.005046, rmse=0.063180, pde=2994.314453, 
+bc=0.024343
+Patience: 3/30
+
+Step 3375/5760 [E18]: vrmse=1.003756, rmse=0.063109, pde=2866.618408, 
+bc=0.024372
+Patience: 4/30
+
+Step 3450/5760 [E18]: vrmse=1.003283, rmse=0.063068, pde=2770.816650, 
+bc=0.024511
+Patience: 5/30
+
+Epoch 18/30: avg_bc=0.016969, avg_pde=804.529966
+
+Step 3525/5760 [E19]: vrmse=1.001081, rmse=0.062932, pde=2693.875977, 
+bc=0.024309
+Patience: 6/30
+
+Step 3600/5760 [E19]: vrmse=1.002006, rmse=0.062992, pde=2769.814697, 
+bc=0.024231
+Patience: 7/30
+
+Epoch 19/30: avg_bc=0.016941, avg_pde=767.521129
+
+Step 3675/5760 [E20]: vrmse=1.001417, rmse=0.062953, pde=2687.570312, 
+bc=0.024284
+Patience: 8/30
+
+Step 3750/5760 [E20]: vrmse=1.001096, rmse=0.062936, pde=2699.680908, 
+bc=0.024275
+Patience: 9/30
+
+Step 3825/5760 [E20]: vrmse=1.000616, rmse=0.062902, pde=2657.707764, 
+bc=0.024368
+Saved best model (save=100.0616: 100*1.0006 + 0*2657.7078)
+
+Epoch 20/30: avg_bc=0.016978, avg_pde=746.339156
+
+Step 3900/5760 [E21]: vrmse=1.000904, rmse=0.062922, pde=2688.946045, 
+bc=0.024355
+Patience: 1/30
+
+Step 3975/5760 [E21]: vrmse=1.000430, rmse=0.062889, pde=2646.710449, 
+bc=0.024341
+Saved best model (save=100.0430: 100*1.0004 + 0*2646.7104)
+
+Epoch 21/30: avg_bc=0.016933, avg_pde=727.085366
+
+Step 4050/5760 [E22]: vrmse=1.000464, rmse=0.062895, pde=2639.923584, 
+bc=0.024343
+Patience: 1/30
+
+Step 4125/5760 [E22]: vrmse=1.000466, rmse=0.062893, pde=2648.305908, 
+bc=0.024390
+Patience: 2/30
+
+Step 4200/5760 [E22]: vrmse=1.000373, rmse=0.062887, pde=2637.990967, 
+bc=0.024430
+Saved best model (save=100.0373: 100*1.0004 + 0*2637.9910)
+
+Epoch 22/30: avg_bc=0.016913, avg_pde=720.924009
+
+Step 4275/5760 [E23]: vrmse=1.000428, rmse=0.062897, pde=2642.902344, 
+bc=0.024320
+Patience: 1/30
+
+Step 4350/5760 [E23]: vrmse=1.000402, rmse=0.062895, pde=2642.117676, 
+bc=0.024298
+Patience: 2/30
+
+Epoch 23/30: avg_bc=0.016971, avg_pde=728.758769
+
+Step 4425/5760 [E24]: vrmse=1.000286, rmse=0.062885, pde=2628.781250, 
+bc=0.024336
+Saved best model (save=100.0286: 100*1.0003 + 0*2628.7812)
+
+Step 4500/5760 [E24]: vrmse=1.000407, rmse=0.062893, pde=2631.685791, 
+bc=0.024299
+Patience: 1/30
+
+Step 4575/5760 [E24]: vrmse=1.000340, rmse=0.062888, pde=2631.491455, 
+bc=0.024338
+Patience: 2/30
+
+Epoch 24/30: avg_bc=0.017026, avg_pde=730.108416
+
+Step 4650/5760 [E25]: vrmse=1.000224, rmse=0.062882, pde=2625.912842, 
+bc=0.024346
+Saved best model (save=100.0224: 100*1.0002 + 0*2625.9128)
+
+Step 4725/5760 [E25]: vrmse=1.000237, rmse=0.062883, pde=2628.438721, 
+bc=0.024341
+Patience: 1/30
+
+Step 4800/5760 [E25]: vrmse=1.000257, rmse=0.062884, pde=2624.589355, 
+bc=0.024341
+Patience: 2/30
+
+Epoch 25/30: avg_bc=0.016989, avg_pde=728.774041
+
+Step 4875/5760 [E26]: vrmse=1.000248, rmse=0.062882, pde=2626.334229, 
+bc=0.024356
+Patience: 3/30
+
+Step 4950/5760 [E26]: vrmse=1.000277, rmse=0.062885, pde=2624.034424, 
+bc=0.024340
+Patience: 4/30
+
+Epoch 26/30: avg_bc=0.017018, avg_pde=731.069823
+
+Step 5025/5760 [E27]: vrmse=1.000251, rmse=0.062883, pde=2625.625488, 
+bc=0.024348
+Patience: 5/30
+
+Step 5100/5760 [E27]: vrmse=1.000236, rmse=0.062882, pde=2625.310791, 
+bc=0.024346
+Patience: 6/30
+
+Step 5175/5760 [E27]: vrmse=1.000220, rmse=0.062881, pde=2623.817871, 
+bc=0.024342
+Saved best model (save=100.0220: 100*1.0002 + 0*2623.8179)
+
+Epoch 27/30: avg_bc=0.016912, avg_pde=715.221208
+
+Step 5250/5760 [E28]: vrmse=1.000221, rmse=0.062881, pde=2623.797119, 
+bc=0.024346
+Patience: 1/30
+
+Step 5325/5760 [E28]: vrmse=1.000224, rmse=0.062881, pde=2623.183838, 
+bc=0.024350
+Patience: 2/30
+
+Epoch 28/30: avg_bc=0.016966, avg_pde=719.676167
+
+Step 5400/5760 [E29]: vrmse=1.000235, rmse=0.062882, pde=2623.665771, 
+bc=0.024350
+Patience: 3/30
+
+Step 5475/5760 [E29]: vrmse=1.000227, rmse=0.062882, pde=2623.546143, 
+bc=0.024347
+Patience: 4/30
+
+Step 5550/5760 [E29]: vrmse=1.000229, rmse=0.062882, pde=2623.587646, 
+bc=0.024351
+Patience: 5/30
+
+Epoch 29/30: avg_bc=0.016888, avg_pde=708.639034
+
+Step 5625/5760 [E30]: vrmse=1.000227, rmse=0.062881, pde=2623.810547, 
+bc=0.024348
+Patience: 6/30
+
+Step 5700/5760 [E30]: vrmse=1.000221, rmse=0.062881, pde=2623.548828, 
+bc=0.024352
+Patience: 7/30
+
+Epoch 30/30: avg_bc=0.017053, avg_pde=732.236495
+  [E30] BC=0.0172 PDE=891.1481 ━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 5760/5760 0:00:00
+                              Training Complete                               
+┌───────────────┬────────────────────────────────────────────────────────────┐
+│ Total Epochs  │ 30                                                         │
+│ Total Steps   │ 5760                                                       │
+│ Best Val Loss │ 100.021958                                                 │
+│ Early Stopped │ No                                                         │
+│ Checkpoint    │ checkpoints_burgers_3d_apebench_rescaled_norm/best_lora.pt │
+└───────────────┴────────────────────────────────────────────────────────────┘

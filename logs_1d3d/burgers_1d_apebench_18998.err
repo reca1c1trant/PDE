@@ -1,0 +1,86 @@
+2026-04-08 10:22:26,231 - INFO - ============================================================
+2026-04-08 10:22:26,231 - INFO - 1D Burgers LoRA Finetuning (V3 Model)
+2026-04-08 10:22:26,231 - INFO - ============================================================
+2026-04-08 10:22:26,232 - INFO - Config: configs/finetune_burgers_1d_apebench_rescaled_norm.yaml
+2026-04-08 10:22:26,232 - INFO - Loss: BC (w=1) + PDE (u_t + u*u_x - nu*u_xx)
+2026-04-08 10:22:26,232 - INFO - Lambda BC: 10000.0, Lambda PDE: 0.0029909
+2026-04-08 10:22:26,232 - INFO - Save: 100*vrmse + 0*pde
+2026-04-08 10:22:26,232 - INFO - ============================================================
+2026-04-08 10:22:26,237 - INFO - Detected NEW format (1D): 30 samples, 201 timesteps, shape (160,)
+2026-04-08 10:22:26,240 - INFO - FinetuneDataset (train): 24 samples, all clips/sample, 4632 total clips
+2026-04-08 10:22:26,242 - INFO - Detected NEW format (1D): 30 samples, 201 timesteps, shape (160,)
+2026-04-08 10:22:26,242 - INFO - FinetuneDataset (val): 6 samples, all clips/sample, 60 total clips
+2026-04-08 10:22:26,244 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:22:26,244 - INFO - FinetuneSampler: 6 batches, 6 per rank
+2026-04-08 10:22:26,244 - INFO - Steps per epoch: 48
+2026-04-08 10:22:26,244 - INFO - Total steps: 1440
+2026-04-08 10:22:30,062 - INFO - PDE eq_scales: {'momentum': 0.002991}
+2026-04-08 10:22:30,063 - INFO - PDE eq_weights: {'momentum': 1.0}
+wandb: Currently logged in as: reca1c1trant (reca1c1trant-ntu) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run y4e12wb1
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /home/msai/song0304/code/PDE/wandb/run-20260408_102231-y4e12wb1
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run burgers1d-lora-v3-r16
+wandb: ⭐️ View project at https://wandb.ai/reca1c1trant-ntu/pde-burgers-1d-apebench
+wandb: 🚀 View run at https://wandb.ai/reca1c1trant-ntu/pde-burgers-1d-apebench/runs/y4e12wb1
+2026-04-08 10:22:33,031 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:23:07,792 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:23:43,371 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:24:20,455 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:24:55,939 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:25:31,413 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:26:07,527 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:26:42,995 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:27:18,431 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:27:53,995 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:28:29,453 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:29:04,884 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:29:40,443 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:30:15,971 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:30:51,423 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:31:27,233 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:32:03,201 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:32:38,624 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:33:14,040 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:33:49,586 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:34:25,045 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:35:00,508 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:35:36,175 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:36:12,014 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:36:47,468 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:37:23,024 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:37:56,834 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:38:32,274 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:39:07,765 - INFO - FinetuneSampler: 48 batches, 48 per rank
+2026-04-08 10:39:43,411 - INFO - FinetuneSampler: 48 batches, 48 per rank
+wandb: updating run metadata
+wandb: uploading output.log; uploading wandb-summary.json
+wandb: uploading config.yaml
+wandb: 
+wandb: Run history:
+wandb:    train/bc_loss ▆▅▃▅▃▃▂▃▃█▅▂▇▄▃▃▂▃▂▃▃▃▅▂▂▂▁▂▁▂▂▂▂▂▁▁▁▁▁▁
+wandb:      train/epoch ▁▁▁▁▂▂▂▃▃▃▃▃▃▃▄▄▄▄▄▄▅▅▅▅▅▆▆▆▆▆▆▆▆▇▇▇▇███
+wandb:         train/lr ▂▄█████████▇▇▇▇▇▇▇▇▆▆▅▅▅▅▄▄▄▄▃▂▂▂▂▂▂▁▁▁▁
+wandb:   train/pde_loss ▄▂█▄▃▅▃▃▄▃▂▄▄▂▄▁▂▃▄▂▂▁▁▂▁▂▁▁▂▂▁▁▁▁▁▂▁▁▁▁
+wandb: train/total_loss ▃▄█▅▃▃▅▅▄▂▆▄▃▃▂▃▃▁▂▂▁▂▁▂▁▂▁▂▁▂▁▁▁▂▁▁▁▁▁▁
+wandb:      val/bc_loss ▇▆█▅▃▄▃▃▄▃▄▄▄▂▃▂▂▂▂▂▂▂▁▁▁▁▁▁
+wandb:     val/pde_loss █▄▅▄▃▃▃▂▃▃▂▄▃▂▃▁▂▁▁▁▁▁▁▁▁▁▁▁
+wandb:         val/rmse █▄█▆▂▅▂▃▄▃▄▂▂▂▁▂▂▂▁▂▂▁▁▁▁▁▂▁
+wandb:        val/vrmse █▄█▆▂▅▂▃▄▃▅▂▂▂▁▂▂▂▂▁▂▁▁▁▂▁▂▁
+wandb: 
+wandb: Run summary:
+wandb:    train/bc_loss 0.01093
+wandb:      train/epoch 30
+wandb:         train/lr 0.0
+wandb:   train/pde_loss 48.10332
+wandb: train/total_loss 109.39547
+wandb:      val/bc_loss 0.02009
+wandb:     val/pde_loss 86.42474
+wandb:         val/rmse 0.07742
+wandb:        val/vrmse 0.38025
+wandb: 
+wandb: 🚀 View run burgers1d-lora-v3-r16 at: https://wandb.ai/reca1c1trant-ntu/pde-burgers-1d-apebench/runs/y4e12wb1
+wandb: ⭐️ View project at: https://wandb.ai/reca1c1trant-ntu/pde-burgers-1d-apebench
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260408_102231-y4e12wb1/logs

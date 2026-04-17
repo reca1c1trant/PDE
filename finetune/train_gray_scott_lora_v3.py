@@ -391,7 +391,7 @@ def main():
         eq_scales=eq_scales,
         eq_weights=eq_weights,
         eq_scales_per_t=eq_scales_per_t,
-    )
+    ).to(accelerator.device)
 
     if accelerator.is_main_process:
         logger.info(f"PDE eq_scales: {pde_loss_fn.eq_scales}")
